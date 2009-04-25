@@ -1,0 +1,32 @@
+#!/usr/bin/make -f
+%:
+	dh $@
+
+# http://bugs.debian.org/499225
+override_dh_auto_clean:
+	./waf --nocache distclean
+# Upstream doesn't clean up after "./waf check".
+	rm -rf _build_
+override_dh_auto_configure:
+	./waf --nocache configure --prefix /usr
+override_dh_auto_build:
+	./waf --nocache build --debug full
+override_dh_auto_test:
+	./waf --nocache check
+override_dh_auto_install:
+	./waf --nocache install --destdir debian/tmp
+# By deleting these two unnecessary files here, midori.install can
+# just say "install everything from /usr" instead of having to list
+# all the other files.
+	rm -f debian/tmp/usr/share/doc/midori/COPYING
+	rm -f debian/tmp/usr/share/doc/midori/TRANSLATE
+
+override_dh_strip:              # http://bugs.debian.org/510772
+	dh_strip --dbg-package=midori-dbg
+
+## While we wait for the Debian archive to support 3.0 (quilt).
+ifeq (,$(wildcard debian/source/format))
+include /usr/share/quilt/quilt.make
+clean: unpatch
+build binary-arch: patch
+endif

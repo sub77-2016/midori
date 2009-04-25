@@ -1,0 +1,74 @@
+Source: midori
+Section: web
+Priority: optional
+Maintainer: Trent W. Buck <trentbuck@gmail.com>
+Uploaders: William Pitcock <nenolod@dereferenced.org>, Patrick Winnertz <winnie@debian.org>
+DM-Upload-Allowed: yes
+Build-Depends:
+ debhelper (>= 7.2),
+ quilt,
+ libgtk2.0-dev (>= 2.10),
+ libglib2.0-dev,
+ libwebkit-dev (>= 1.1),
+ libxml2-dev (>= 2.6),
+# For waf:
+ python,
+# Optional dependencies:
+ intltool,
+ libidn11-dev,
+ librsvg2-bin,
+ libsqlite3-dev,
+ libunique-dev (>= 1.0.6),
+ python-docutils,
+ libsoup2.4-dev (>= 2.25.2),
+# Disabled optional dependencies:
+Build-Conflicts:
+ gtk-doc-tools,
+ libgtksourceview2.0-dev (>= 2.0),
+ libhildon-1-dev
+Standards-Version: 3.8.1
+Homepage: http://software.twotoasts.de/index.php?/pages/midori_summary.html
+
+Package: midori
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, dbus-x11
+Recommends: gnome-icon-theme
+Provides: www-browser
+# For http://bugs.debian.org/522436 (missing symbols):
+Conflicts: libsoup2.4-1 (<< 2.25.2)
+Description: fast, lightweight graphical web browser
+ Midori is a lightweight web browser based on WebKit.
+ .
+ Its features include:
+ .
+  * Full integration with GTK+2.
+  * Fast rendering with WebKit.
+  * Tabs, windows and session management.
+  * Flexibly configurable Web Search.
+  * User scripts and user styles support.
+  * Straightforward bookmark management.
+  * Customizable and extensible interface.
+  * Support for extensions (written in C).
+  * Custom context menu actions.
+
+Package: midori-dbg
+Architecture: any
+Priority: extra
+Section: debug
+Depends: ${shlibs:Depends}, ${misc:Depends}, midori (= ${binary:Version})
+Description: fast, lightweight graphical web browser (debug symbols)
+ Midori is a lightweight web browser based on WebKit.
+ .
+ Its features include:
+ .
+  * Full integration with GTK+2.
+  * Fast rendering with WebKit.
+  * Tabs, windows and session management.
+  * Flexibly configurable Web Search.
+  * User scripts and user styles support.
+  * Straightforward bookmark management.
+  * Customizable and extensible interface.
+  * Support for extensions (written in C).
+  * Custom context menu actions.
+ .
+ This package contains the debugging symbols for midori.

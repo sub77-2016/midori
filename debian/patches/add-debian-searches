@@ -1,0 +1,16 @@
+Fix #520381 - add a Debian search to the default search list.
+Index: midori-0.1.5/data/search
+===================================================================
+--- midori-0.1.5.orig/data/search	2009-03-31 17:23:08.000000000 +1100
++++ midori-0.1.5/data/search	2009-03-31 17:23:24.000000000 +1100
+@@ -19,3 +19,10 @@
+ uri=http://www.thefreedictionary.com/%s
+ icon=
+ token=fd
++
++[Debian Packages]
++name=Debian Packages
++text=Search Debian Packages
++uri=http://packages.debian.org/%s
++icon=
++token=d

@@ -1,0 +1,45 @@
+Midori for Debian
+=================
+
+Missing Icons
+-------------
+
+Based on conversation with the author, and the faq entries cited
+below, I do not think Midori will be changed upstream to use only
+"stock" GTK icons.
+
+  * There are missing icons/ warnings
+
+    The set of themed icons Midori can use is very limited. For
+    instance icons for a new tab or the throbber are not guaranteed to
+    be available. To fix this, install a Freedesktop.org spec
+    compliant icon theme, such as Tango or Gnome, or one that is
+    compatible with these.
+
+  * Tweaking Midori on the Gtk level
+
+    If you don't have a desktop application that takes care of Gtk
+    settings or if your interface doesn't support a particular
+    feature, you can modify any settings easily manually by specifying
+    them in a text file called ~/.gtkrc-2.0 or /etc/gtk-2.0/gtkrc:
+
+    Use Tango as a fallback for your icon theme:
+
+    gtk-icon-theme = "MySuperFancyTheme"
+    gtk-fallback-icon-theme = "Tango"
+
+  -- http://wiki.xfce.org/midori_faq
+
+Therefore I will add document this state of affairs in README.Debian
+and add the following header to debian/control:
+
+    Recommends: gnome-icon-theme
+
+This seems to be in line with what other packages currently do
+(e.g. galeon).
+
+I am choosing not to include a whole bunch of alternatives in the
+Recommendation because I don't want to have to keep that list of
+alternatives accurate.
+
+ -- Trent W. Buck <trentbuck@gmail.com>, Thu, 20 Nov 2008 20:23:33 +1100

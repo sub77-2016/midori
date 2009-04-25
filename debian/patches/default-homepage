@@ -1,0 +1,21 @@
+Some users install a web browser to look at HTML documentation when
+they are offline.  In this case, it is not nice to have the default
+page be a site that will time out.  Instead, we should use a local
+"launch" page, similar to what Konqueror and Iceweasel do already.
+
+Unfortunately there is no generic page of that sort, and I can't be
+bothered writing one.  So for now, I will just make the homepage
+Midori's user documentation.  This is similar to what Dillo did/does.
+Index: midori-0.1.6/midori/midori-websettings.c
+===================================================================
+--- midori-0.1.6.orig/midori/midori-websettings.c	2009-04-25 13:02:52.000000000 +1000
++++ midori-0.1.6/midori/midori-websettings.c	2009-04-25 13:02:59.000000000 +1000
+@@ -550,7 +550,7 @@
+                                      "homepage",
+                                      _("Homepage"),
+                                      _("The homepage"),
+-                                     "http://www.google.com",
++                                     "file:///usr/share/doc/midori/user/midori.html",
+                                      flags));
+ 
+     /**

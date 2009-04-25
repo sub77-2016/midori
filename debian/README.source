@@ -1,0 +1,42 @@
+I'm using the following to roll local snapshot releases.
+
+To make the initial checkout:
+
+  git clone git://git.xfce.org/kalikiana/midori midori &&
+  apt-get source midori &&
+  cd midori &&
+  zcat ../midori*.diff.gz | patch -p1
+
+To update and roll a .deb:
+
+  debuild clean &&
+  git pull &&
+  v=$(git describe --tags) && v=${v%-*} && v=${v//-/+} &&
+  dch -v $v-1 'New upstream snapshot.' &&
+  tar --exclude .git --exclude debian -lzma -cf ../${PWD##*/}_$v.orig.tar.lzma -C .. ${PWD##*/} &&
+  mkdir -p debian/source && echo '3.0 (quilt)' >debian/source/format &&
+  pdebuild
+
+Midori has a large number of optional dependencies; I have made some
+of them build dependencies based on what I think is widely useful.
+The easiest way to build your own custom binary without such support
+is to move the appropriate entries from Build-Depends to
+Build-Conflicts in debian/control.
+
+  - gtk-doc-tools: API documentation.
+  - python-docutils: HTML user documentation (from plain text).
+  - intltool: localized UI text (menu titles and such).
+  - libunique-dev: turns midori into a client/server arrangement,
+    where subsequent calls will open windows in the first midori.
+  - libsoup2.4-dev: view source code and favicons and "save as".
+  - libsqlite3-dev: persistent history.  Without this, browsing
+    history is lost when you quit midori.  Possibly also relevant for
+    bookmarks, I'm not sure.  Compiles OK with libsqlite0-dev, but
+    history isn't persistent.
+  - librsvg2-bin: create PNG icons from SVG source at compile time.
+    This avoids needing to rasterize the SVGs on the fly each time
+    midori is run.
+  - libidn11-dev: internationalized domain names.
+  - libhildon-1-dev: an alternative to GTK2, for embedded systems.
+
+ -- Trent W. Buck <trentbuck@gmail.com>, Sat, 21 Mar 2009 19:20:33 +1100

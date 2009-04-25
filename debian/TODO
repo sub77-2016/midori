@@ -1,0 +1,51 @@
+* Document how to use Firefox plugins.
+
+* Should midori.prerm remove the alternative for $1 = upgrade?
+
+  Scheme48's package does this, but I can't work out where in
+  debian-policy or update-alternatives(8) it says if this is right or
+  wrong.
+
+* Default home page should not require internet access
+
+  http://www.twotoasts.de/bugs/index.php?do=details&task_id=111
+
+  Midori might be run by users who do not have an (active) internet
+  connection. For example, they might want to read the ImageMagick
+  documentation, which is HTML files in /usr/share/doc/.
+
+  It's confusing for such users to have the default page be stored on
+  the internet. This can be alleviated by simply including (and
+  installing) an HTML file to be the default home page. The Debian
+  Firefox (Iceweasel) packages do this.
+
+* Remove runtime dependency on dbus-launch.
+
+  http://www.twotoasts.de/bugs/index.php?do=details&task_id=113
+
+  When building binary packages for Debian, I can either
+
+  - Build without libunique. Then midori works for everyone, but
+    running "midori foo" on the command line results in a new midori
+    process.
+
+  - Build with libunique. Then midori doesn't start unless there is a
+    session dbus, or dbus-launch can be used to create one:
+
+    $ midori; echo $?
+
+    (midori:2128): Unique-DBus-WARNING **: Unable to open a connection
+    to the session bus: Failed to execute dbus-launch to autolaunch
+    D-Bus session
+
+    (midori:2128): Unique-DBus-WARNING **: Unable to connect to the
+    running instance, aborting.
+
+    An instance of Midori is already running but not responding.
+    1
+    $ env | grep DBUS
+    $
+
+  Neither choice particularly appeals to me. Please sort out the code
+  so that when built with libunique, midori will fall back to the
+  "unique-less" behaviour when there is no session dbus.

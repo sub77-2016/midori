@@ -1,0 +1,56 @@
+From ed2a35d70b78232562aeb1ba0158fe785916c96b Mon Sep 17 00:00:00 2001
+From: Christian Dywan <christian@twotoasts.de>
+Date: Mon, 30 Mar 2009 00:14:43 +0200
+Subject: [PATCH] Don't expressly use libkatze in extensions to avoid -fPIC problem
+
+---
+ extensions/wscript_build |    1 -
+ katze/wscript_build      |    3 ---
+ midori/wscript_build     |    6 ------
+ 3 files changed, 0 insertions(+), 10 deletions(-)
+
+Index: midori-0.1.5/extensions/wscript_build
+===================================================================
+--- midori-0.1.5.orig/extensions/wscript_build	2009-03-31 17:23:09.000000000 +1100
++++ midori-0.1.5/extensions/wscript_build	2009-03-31 17:23:14.000000000 +1100
+@@ -26,5 +26,4 @@
+     obj.includes = '..'
+     obj.source = source
+     obj.uselib = 'UNIQUE LIBSOUP GIO GTK SQLITE WEBKIT LIBXML'
+-    obj.uselib_local = 'katze'
+     obj.install_path = '${LIBDIR}/midori'
+Index: midori-0.1.5/katze/wscript_build
+===================================================================
+--- midori-0.1.5.orig/katze/wscript_build	2009-03-31 17:23:09.000000000 +1100
++++ midori-0.1.5/katze/wscript_build	2009-03-31 17:23:14.000000000 +1100
+@@ -11,6 +11,3 @@
+ obj.find_sources_in_dirs ('.')
+ obj.uselib = 'M GMODULE LIBSOUP GTK LIBXML'
+ obj.install_path = None
+-
+-if platform.architecture ()[0] == '64bit':
+-    obj.env.append_value ('CCFLAGS', '-fPIC')
+Index: midori-0.1.5/midori/wscript_build
+===================================================================
+--- midori-0.1.5.orig/midori/wscript_build	2009-03-31 17:23:09.000000000 +1100
++++ midori-0.1.5/midori/wscript_build	2009-03-31 17:23:14.000000000 +1100
+@@ -14,9 +14,6 @@
+ obj.uselib_local = 'katze'
+ obj.install_path = None
+ 
+-if platform.architecture ()[0] == '64bit':
+-    obj.env.append_value ('CCFLAGS', '-fPIC')
+-
+ obj = bld.new_task_gen ('cc', 'staticlib')
+ obj.name = 'panels'
+ obj.target = 'panels'
+@@ -26,9 +23,6 @@
+ obj.uselib_local = 'midori'
+ obj.install_path = None
+ 
+-if platform.architecture ()[0] == '64bit':
+-    obj.env.append_value ('CCFLAGS', '-fPIC')
+-
+ obj = bld.new_task_gen ('cc', 'program')
+ obj.target = 'midori'
+ obj.includes = '. .. ../panels'
