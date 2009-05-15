@@ -1,9 +1,8 @@
 Fix #520381 - add a Debian search to the default search list.
-Index: midori-0.1.5/data/search
-===================================================================
---- midori-0.1.5.orig/data/search	2009-03-31 17:23:08.000000000 +1100
-+++ midori-0.1.5/data/search	2009-03-31 17:23:24.000000000 +1100
-@@ -19,3 +19,10 @@
+and #525991 - Adding debian bugs search to pre-installed searches
+--- a/data/search
++++ b/data/search
+@@ -19,3 +19,17 @@
  uri=http://www.thefreedictionary.com/%s
  icon=
  token=fd
@@ -14,3 +13,10 @@ Index: midori-0.1.5/data/search
 +uri=http://packages.debian.org/%s
 +icon=
 +token=d
++
++[Debian Bugs]
++name=Debian Bugs
++text=Debian Bugs Search
++uri=http://bugs.debian.org/cgi-bin/bugreport.cgi?bug=%s
++icon=
++token=dbs

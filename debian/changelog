@@ -8,8 +8,10 @@ midori (0.1.6-2) UNRELEASED; urgency=low
     /usr/share/quilt/quilt.make
   * fix format of debian/copyright
   * build dep on debhelper 7.0.50 instead of 7.2
+  * add debian bts to the list of searches, thanks to Giuseppe for the
+    patch (Closes: #525991)
 
- -- Ryan Niebur <ryanryan52@gmail.com>  Thu, 14 May 2009 22:32:51 -0700
+ -- Ryan Niebur <ryanryan52@gmail.com>  Thu, 14 May 2009 22:49:34 -0700
 
 midori (0.1.6-1) experimental; urgency=low
 
