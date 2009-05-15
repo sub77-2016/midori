@@ -4,8 +4,6 @@ Upstream-Name: midori
 Upstream-Maintainer: Christian Dywan <christian@twotoasts.de>
 Upstream-Source: http://goodies.xfce.org/releases/midori/
 
-
-
 Files: *
 Copyright: © 2007, Christian Dywan <christian@twotoasts.de>
 License: LGPL-2.1+
@@ -40,8 +38,6 @@ License: expat
 Files: waf
 Copyright: © 2005, Thomas Nagy
 License: BSD-C3
-
-
 
 License: LGPL-2.1+
  This library is free software; you can redistribute it and/or modify
