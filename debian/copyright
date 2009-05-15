@@ -12,12 +12,12 @@ License: LGPL-2.1+
 
 Files: debian/*
 Copyright: © 2007, Emanuele Rocca <ema@debian.org>
-Copyright: © 2008, Trent W. Buck <trentbuck@gmail.com>
+ © 2008, Trent W. Buck <trentbuck@gmail.com>
 License: expat
 
 Files: midori/gtkiconentry.?
 Copyright: © 2004, Christian Hammond
-Copyright: © 2008, Cody Russell <bratsche@gnome.org>
+ © 2008, Cody Russell <bratsche@gnome.org>
 License: LGPL-2+
 
 Files: midori/midori-locationentry.?
