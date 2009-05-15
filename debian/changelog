@@ -7,8 +7,9 @@ midori (0.1.6-2) UNRELEASED; urgency=low
   * use 'dh --with quilt' for patching instead of including
     /usr/share/quilt/quilt.make
   * fix format of debian/copyright
+  * build dep on debhelper 7.0.50 instead of 7.2
 
- -- Ryan Niebur <ryanryan52@gmail.com>  Thu, 14 May 2009 22:30:04 -0700
+ -- Ryan Niebur <ryanryan52@gmail.com>  Thu, 14 May 2009 22:32:51 -0700
 
 midori (0.1.6-1) experimental; urgency=low
 
