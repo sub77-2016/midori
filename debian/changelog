@@ -2,8 +2,9 @@ midori (0.1.6-2) UNRELEASED; urgency=low
 
   * adopt package: set myself as maintainer, remove uploaders, remove dm
     flag (Closes: #528731)
+  * rearrange the debian/rules file
 
- -- Ryan Niebur <ryanryan52@gmail.com>  Thu, 14 May 2009 21:24:27 -0700
+ -- Ryan Niebur <ryanryan52@gmail.com>  Thu, 14 May 2009 22:14:14 -0700
 
 midori (0.1.6-1) experimental; urgency=low
 
