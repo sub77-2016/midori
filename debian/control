@@ -1,9 +1,7 @@
 Source: midori
 Section: web
 Priority: optional
-Maintainer: Trent W. Buck <trentbuck@gmail.com>
-Uploaders: William Pitcock <nenolod@dereferenced.org>, Patrick Winnertz <winnie@debian.org>
-DM-Upload-Allowed: yes
+Maintainer: Ryan Niebur <ryanryan52@gmail.com>
 Build-Depends:
  debhelper (>= 7.2),
  quilt,
