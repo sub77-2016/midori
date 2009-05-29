@@ -1,4 +1,4 @@
-midori (0.1.6-2) UNRELEASED; urgency=low
+midori (0.1.7-1) UNRELEASED; urgency=low
 
   * adopt package: set myself as maintainer, remove uploaders, remove dm
     flag (Closes: #528731)
@@ -10,8 +10,9 @@ midori (0.1.6-2) UNRELEASED; urgency=low
   * build dep on debhelper 7.0.50 instead of 7.2
   * add debian bts to the list of searches, thanks to Giuseppe for the
     patch (Closes: #525991)
+  * New Upstream Version
 
- -- Ryan Niebur <ryanryan52@gmail.com>  Thu, 14 May 2009 22:49:34 -0700
+ -- Ryan Niebur <ryanryan52@gmail.com>  Thu, 28 May 2009 23:14:56 -0700
 
 midori (0.1.6-1) experimental; urgency=low
 
