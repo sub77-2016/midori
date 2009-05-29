@@ -1,12 +1,16 @@
 #!/usr/bin/make -f
 
+CMD=$(shell echo $@ | sed 's/override_//')
+
+CONFIG_FILE=debian/config/$(shell lsb_release -is).h
+
 %:
 	dh --with quilt $@
 
 override_dh_quilt_patch:
-	ln -sf ../debian/config/$(shell lsb_release -is).h midori/midori-debian.h
+	ln -sf ../$(CONFIG_FILE) midori/midori-debian.h
 	test -e midori/midori-debian.h
-	dh_quilt_patch
+	$(CMD)
 
 override_dh_auto_clean:
 	./waf --nocache distclean
@@ -26,5 +30,13 @@ override_dh_auto_install:
 	./waf --nocache install --destdir debian/tmp
 	rm -f debian/tmp/usr/share/doc/midori/COPYING debian/tmp/usr/share/doc/midori/TRANSLATE
 
+PRIORITY=$(shell sed -r -e '/DEBIAN_WWW_ALTERNATIVES_PRIORITY/ !d' -e 's/.* ([^ ]*)$$/\1/' $(CONFIG_FILE))
+
+debian/midori.postinst: debian/midori.postinst.base
+	sed "s/DEBIAN_WWW_ALTERNATIVES_PRIORITY/$(PRIORITY)/g" debian/midori.postinst.base > debian/midori.postinst
+
+override_dh_installdeb: debian/midori.postinst
+	$(CMD)
+
 override_dh_strip:
-	dh_strip --dbg-package=midori-dbg
+	$(CMD) --dbg-package=midori-dbg
