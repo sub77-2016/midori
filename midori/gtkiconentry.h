@@ -39,6 +39,7 @@ G_BEGIN_DECLS
     #define GTK_TYPE_ICON_ENTRY GTK_TYPE_ENTRY
     #define gtk_icon_entry_new gtk_entry_new
     #define gtk_icon_entry_set_icon_from_stock gtk_entry_set_icon_from_stock
+
     void
     gtk_icon_entry_set_icon_from_pixbuf (GtkEntry*            entry,
                                          GtkEntryIconPosition position,

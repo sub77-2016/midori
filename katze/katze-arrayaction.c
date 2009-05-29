@@ -1,5 +1,6 @@
 /*
  Copyright (C) 2008 Christian Dywan <christian@twotoasts.de>
+ Copyright (C) 2009 Enrico Tröger <enrico.troeger@uvena.de>
 
  This library is free software; you can redistribute it and/or
  modify it under the terms of the GNU Lesser General Public
@@ -13,6 +14,7 @@
 
 #include "katze-net.h"
 #include "katze-utils.h"
+#include "marshal.h"
 
 #include <string.h>
 #include <glib/gi18n.h>
@@ -44,6 +46,7 @@ enum
 {
     POPULATE_POPUP,
     ACTIVATE_ITEM,
+    ACTIVATE_ITEM_ALT,
     LAST_SIGNAL
 };
 
@@ -106,6 +109,30 @@ katze_array_action_class_init (KatzeArrayActionClass* class)
                                        g_cclosure_marshal_VOID__OBJECT,
                                        G_TYPE_NONE, 1,
                                        KATZE_TYPE_ITEM);
+
+    /**
+     * KatzeArrayAction::activate-item-alt:
+     * @array: the object on which the signal is emitted
+     * @item: the item being activated
+     * @button: the mouse button pressed
+     *
+     * An item was clicked with a particular button. Use this if you need
+     * to handle middle or right clicks specially.
+     *
+     * Return value: %TRUE if the event was handled. If %FALSE is returned,
+     *               the default "activate-item" signal is emitted.
+     *
+     * Since: 0.1.7
+     **/
+    signals[ACTIVATE_ITEM_ALT] = g_signal_new ("activate-item-alt",
+                                       G_TYPE_FROM_CLASS (class),
+                                       (GSignalFlags) (G_SIGNAL_RUN_LAST),
+                                       0,
+                                       0,
+                                       NULL,
+                                       katze_cclosure_marshal_BOOLEAN__OBJECT_UINT,
+                                       G_TYPE_BOOLEAN, 2,
+                                       KATZE_TYPE_ITEM, G_TYPE_UINT);
 
     gobject_class = G_OBJECT_CLASS (class);
     gobject_class->finalize = katze_array_action_finalize;
@@ -206,11 +233,33 @@ katze_array_action_activate (GtkAction* action)
 }
 
 static void
-katze_array_action_menu_item_activate_cb (GtkWidget*        proxy,
-                                          KatzeArrayAction* array_action)
+katze_array_action_menu_activate_cb  (GtkWidget*        proxy,
+                                      KatzeArrayAction* array_action)
 {
     KatzeItem* item = g_object_get_data (G_OBJECT (proxy), "KatzeItem");
     g_signal_emit (array_action, signals[ACTIVATE_ITEM], 0, item);
+}
+
+static gboolean
+katze_array_action_menu_button_press_cb (GtkWidget*        proxy,
+                                         GdkEventButton*   event,
+                                         KatzeArrayAction* array_action)
+{
+    KatzeItem* item = g_object_get_data (G_OBJECT (proxy), "KatzeItem");
+    gboolean handled;
+
+    g_signal_emit (array_action, signals[ACTIVATE_ITEM_ALT], 0, item,
+        event->button, &handled);
+
+    if (!handled)
+        g_signal_emit (array_action, signals[ACTIVATE_ITEM], 0, item);
+
+    /* we need to block the 'activate' handler which would be called
+     * otherwise as well */
+    g_signal_handlers_block_by_func (proxy,
+        katze_array_action_menu_activate_cb, array_action);
+
+    return TRUE;
 }
 
 static void
@@ -268,8 +317,13 @@ katze_array_action_generate_menu (KatzeArrayAction* array_action,
                 G_CALLBACK (katze_array_action_menu_item_select_cb), array_action);
         }
         else
+        {
+            g_signal_connect (menuitem, "button-press-event",
+                G_CALLBACK (katze_array_action_menu_button_press_cb), array_action);
+            /* we need the 'activate' signal as well for keyboard events */
             g_signal_connect (menuitem, "activate",
-                G_CALLBACK (katze_array_action_menu_item_activate_cb), array_action);
+                G_CALLBACK (katze_array_action_menu_activate_cb), array_action);
+        }
         gtk_widget_show (menuitem);
     }
     if (!i)
@@ -418,6 +472,44 @@ katze_array_action_item_notify_cb (KatzeItem*   item,
     }
 }
 
+static gboolean
+katze_array_action_proxy_create_menu_proxy_cb (GtkWidget* proxy,
+                                               KatzeItem* item)
+{
+    KatzeArrayAction* array_action;
+    GtkWidget* menuitem;
+    const gchar* icon_name;
+    GtkWidget* image;
+    GdkPixbuf* icon;
+
+    array_action = g_object_get_data (G_OBJECT (proxy), "KatzeArrayAction");
+    menuitem = katze_image_menu_item_new_ellipsized (
+        katze_item_get_name (item));
+    if ((icon_name = katze_item_get_icon (item)) && *icon_name)
+        image = gtk_image_new_from_icon_name (icon_name, GTK_ICON_SIZE_MENU);
+    else
+    {
+        if (KATZE_IS_ARRAY (item))
+            icon = gtk_widget_render_icon (menuitem,
+                GTK_STOCK_DIRECTORY, GTK_ICON_SIZE_MENU, NULL);
+        else
+            icon = katze_net_load_icon (array_action->net,
+                katze_item_get_uri (item), NULL, proxy, NULL);
+        image = gtk_image_new_from_pixbuf (icon);
+        g_object_unref (icon);
+    }
+    gtk_image_menu_item_set_image (GTK_IMAGE_MENU_ITEM (menuitem), image);
+    g_object_set_data (G_OBJECT (menuitem), "KatzeItem", item);
+    g_signal_connect (menuitem, "button-press-event",
+        G_CALLBACK (katze_array_action_menu_button_press_cb), array_action);
+    /* we need the 'activate' signal as well for keyboard events */
+    g_signal_connect (menuitem, "activate",
+        G_CALLBACK (katze_array_action_menu_activate_cb), array_action);
+    gtk_tool_item_set_proxy_menu_item (GTK_TOOL_ITEM (proxy),
+        "katze-tool-item-menu", menuitem);
+    return TRUE;
+}
+
 /**
  * katze_array_action_create_tool_item_for:
  * @array_action: a #KatzeArrayAction
@@ -453,6 +545,8 @@ katze_array_action_create_tool_item_for (KatzeArrayAction* array_action,
         return gtk_separator_tool_item_new ();
 
     toolitem = gtk_tool_button_new (NULL, NULL);
+    g_signal_connect (toolitem, "create-menu-proxy",
+        G_CALLBACK (katze_array_action_proxy_create_menu_proxy_cb), item);
     if (KATZE_IS_ARRAY (item))
         icon = gtk_widget_render_icon (GTK_WIDGET (toolitem),
             GTK_STOCK_DIRECTORY, GTK_ICON_SIZE_MENU, NULL);

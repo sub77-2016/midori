@@ -100,8 +100,23 @@ midori_transfers_button_clear_clicked_cb (GtkToolItem*    toolitem,
 {
     GtkTreeModel* model = gtk_tree_view_get_model (
         GTK_TREE_VIEW (transfers->treeview));
-    /* FIXME: Clear only finished and cancelled downloads */
-    gtk_tree_store_clear (GTK_TREE_STORE (model));
+    GtkTreeIter iter;
+    gint n = 0;
+    while ((gtk_tree_model_iter_nth_child (model, &iter, NULL, n++)))
+    {
+        #if WEBKIT_CHECK_VERSION (1, 1, 3)
+        WebKitDownload* download;
+        WebKitDownloadStatus status;
+
+        gtk_tree_model_get (model, &iter, 1, &download, -1);
+
+        status = webkit_download_get_status (download);
+        if (status == WEBKIT_DOWNLOAD_STATUS_FINISHED
+            || status == WEBKIT_DOWNLOAD_STATUS_CANCELLED)
+            gtk_list_store_remove (GTK_LIST_STORE (model), &iter);
+        g_object_unref (download);
+        #endif
+    }
 }
 
 static GtkWidget*
@@ -173,8 +188,8 @@ midori_transfers_browser_add_download_cb (MidoriBrowser*   browser,
 
     treeview = GTK_TREE_VIEW (transfers->treeview);
     model = gtk_tree_view_get_model (treeview);
-    gtk_tree_store_insert_with_values (GTK_TREE_STORE (model),
-                                       NULL, NULL, G_MAXINT,
+    gtk_list_store_insert_with_values (GTK_LIST_STORE (model),
+                                       NULL, G_MAXINT,
                                        0, NULL, 1, download, -1);
     g_signal_connect (download, "notify::progress",
         G_CALLBACK (midori_transfers_download_notify_progress_cb), transfers);
@@ -326,17 +341,10 @@ midori_transfers_treeview_row_activated_cb (GtkTreeView*       treeview,
             case WEBKIT_DOWNLOAD_STATUS_FINISHED:
             {
                 const gchar* uri;
-                gboolean success;
 
                 uri = webkit_download_get_destination_uri (download);
-                success = gtk_show_uri (gtk_widget_get_screen (GTK_WIDGET (
+                sokoke_show_uri (gtk_widget_get_screen (GTK_WIDGET (
                     treeview)), uri, gtk_get_current_event_time (), NULL);
-                if (!success)
-                {
-                    gchar* command = g_strconcat ("exo-open ", uri, NULL);
-                    success = g_spawn_command_line_async (command, NULL);
-                    g_free (command);
-                }
                 break;
             }
             case WEBKIT_DOWNLOAD_STATUS_CANCELLED:
@@ -354,10 +362,13 @@ midori_transfers_hierarchy_changed_cb (MidoriTransfers* transfers,
                                        GtkWidget*       old_parent)
 {
     #if WEBKIT_CHECK_VERSION (1, 1, 3)
-    GtkWidget* browser = gtk_widget_get_toplevel (GTK_WIDGET (transfers));
-    if (GTK_WIDGET_TOPLEVEL (browser))
+    MidoriBrowser* browser = midori_browser_get_for_widget (GTK_WIDGET (transfers));
+    if (MIDORI_IS_BROWSER (browser))
         g_signal_connect (browser, "add-download",
             G_CALLBACK (midori_transfers_browser_add_download_cb), transfers);
+    if (old_parent)
+        g_signal_handlers_disconnect_by_func (old_parent,
+            midori_transfers_browser_add_download_cb, transfers);
     #endif
 }
 
@@ -368,7 +379,7 @@ midori_transfers_init (MidoriTransfers* transfers)
     GtkTreeViewColumn* column;
     GtkCellRenderer* renderer_pixbuf;
     GtkCellRenderer* renderer_text;
-    GtkTreeStore* treestore = gtk_tree_store_new (2, GDK_TYPE_PIXBUF, G_TYPE_OBJECT);
+    GtkListStore* treestore = gtk_list_store_new (2, GDK_TYPE_PIXBUF, G_TYPE_OBJECT);
     transfers->treeview = gtk_tree_view_new_with_model (GTK_TREE_MODEL (treestore));
     gtk_tree_view_set_headers_visible (GTK_TREE_VIEW (transfers->treeview), FALSE);
     column = gtk_tree_view_column_new ();

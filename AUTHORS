@@ -15,6 +15,8 @@ Contributors:
     Nick Schermer <nick@xfce.org>
     Matthias Kruk <mkruk@matthiaskruk.de>
     Johannes Reinhardt <jreinhardt@ist-dein-freund.de>
+    Jean-François Guchens <zcx000@gmail.com>
+    Jérôme Geulfucci <jeromeg@xfce.org>
 
 Graphics:
     extension: Nancy Runge <nancy@twotoasts.de>
@@ -23,6 +25,7 @@ Graphics:
     logo-shade: Nancy Runge <nancy@twotoasts.de>
 
 Translations:
+    cs: David Stancl <dstancl@dstancl.cz>
     da: Per Kongstad <p_kongstad@op.pl>
     de: Enrico Tröger <enrico.troeger@uvena.de>
     de: Christian Dywan <christian@twotoasts.de>
@@ -39,6 +42,7 @@ Translations:
     fr: Adrien Nader <camaradetux@gmail.com>
     fr: Robert-André Mauchin <zebob.m@pengzone.org>
     fr: Pascal Gervais <pggervais@yahoo.ca>
+    fr: Jérôme Geulfucci <jeromeg@xfce.org>
     gl: Miguel Anxo Bouzada <mbouzada@gmail.com>
     he: Shlomi Israel <sijproject@gmail.com>
     hu: SZERVÁC Attila <sas@321.hu>
@@ -49,8 +53,11 @@ Translations:
     pl: Przemysław Sitek <el.pescado@gazeta.pl>
     pl: Lukasz Romanowicz <romanowicz88@gmail.com>
     pt_PT: Sérgio Marques <smarquespt@gmail.com>
+    ro: Igor Știrbu <igor.stirbu@gmail.com>
+    ro: Mișu Moldovan <dumol@gnome.ro>
     ru: Troitskiy Nikita <niktr@mail.ru>
     ru: Anton Shestakov <engored@ya.ru>
+    sk: Robert Hartl <hartl.robert@gmail.com>
     sv: Mikael Magnusson <mikachu@comhem.se>
     tr: Mirat Can Bayrak <MiratCanBayrak@gmail.com>
     uk: Dmitry Nikitin <luckas_fb@mail.ru>

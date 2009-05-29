@@ -35,6 +35,7 @@
 #else
     #define is_writable(_cfg_filename) 1
 #endif
+#include <errno.h>
 #include <stdlib.h>
 #include <string.h>
 #include <glib/gstdio.h>
@@ -71,7 +72,8 @@ build_config_filename (const gchar* filename)
 }
 
 static MidoriWebSettings*
-settings_new_from_file (const gchar* filename)
+settings_new_from_file (const gchar* filename,
+                        gchar***     extensions)
 {
     MidoriWebSettings* settings = midori_web_settings_new ();
     GKeyFile* key_file = g_key_file_new ();
@@ -156,11 +158,17 @@ settings_new_from_file (const gchar* filename)
             g_warning (_("Invalid configuration value '%s'"), property);
     }
     g_free (pspecs);
+
+    *extensions = g_key_file_get_keys (key_file, "extensions", NULL, NULL);
+
+    g_key_file_free (key_file);
+
     return settings;
 }
 
 static gboolean
 settings_save_to_file (MidoriWebSettings* settings,
+                       MidoriApp*         app,
                        const gchar*       filename,
                        GError**           error)
 {
@@ -172,6 +180,8 @@ settings_save_to_file (MidoriWebSettings* settings,
     GType type;
     const gchar* property;
     gboolean saved;
+    KatzeArray* extensions = katze_object_get_object (app, "extensions");
+    MidoriExtension* extension;
 
     key_file = g_key_file_new ();
     class = G_OBJECT_GET_CLASS (settings);
@@ -228,6 +238,14 @@ settings_save_to_file (MidoriWebSettings* settings,
             g_warning (_("Invalid configuration value '%s'"), property);
     }
     g_free (pspecs);
+
+    i = 0;
+    while ((extension = katze_array_get_nth_item (extensions, i++)))
+        if (midori_extension_is_active (extension))
+            g_key_file_set_boolean (key_file, "extensions",
+                g_object_get_data (G_OBJECT (extension), "filename"), TRUE);
+    g_object_unref (extensions);
+
     saved = sokoke_key_file_save_to_file (key_file, filename, error);
     g_key_file_free (key_file);
     return saved;
@@ -710,14 +728,15 @@ midori_app_quit_cb (MidoriApp* app)
 
 static void
 settings_notify_cb (MidoriWebSettings* settings,
-                    GParamSpec*        pspec)
+                    GParamSpec*        pspec,
+                    MidoriApp*         app)
 {
     gchar* config_file;
     GError* error;
 
     config_file = build_config_filename ("config");
     error = NULL;
-    if (!settings_save_to_file (settings, config_file, &error))
+    if (!settings_save_to_file (settings, app, config_file, &error))
     {
         g_warning (_("The configuration couldn't be saved. %s"), error->message);
         g_error_free (error);
@@ -1147,13 +1166,13 @@ static gboolean
 midori_load_extensions (gpointer data)
 {
     MidoriApp* app = MIDORI_APP (data);
+    gchar** active_extensions = g_object_get_data (G_OBJECT (app), "extensions");
     KatzeArray* extensions;
-    const gchar* filename;
     MidoriExtension* extension;
-    guint i;
 
     /* Load extensions */
     extensions = katze_array_new (MIDORI_TYPE_EXTENSION);
+    g_object_set (app, "extensions", extensions, NULL);
     if (g_module_supported ())
     {
         /* FIXME: Read extensions from system data dirs */
@@ -1165,6 +1184,8 @@ midori_load_extensions (gpointer data)
         extension_dir = g_dir_open (extension_path, 0, NULL);
         if (extension_dir != NULL)
         {
+            const gchar* filename;
+
             while ((filename = g_dir_read_name (extension_dir)))
             {
                 gchar* fullname;
@@ -1186,6 +1207,8 @@ midori_load_extensions (gpointer data)
                     extension = extension_init ();
                     /* FIXME: Validate the extension */
                     /* Signal that we want the extension to load and save */
+                    g_object_set_data_full (G_OBJECT (extension), "filename",
+                                            g_strdup (filename), g_free);
                     midori_extension_get_config_dir (extension);
                 }
                 else
@@ -1197,6 +1220,14 @@ midori_load_extensions (gpointer data)
                     g_warning ("%s", g_module_error ());
                 }
                 katze_array_add_item (extensions, extension);
+                if (active_extensions)
+                {
+                    guint i = 0;
+                    gchar* name;
+                    while ((name = active_extensions[i++]))
+                        if (!g_strcmp0 (filename, name))
+                            g_signal_emit_by_name (extension, "activate", app);
+                }
                 g_object_unref (extension);
             }
             g_dir_close (extension_dir);
@@ -1204,11 +1235,7 @@ midori_load_extensions (gpointer data)
         g_free (extension_path);
     }
 
-    g_object_set (app, "extensions", extensions, NULL);
-
-    i = 0;
-    while ((extension = katze_array_get_nth_item (extensions, i++)))
-        g_signal_emit_by_name (extension, "activate", app);
+    g_strfreev (active_extensions);
 
     return FALSE;
 }
@@ -1318,6 +1345,33 @@ midori_run_script (const gchar* filename)
     return 1;
 }
 
+#if WEBKIT_CHECK_VERSION (1, 1, 6)
+static void
+snapshot_load_finished_cb (GtkWidget*      web_view,
+                           WebKitWebFrame* web_frame,
+                           gchar*          filename)
+{
+    GError* error;
+    GtkPrintOperation* operation = gtk_print_operation_new ();
+    GtkPrintOperationAction action = GTK_PRINT_OPERATION_ACTION_EXPORT;
+    GtkPrintOperationResult result;
+
+    gtk_print_operation_set_export_filename (operation, filename);
+    error = NULL;
+    result = webkit_web_frame_print_full (web_frame, operation, action, &error);
+
+    if (error != NULL)
+    {
+        g_error ("%s", error->message);
+        gtk_main_quit ();
+    }
+
+    g_object_unref (operation);
+    g_print (_("Snapshot saved to: %s\n"), filename);
+    gtk_main_quit ();
+}
+#endif
+
 int
 main (int    argc,
       char** argv)
@@ -1325,6 +1379,7 @@ main (int    argc,
     gchar* webapp;
     gchar* config;
     gboolean run;
+    gchar* snapshot;
     gboolean version;
     gchar** uris;
     MidoriApp* app;
@@ -1338,6 +1393,10 @@ main (int    argc,
        N_("Use FOLDER as configuration folder"), N_("FOLDER") },
        { "run", 'r', 0, G_OPTION_ARG_NONE, &run,
        N_("Run the specified filename as javascript"), NULL },
+       #if WEBKIT_CHECK_VERSION (1, 1, 6)
+       { "snapshot", 's', 0, G_OPTION_ARG_STRING, &snapshot,
+       N_("Take a snapshot of the specified URI"), NULL },
+       #endif
        { "version", 'V', 0, G_OPTION_ARG_NONE, &version,
        N_("Display program version"), NULL },
        { G_OPTION_REMAINING, 0, 0, G_OPTION_ARG_STRING_ARRAY, &uris,
@@ -1345,6 +1404,7 @@ main (int    argc,
      { NULL }
     };
     GString* error_messages;
+    gchar** extensions;
     MidoriWebSettings* settings;
     gchar* config_file;
     MidoriStartup load_on_startup;
@@ -1379,6 +1439,7 @@ main (int    argc,
     webapp = NULL;
     config = NULL;
     run = FALSE;
+    snapshot = NULL;
     version = FALSE;
     uris = NULL;
     error = NULL;
@@ -1411,6 +1472,39 @@ main (int    argc,
         );
         return 0;
     }
+
+    #if WEBKIT_CHECK_VERSION (1, 1, 6)
+    if (snapshot)
+    {
+        gchar* filename;
+        gint fd;
+        GtkWidget* web_view;
+
+        fd = g_file_open_tmp ("snapshot-XXXXXX.pdf", &filename, &error);
+        close (fd);
+
+        error = NULL;
+        if (error)
+        {
+            g_error ("%s", error->message);
+            return 1;
+        }
+
+        if (g_unlink (filename) == -1)
+        {
+            g_error ("%s", g_strerror (errno));
+            return 1;
+        }
+
+        web_view = webkit_web_view_new ();
+        g_signal_connect (web_view, "load-finished",
+            G_CALLBACK (snapshot_load_finished_cb), filename);
+        webkit_web_view_open (WEBKIT_WEB_VIEW (web_view), snapshot);
+        gtk_main ();
+        g_free (filename);
+        return 0;
+    }
+    #endif
 
     /* Web Application support */
     if (webapp)
@@ -1497,7 +1591,7 @@ main (int    argc,
     error_messages = g_string_new (NULL);
     config_file = build_config_filename ("config");
     error = NULL;
-    settings = settings_new_from_file (config_file);
+    settings = settings_new_from_file (config_file, &extensions);
     katze_assign (config_file, build_config_filename ("accels"));
     gtk_accel_map_load (config_file);
     katze_assign (config_file, build_config_filename ("search"));
@@ -1657,7 +1751,7 @@ main (int    argc,
     katze_assign (config_file, build_config_filename ("config"));
     if (is_writable (config_file))
         g_signal_connect_after (settings, "notify",
-            G_CALLBACK (settings_notify_cb), NULL);
+            G_CALLBACK (settings_notify_cb), app);
 
     katze_assign (config_file, build_config_filename ("search"));
     if (is_writable (config_file))
@@ -1746,6 +1840,7 @@ main (int    argc,
         G_CALLBACK (midori_app_add_browser_cb), NULL);
 
     g_idle_add (midori_load_cookie_jar, settings);
+    g_object_set_data (G_OBJECT (app), "extensions", extensions);
     g_idle_add (midori_load_extensions, app);
     katze_item_set_parent (KATZE_ITEM (_session), app);
     g_idle_add (midori_load_session, _session);

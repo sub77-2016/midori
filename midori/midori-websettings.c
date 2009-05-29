@@ -49,7 +49,10 @@ struct _MidoriWebSettings
     MidoriStartup load_on_startup;
     gchar* homepage;
     gboolean show_crash_dialog;
+    gboolean speed_dial_in_new_tabs;
     gchar* download_folder;
+    gboolean ask_for_destination_folder;
+    gboolean notify_transfer_completed;
     gchar* download_manager;
     gchar* text_editor;
     gchar* news_aggregator;
@@ -81,6 +84,8 @@ struct _MidoriWebSettings
     MidoriIdentity identify_as;
     gchar* ident_string;
     gint cache_size;
+
+    gint clear_private_data;
 };
 
 struct _MidoriWebSettingsClass
@@ -119,7 +124,10 @@ enum
     PROP_LOAD_ON_STARTUP,
     PROP_HOMEPAGE,
     PROP_SHOW_CRASH_DIALOG,
+    PROP_SPEED_DIAL_IN_NEW_TABS,
     PROP_DOWNLOAD_FOLDER,
+    PROP_ASK_FOR_DESTINATION_FOLDER,
+    PROP_NOTIFY_TRANSFER_COMPLETED,
     PROP_DOWNLOAD_MANAGER,
     PROP_TEXT_EDITOR,
     PROP_NEWS_AGGREGATOR,
@@ -135,8 +143,6 @@ enum
     PROP_OPEN_TABS_NEXT_TO_CURRENT,
     PROP_OPEN_POPUPS_IN_TABS,
 
-    PROP_ENFORCE_96_DPI,
-    PROP_ENABLE_DEVELOPER_EXTRAS,
     PROP_ZOOM_TEXT_AND_IMAGES,
     PROP_FIND_WHILE_TYPING,
     PROP_ACCEPT_COOKIES,
@@ -152,7 +158,9 @@ enum
     PROP_AUTO_DETECT_PROXY,
     PROP_IDENTIFY_AS,
     PROP_IDENT_STRING,
-    PROP_CACHE_SIZE
+    PROP_CACHE_SIZE,
+
+    PROP_CLEAR_PRIVATE_DATA
 };
 
 GType
@@ -541,7 +549,7 @@ midori_web_settings_class_init (MidoriWebSettingsClass* class)
                                      _("Load on Startup"),
                                      _("What to load on startup"),
                                      MIDORI_TYPE_STARTUP,
-                                     MIDORI_STARTUP_HOMEPAGE,
+                                     MIDORI_STARTUP_LAST_OPEN_PAGES,
                                      flags));
 
     g_object_class_install_property (gobject_class,
@@ -569,6 +577,27 @@ midori_web_settings_class_init (MidoriWebSettingsClass* class)
                                      TRUE,
                                      flags));
 
+    /**
+    * MidoriWebSettings:speed-dial-in-new-tabs:
+    *
+    * Show spee dial in newly opened tabs.
+    *
+    * Since: 0.1.7
+    */
+    g_object_class_install_property (gobject_class,
+                                     PROP_SPEED_DIAL_IN_NEW_TABS,
+                                     g_param_spec_boolean (
+                                     "speed-dial-in-new-tabs",
+        /* i18n: Speed dial, webpage shortcuts, named for the phone function */
+                                     _("Show speed dial in new tabs"),
+                                     _("Show speed dial in newly opened tabs"),
+                                     TRUE,
+    #if GTK_CHECK_VERSION (2, 14, 0)
+                                     flags));
+    #else
+                                     G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
+    #endif
+
     g_object_class_install_property (gobject_class,
                                      PROP_DOWNLOAD_FOLDER,
                                      g_param_spec_string (
@@ -576,6 +605,46 @@ midori_web_settings_class_init (MidoriWebSettingsClass* class)
                                      _("Download Folder"),
                                      _("The folder downloaded files are saved to"),
                                      midori_get_download_dir (),
+    #if WEBKIT_CHECK_VERSION (1, 1, 3)
+                                     G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+    #else
+                                     G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
+    #endif
+
+    /**
+     * MidoriWebSettings:ask-for-destination-folder:
+     *
+     * Whether to ask for the destination folder when downloading a file.
+     *
+     * Since: 0.1.7
+     */
+    g_object_class_install_property (gobject_class,
+                                     PROP_ASK_FOR_DESTINATION_FOLDER,
+                                     g_param_spec_boolean (
+                                     "ask-for-destination-folder",
+                                     _("Ask for the destination folder"),
+        _("Whether to ask for the destination folder when downloading a file"),
+                                     FALSE,
+    #if WEBKIT_CHECK_VERSION (1, 1, 3)
+                                     G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+    #else
+                                     G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
+    #endif
+
+    /**
+     * MidoriWebSettings:notify-transfer-completed:
+     *
+     * Whether to show a notification when a transfer has been completed.
+     *
+     * Since: 0.1.7
+     */
+    g_object_class_install_property (gobject_class,
+                                     PROP_NOTIFY_TRANSFER_COMPLETED,
+                                     g_param_spec_boolean (
+                                     "notify-transfer-completed",
+                                     _("Notify when a transfer has been completed"),
+        _("Whether to show a notification when a transfer has been completed"),
+                                     TRUE,
     #if WEBKIT_CHECK_VERSION (1, 1, 3)
                                      G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
     #else
@@ -701,7 +770,7 @@ midori_web_settings_class_init (MidoriWebSettingsClass* class)
                                      g_param_spec_boolean (
                                      "open-tabs-next-to-current",
                                      _("Open Tabs next to Current"),
-                                     _("Whether to open new tabs next to the current tab or after the last one"),
+        _("Whether to open new tabs next to the current tab or after the last one"),
                                      TRUE,
                                      flags));
 
@@ -882,6 +951,23 @@ midori_web_settings_class_init (MidoriWebSettingsClass* class)
                                      _("The allowed size of the cache"),
                                      0, G_MAXINT, 100,
                                      G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
+
+    /**
+     * MidoriWebSettings:clear-private-data:
+     *
+     * The private data selected for deletion.
+     *
+     * Since: 0.1.7
+     */
+    g_object_class_install_property (gobject_class,
+                                     PROP_CLEAR_PRIVATE_DATA,
+                                     g_param_spec_int (
+                                     "clear-private-data",
+                                     _("Clear private data"),
+                                     _("The private data selected for deletion"),
+                                     0, G_MAXINT, 0,
+                                     flags));
+
 }
 
 static void
@@ -889,7 +975,7 @@ notify_default_encoding_cb (GObject*    object,
                             GParamSpec* pspec)
 {
     MidoriWebSettings* web_settings;
-    const gchar* string;
+    gchar* string;
     const gchar* encoding;
 
     web_settings = MIDORI_WEB_SETTINGS (object);
@@ -908,12 +994,14 @@ notify_default_encoding_cb (GObject*    object,
         web_settings->preferred_encoding = MIDORI_ENCODING_WESTERN;
     else
         web_settings->preferred_encoding = MIDORI_ENCODING_CUSTOM;
+    g_free (string);
     g_object_notify (object, "preferred-encoding");
 }
 
 static void
 midori_web_settings_init (MidoriWebSettings* web_settings)
 {
+    web_settings->notify_transfer_completed = TRUE;
     web_settings->download_folder = g_strdup (midori_get_download_dir ());
     web_settings->http_proxy = NULL;
     web_settings->open_popups_in_tabs = TRUE;
@@ -928,6 +1016,20 @@ midori_web_settings_init (MidoriWebSettings* web_settings)
 static void
 midori_web_settings_finalize (GObject* object)
 {
+    MidoriWebSettings* web_settings;
+
+    web_settings = MIDORI_WEB_SETTINGS (object);
+
+    katze_assign (web_settings->toolbar_items, NULL);
+    katze_assign (web_settings->homepage, NULL);
+    katze_assign (web_settings->download_folder, NULL);
+    katze_assign (web_settings->download_manager, NULL);
+    katze_assign (web_settings->text_editor, NULL);
+    katze_assign (web_settings->news_aggregator, NULL);
+    katze_assign (web_settings->location_entry_search, NULL);
+    katze_assign (web_settings->http_proxy, NULL);
+    katze_assign (web_settings->ident_string, NULL);
+
     G_OBJECT_CLASS (midori_web_settings_parent_class)->finalize (object);
 }
 
@@ -1076,8 +1178,17 @@ midori_web_settings_set_property (GObject*      object,
     case PROP_SHOW_CRASH_DIALOG:
         web_settings->show_crash_dialog = g_value_get_boolean (value);
         break;
+    case PROP_SPEED_DIAL_IN_NEW_TABS:
+        web_settings->speed_dial_in_new_tabs = g_value_get_boolean (value);
+        break;
     case PROP_DOWNLOAD_FOLDER:
         katze_assign (web_settings->download_folder, g_value_dup_string (value));
+        break;
+    case PROP_ASK_FOR_DESTINATION_FOLDER:
+        web_settings->ask_for_destination_folder = g_value_get_boolean (value);
+        break;
+    case PROP_NOTIFY_TRANSFER_COMPLETED:
+        web_settings->notify_transfer_completed = g_value_get_boolean (value);
         break;
     case PROP_DOWNLOAD_MANAGER:
         katze_assign (web_settings->download_manager, g_value_dup_string (value));
@@ -1190,6 +1301,9 @@ midori_web_settings_set_property (GObject*      object,
     case PROP_CACHE_SIZE:
         web_settings->cache_size = g_value_get_int (value);
         break;
+    case PROP_CLEAR_PRIVATE_DATA:
+        web_settings->clear_private_data = g_value_get_int (value);
+        break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
         break;
@@ -1275,8 +1389,17 @@ midori_web_settings_get_property (GObject*    object,
     case PROP_SHOW_CRASH_DIALOG:
         g_value_set_boolean (value, web_settings->show_crash_dialog);
         break;
+    case PROP_SPEED_DIAL_IN_NEW_TABS:
+        g_value_set_boolean (value, web_settings->speed_dial_in_new_tabs);
+        break;
     case PROP_DOWNLOAD_FOLDER:
         g_value_set_string (value, web_settings->download_folder);
+        break;
+    case PROP_ASK_FOR_DESTINATION_FOLDER:
+        g_value_set_boolean (value, web_settings->ask_for_destination_folder);
+        break;
+    case PROP_NOTIFY_TRANSFER_COMPLETED:
+        g_value_set_boolean (value, web_settings->notify_transfer_completed);
         break;
     case PROP_DOWNLOAD_MANAGER:
         g_value_set_string (value, web_settings->download_manager);
@@ -1319,12 +1442,6 @@ midori_web_settings_get_property (GObject*    object,
         g_value_set_boolean (value, web_settings->open_popups_in_tabs);
         break;
 
-    case PROP_ENFORCE_96_DPI:
-        g_value_set_boolean (value, FALSE);
-        break;
-    case PROP_ENABLE_DEVELOPER_EXTRAS:
-        g_value_set_boolean (value, FALSE);
-        break;
     case PROP_ZOOM_TEXT_AND_IMAGES:
         g_value_set_boolean (value, web_settings->zoom_text_and_images);
         break;
@@ -1373,6 +1490,9 @@ midori_web_settings_get_property (GObject*    object,
         break;
     case PROP_CACHE_SIZE:
         g_value_set_int (value, web_settings->cache_size);
+        break;
+    case PROP_CLEAR_PRIVATE_DATA:
+        g_value_set_int (value, web_settings->clear_private_data);
         break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);

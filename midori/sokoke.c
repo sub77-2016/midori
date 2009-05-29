@@ -1,5 +1,6 @@
 /*
  Copyright (C) 2007-2009 Christian Dywan <christian@twotoasts.de>
+ Copyright (C) 2009 Dale Whittaker <dayul@users.sf.net>
 
  This library is free software; you can redistribute it and/or
  modify it under the terms of the GNU Lesser General Public
@@ -11,6 +12,8 @@
 
 #include "sokoke.h"
 #include "midori-stock.h"
+
+#include "compat.h"
 
 #if HAVE_CONFIG_H
     #include <config.h>
@@ -93,9 +96,53 @@ error_dialog (const gchar* short_message,
 
 }
 
+/**
+ * sokoke_show_uri:
+ * @screen: a #GdkScreen, or %NULL
+ * @uri: the URI to show
+ * @timestamp: the timestamp of the event
+ * @error: the location of a #GError, or %NULL
+ *
+ * Shows the specified URI with an appropriate application. This
+ * supports xdg-open, exo-open and gnome-open as fallbacks if
+ * GIO doesn't do the trick.
+ *
+ * Return value: %TRUE on success, %FALSE if an error occurred
+ **/
+gboolean
+sokoke_show_uri (GdkScreen*   screen,
+                 const gchar* uri,
+                 guint32      timestamp,
+                 GError**     error)
+{
+    const gchar* fallbacks [] = { "xdg-open", "exo-open", "gnome-open" };
+    gsize i;
+
+    g_return_val_if_fail (GDK_IS_SCREEN (screen) || !screen, FALSE);
+    g_return_val_if_fail (uri != NULL, FALSE);
+    g_return_val_if_fail (!error || !*error, FALSE);
+
+    if (gtk_show_uri (screen, uri, timestamp, error))
+        return TRUE;
+
+    for (i = 0; i < G_N_ELEMENTS (fallbacks); i++)
+    {
+        gchar* command = g_strconcat (fallbacks[i], " ", uri, NULL);
+        gboolean result = g_spawn_command_line_async (command, error);
+        g_free (command);
+        if (result)
+            return TRUE;
+        if (error)
+            *error = NULL;
+    }
+
+    return FALSE;
+}
+
 gboolean
 sokoke_spawn_program (const gchar* command,
-                      const gchar* argument)
+                      const gchar* argument,
+                      gboolean     quote)
 {
     gchar* argument_escaped;
     gchar* command_ready;
@@ -105,7 +152,7 @@ sokoke_spawn_program (const gchar* command,
     g_return_val_if_fail (command != NULL, FALSE);
     g_return_val_if_fail (argument != NULL, FALSE);
 
-    argument_escaped = g_shell_quote (argument);
+    argument_escaped = quote ? g_shell_quote (argument) : g_strdup (argument);
     if (strstr (command, "%s"))
         command_ready = g_strdup_printf (command, argument_escaped);
     else
@@ -175,6 +222,8 @@ sokoke_idn_to_punycode (gchar* uri)
             g_utf8_strncpy (buffer, hostname, offset);
             hostname = buffer;
         }
+        else
+            hostname = g_strdup (hostname);
     }
     else
         hostname = g_strdup (uri);
@@ -211,6 +260,36 @@ sokoke_idn_to_punycode (gchar* uri)
     #else
     return uri;
     #endif
+}
+
+/**
+ * sokoke_search_uri:
+ * @uri: a search URI with or without %s
+ * @keywords: keywords
+ *
+ * Takes a search engine URI and inserts the specified
+ * keywords. The @keywords are percent encoded. If the
+ * search URI contains a %s they keywords are inserted
+ * in that place, otherwise appended to the URI.
+ *
+ * Return value: a newly allocated search URI
+ **/
+gchar* sokoke_search_uri (const gchar* uri,
+                          const gchar* keywords)
+{
+    gchar* escaped;
+    gchar* search;
+
+    g_return_val_if_fail (uri != NULL, NULL);
+    g_return_val_if_fail (keywords != NULL, NULL);
+
+    escaped = g_uri_escape_string (keywords, " :/", TRUE);
+    if (strstr (uri, "%s"))
+        search = g_strdup_printf (uri, escaped);
+    else
+        search = g_strconcat (uri, escaped, NULL);
+    g_free (escaped);
+    return search;
 }
 
 gchar*
@@ -279,13 +358,8 @@ sokoke_magic_uri (const gchar* uri,
     if (parts[0] && parts[1])
         if ((item = katze_array_find_token (search_engines, parts[0])))
         {
-            gchar* uri_ = g_uri_escape_string (parts[1], " :/", TRUE);
             search_uri = katze_item_get_uri (item);
-            if (strstr (search_uri, "%s"))
-                search = g_strdup_printf (search_uri, uri_);
-            else
-                search = g_strconcat (search_uri, uri_, NULL);
-            g_free (uri_);
+            search = sokoke_search_uri (search_uri, parts[1]);
         }
     g_strfreev (parts);
     return search;
@@ -353,8 +427,10 @@ sokoke_get_desktop (void)
         /* Are we running in Xfce? */
         gint result;
         gchar *out = NULL;
+        gchar *err = NULL;
         gboolean success = g_spawn_command_line_sync ("xprop -root _DT_SAVE_MODE",
-            &out, NULL, &result, NULL);
+            &out, &err, &result, NULL);
+        g_free (err);
         if (success && ! result && out != NULL && strstr (out, "xfce4") != NULL)
             desktop = SOKOKE_DESKTOP_XFCE;
         else
@@ -427,34 +503,6 @@ sokoke_xfce_header_new (const gchar* icon,
 
         return vbox;
     }
-    return NULL;
-}
-
-GtkWidget*
-sokoke_superuser_warning_new (void)
-{
-    /* Create a horizontal bar with a security warning
-       This returns NULL if the user is no superuser */
-    #if HAVE_UNISTD_H
-    if (G_UNLIKELY (!geteuid ())) /* effective superuser? */
-    {
-        GtkWidget* hbox;
-        GtkWidget* label;
-
-        hbox = gtk_event_box_new ();
-        gtk_widget_modify_bg (hbox, GTK_STATE_NORMAL,
-                              &hbox->style->bg[GTK_STATE_SELECTED]);
-        /* i18n: A superuser, or system administrator, may not be 'root' */
-        label = gtk_label_new (_("Warning: You are using a superuser account!"));
-        gtk_misc_set_padding (GTK_MISC (label), 0, 2);
-        gtk_widget_modify_fg (GTK_WIDGET (label), GTK_STATE_NORMAL,
-            &GTK_WIDGET (label)->style->fg[GTK_STATE_SELECTED]);
-        gtk_widget_show (label);
-        gtk_container_add (GTK_CONTAINER (hbox), GTK_WIDGET (label));
-        gtk_widget_show (hbox);
-        return hbox;
-    }
-    #endif
     return NULL;
 }
 
@@ -605,6 +653,25 @@ sokoke_key_file_get_boolean_default (GKeyFile*      key_file,
     if (!g_key_file_has_key (key_file, group, key, NULL))
         return default_value;
     return g_key_file_get_boolean (key_file, group, key, error);
+}
+
+gchar**
+sokoke_key_file_get_string_list_default (GKeyFile*     key_file,
+                                         const gchar*  group,
+                                         const gchar*  key,
+                                         gsize*        length,
+                                         gchar**       default_value,
+                                         gsize*        default_length,
+                                         GError*       error)
+{
+    gchar** value = g_key_file_get_string_list (key_file, group, key, length, NULL);
+    if (!value)
+    {
+        value = g_strdupv (default_value);
+        if (length)
+            *length = *default_length;
+    }
+    return value;
 }
 
 gboolean
@@ -788,7 +855,7 @@ sokoke_register_stock_items (void)
         { STOCK_STYLES,         N_("User_styles"), 0, 0, GTK_STOCK_SELECT_COLOR },
         { STOCK_TAB_NEW,        N_("New _Tab"), 0, 0, GTK_STOCK_ADD },
         { STOCK_TRANSFERS,      N_("_Transfers"), 0, 0, GTK_STOCK_SAVE },
-        { STOCK_PLUGINS,        N_("P_lugins"), 0, 0, GTK_STOCK_CONVERT },
+        { STOCK_PLUGINS,        N_("Netscape p_lugins"), 0, 0, GTK_STOCK_CONVERT },
         { STOCK_USER_TRASH,     N_("_Closed Tabs and Windows"), 0, 0, "gtk-undo-ltr" },
         { STOCK_WINDOW_NEW,     N_("New _Window"), 0, 0, GTK_STOCK_ADD },
     };
@@ -879,4 +946,120 @@ sokoke_remove_path (const gchar* path,
     g_dir_close (dir);
     g_rmdir (path);
     return TRUE;
+}
+
+static void
+res_server_handler_cb (SoupServer*        res_server,
+                       SoupMessage*       msg,
+                       const gchar*       path,
+                       GHashTable*        query,
+                       SoupClientContext* client,
+                       gpointer           data)
+{
+    if (g_str_has_prefix (path, "/res"))
+    {
+        gchar* filename = g_strconcat (DATADIR "/midori", path, NULL);
+        gchar* contents;
+        gsize length;
+
+        if (g_file_get_contents (filename, &contents, &length, NULL))
+        {
+            gchar* content_type = g_content_type_guess (filename, (guchar*)contents,
+                                                        length, NULL);
+            gchar* mime_type = g_content_type_get_mime_type (content_type);
+            g_free (content_type);
+            soup_message_set_response (msg, mime_type, SOUP_MEMORY_TAKE,
+                                       contents, length);
+            g_free (mime_type);
+            soup_message_set_status (msg, 200);
+        }
+        else
+            soup_message_set_status (msg, 404);
+        g_free (filename);
+    }
+    else if (g_str_has_prefix (path, "/stock/"))
+    {
+        GtkIconTheme* icon_theme = gtk_icon_theme_get_default ();
+        const gchar* icon_name = &path[7] ? &path[7] : "";
+        gint icon_size = 22;
+        GdkPixbuf* icon;
+        gchar* contents;
+        gsize length;
+
+        if (g_ascii_isalpha (icon_name[0]))
+            icon_size = strstr (icon_name, "dialog") ? 48 : 22;
+        else if (g_ascii_isdigit (icon_name[0]))
+        {
+            guint i = 0;
+            while (icon_name[i])
+                if (icon_name[i++] == '/')
+                {
+                    gchar* size = g_strndup (icon_name, i - 1);
+                    icon_size = atoi (size);
+                    g_free (size);
+                    icon_name = &icon_name[i];
+                }
+        }
+
+        icon = gtk_icon_theme_load_icon (icon_theme, icon_name,
+            icon_size, 0, NULL);
+        if (!icon)
+            icon = gtk_icon_theme_load_icon (icon_theme, "gtk-missing-image",
+                icon_size, 0, NULL);
+
+        gdk_pixbuf_save_to_buffer (icon, &contents, &length, "png", NULL, NULL);
+        g_object_unref (icon);
+        soup_message_set_response (msg, "image/png", SOUP_MEMORY_TAKE,
+                                   contents, length);
+        soup_message_set_status (msg, 200);
+    }
+    else
+    {
+        soup_message_set_status (msg, 404);
+    }
+}
+
+SoupServer*
+sokoke_get_res_server (void)
+{
+    static SoupServer* res_server = NULL;
+    SoupAddress* addr = NULL;
+
+    if (G_UNLIKELY (!res_server))
+    {
+        addr = soup_address_new ("localhost", SOUP_ADDRESS_ANY_PORT);
+        soup_address_resolve_sync (addr, NULL);
+        res_server = soup_server_new ("interface", addr, NULL);
+        g_object_unref (addr);
+        soup_server_add_handler (res_server, "/",
+                                 res_server_handler_cb, NULL, NULL);
+        soup_server_run_async (res_server);
+    }
+
+    return res_server;
+}
+
+gchar*
+sokoke_replace_variables (const gchar* template,
+                          const gchar* variable_first, ...)
+{
+    gchar* result = g_strdup (template);
+    const gchar* variable;
+
+    va_list args;
+    va_start (args, variable_first);
+
+    for (variable = variable_first; variable; variable = va_arg (args, const gchar*))
+    {
+        const gchar* value = va_arg (args, const gchar*);
+        GRegex* regex = g_regex_new (variable, 0, 0, NULL);
+        gchar* replaced = result;
+        result = g_regex_replace_literal (regex, replaced, -1, 0, value, 0, NULL);
+        g_free (replaced);
+        g_regex_unref (regex);
+    }
+
+    va_end (args);
+
+    return result;
 }

@@ -84,7 +84,7 @@ midori_plugins_class_init (MidoriPluginsClass* class)
 static const gchar*
 midori_plugins_get_label (MidoriViewable* viewable)
 {
-    return _("Plugins");
+    return _("Netscape plugins");
 }
 
 static const gchar*
@@ -276,6 +276,10 @@ midori_plugins_init (MidoriPlugins* plugins)
                     NP_GetValue_func NP_GetValue;
                     const gchar* plugin_name;
                     const gchar* plugin_description;
+
+                    /* Ignore files which don't have the correct suffix */
+                    if (!g_str_has_suffix (filename, G_MODULE_SUFFIX))
+                        continue;
 
                     fullname = g_build_filename (plugin_path, filename, NULL);
                     module = g_module_open (fullname, G_MODULE_BIND_LOCAL);
