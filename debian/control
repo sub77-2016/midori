@@ -2,8 +2,7 @@ Source: midori
 Section: web
 Priority: optional
 Maintainer: Ryan Niebur <ryanryan52@gmail.com>
-Build-Depends:
- debhelper (>= 7.0.50),
+Build-Depends: debhelper (>= 7.0.50),
  quilt (>= 0.46-7),
  lsb-release,
  libgtk2.0-dev (>= 2.10),
@@ -25,8 +24,7 @@ Build-Depends:
 # xauth,
 # xfonts-base
 # Disabled optional dependencies:
-Build-Conflicts:
- gtk-doc-tools,
+Build-Conflicts: gtk-doc-tools,
  libgtksourceview2.0-dev (>= 2.0),
  libhildon-1-dev
 Standards-Version: 3.8.1
