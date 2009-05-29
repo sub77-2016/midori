@@ -9,12 +9,20 @@ Midori's user documentation.  This is similar to what Dillo did/does.
 
 --- a/midori/midori-websettings.c
 +++ b/midori/midori-websettings.c
-@@ -558,7 +558,7 @@
+@@ -10,6 +10,7 @@
+ */
+ 
+ #include "midori-websettings.h"
++#include "midori-debian.h"
+ 
+ #include "sokoke.h"
+ 
+@@ -558,7 +559,7 @@
                                       "homepage",
                                       _("Homepage"),
                                       _("The homepage"),
 -                                     "http://www.google.com",
-+                                     "file:///usr/share/doc/midori/user/midori.html",
++                                     DEBIAN_DISTRO_DEFAULT_HOMEPAGE,
                                       flags));
  
      /**

@@ -3,6 +3,11 @@
 %:
 	dh --with quilt $@
 
+override_dh_quilt_patch:
+	ln -sf ../debian/config/$(shell lsb_release -is).h midori/midori-debian.h
+	test -e midori/midori-debian.h
+	dh_quilt_patch
+
 override_dh_auto_clean:
 	./waf --nocache distclean
 	rm -rf _build_

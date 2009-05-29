@@ -5,6 +5,7 @@ Maintainer: Ryan Niebur <ryanryan52@gmail.com>
 Build-Depends:
  debhelper (>= 7.0.50),
  quilt (>= 0.46-7),
+ lsb-release,
  libgtk2.0-dev (>= 2.10),
  libglib2.0-dev,
  libwebkit-dev (>= 1.1),
