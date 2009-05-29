@@ -33,7 +33,7 @@ Homepage: http://software.twotoasts.de/index.php?/pages/midori_summary.html
 
 Package: midori
 Architecture: any
-Depends: ${shlibs:Depends}, ${misc:Depends}, dbus-x11
+Depends: ${shlibs:Depends}, ${misc:Depends}, libnotify1, dbus-x11
 Recommends: gnome-icon-theme
 Provides: www-browser
 # For http://bugs.debian.org/522436 (missing symbols):
