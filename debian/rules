@@ -2,7 +2,11 @@
 
 CMD=$(shell echo $@ | sed 's/override_//')
 
-CONFIG_FILE=debian/config/$(shell lsb_release -is).h
+DISTRO=$(shell lsb_release -is)
+CONFIG_FILE=debian/config/$(DISTRO).h
+ifneq (0, $(shell test -e $(CONFIG_FILE); echo "$$?"))
+	CONFIG_FILE=debian/config/Debian.h
+endif
 
 %:
 	dh --with quilt $@
