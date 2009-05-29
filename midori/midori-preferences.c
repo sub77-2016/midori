@@ -419,89 +419,60 @@ midori_preferences_set_settings (MidoriPreferences* preferences,
     }
     FILLED_ADD (hbox, 1, 2, 1, 2);
     button = katze_property_proxy (settings, "show-crash-dialog", NULL);
-    SPANNED_ADD (button, 0, 2, 2, 3);
+    INDENTED_ADD (button, 0, 1, 2, 3);
+    button = katze_property_proxy (settings, "speed-dial-in-new-tabs", NULL);
+    FILLED_ADD (button, 1, 2, 2, 3);
     FRAME_NEW (_("Transfers"));
-    TABLE_NEW (4, 2);
-    #if WEBKIT_CHECK_VERSION (1, 1, 3)
+    TABLE_NEW (2, 2);
     label = katze_property_label (settings, "download-folder");
     INDENTED_ADD (label, 0, 1, 0, 1);
     button = katze_property_proxy (settings, "download-folder", "folder");
     FILLED_ADD (button, 1, 2, 0, 1);
-    #endif
-    label = katze_property_label (settings, "download-manager");
+    label = katze_property_proxy (settings, "ask-for-destination-folder", NULL);
+    gtk_widget_set_sensitive (label, FALSE);
     INDENTED_ADD (label, 0, 1, 1, 2);
-    hbox = gtk_hbox_new (FALSE, 4);
-    button = gtk_image_new ();
-    gtk_icon_size_lookup_for_settings (gtk_widget_get_settings (button),
-        GTK_ICON_SIZE_MENU, &icon_width, &icon_height);
-    gtk_widget_set_size_request (button, icon_width, icon_height);
-    gtk_box_pack_start (GTK_BOX (hbox), button, FALSE, FALSE, 4);
-    entry = katze_property_proxy (settings, "download-manager", NULL);
-    gtk_box_pack_start (GTK_BOX (hbox), entry, TRUE, TRUE, 0);
-    proxy_download_manager_icon_cb (entry, NULL, GTK_IMAGE (button));
-    g_signal_connect (entry, "focus-out-event",
-        G_CALLBACK (proxy_download_manager_icon_cb), button);
-    FILLED_ADD (hbox, 1, 2, 1, 2);
-    label = katze_property_label (settings, "text-editor");
-    INDENTED_ADD (label, 0, 1, 2, 3);
-    hbox = gtk_hbox_new (FALSE, 4);
-    button = gtk_image_new ();
-    gtk_icon_size_lookup_for_settings (gtk_widget_get_settings (button),
-        GTK_ICON_SIZE_MENU, &icon_width, &icon_height);
-    gtk_widget_set_size_request (button, icon_width, icon_height);
-    gtk_box_pack_start (GTK_BOX (hbox), button, FALSE, FALSE, 4);
-    entry = katze_property_proxy (settings, "text-editor", NULL);
-    gtk_box_pack_start (GTK_BOX (hbox), entry, TRUE, TRUE, 0);
-    proxy_download_manager_icon_cb (entry, NULL, GTK_IMAGE (button));
-    g_signal_connect (entry, "focus-out-event",
-        G_CALLBACK (proxy_download_manager_icon_cb), button);
-    FILLED_ADD (hbox, 1, 2, 2, 3);
-    label = katze_property_label (settings, "news-aggregator");
-    INDENTED_ADD (label, 0, 1, 3, 4);
-    hbox = gtk_hbox_new (FALSE, 4);
-    button = gtk_image_new ();
-    gtk_icon_size_lookup_for_settings (gtk_widget_get_settings (button),
-        GTK_ICON_SIZE_MENU, &icon_width, &icon_height);
-    gtk_widget_set_size_request (button, icon_width, icon_height);
-    gtk_box_pack_start (GTK_BOX (hbox), button, FALSE, FALSE, 4);
-    entry = katze_property_proxy (settings, "news-aggregator", NULL);
-    gtk_box_pack_start (GTK_BOX (hbox), entry, TRUE, TRUE, 0);
-    proxy_download_manager_icon_cb (entry, NULL, GTK_IMAGE (button));
-    g_signal_connect (entry, "focus-out-event",
-        G_CALLBACK (proxy_download_manager_icon_cb), button);
-    FILLED_ADD (hbox, 1, 2, 3, 4);
+    button = katze_property_proxy (settings, "notify-transfer-completed", NULL);
+    /* FIXME: Disable the option if notifications presumably cannot be sent
+      gtk_widget_set_sensitive (button, FALSE); */
+    SPANNED_ADD (button, 1, 2, 1, 2);
 
     /* Page "Appearance" */
     PAGE_NEW (GTK_STOCK_SELECT_FONT, _("Appearance"));
     FRAME_NEW (_("Font settings"));
-    TABLE_NEW (6, 2);
+    TABLE_NEW (7, 2);
     label = gtk_label_new (_("Default Font Family"));
     INDENTED_ADD (label, 0, 1, 0, 1);
     hbox = gtk_hbox_new (FALSE, 4);
     button = katze_property_proxy (settings, "default-font-family", "font");
+    gtk_widget_set_tooltip_text (button, _("The default font family used to display text"));
     gtk_box_pack_start (GTK_BOX (hbox), button, TRUE, TRUE, 0);
     entry = katze_property_proxy (settings, "default-font-size", NULL);
     gtk_widget_set_tooltip_text (entry, _("The default font size used to display text"));
     gtk_box_pack_end (GTK_BOX (hbox), entry, FALSE, FALSE, 4);
     FILLED_ADD (hbox, 1, 2, 0, 1);
-    label = gtk_label_new (_("Minimum Font Size"));
+    label = gtk_label_new (_("Fixed-width Font Family"));
     INDENTED_ADD (label, 0, 1, 1, 2);
+    button = katze_property_proxy (settings, "monospace-font-family", "font");
+    gtk_widget_set_tooltip_text (button, _("The font family used to display fixed-width text"));
+    INDENTED_ADD (button, 1, 2, 1, 2);
+    label = gtk_label_new (_("Minimum Font Size"));
+    INDENTED_ADD (label, 0, 1, 2, 3);
     entry = katze_property_proxy (settings, "minimum-font-size", NULL);
     gtk_widget_set_tooltip_text (entry, _("The minimum font size used to display text"));
-    INDENTED_ADD (entry, 1, 2, 1, 2);
+    INDENTED_ADD (entry, 1, 2, 2, 3);
     label = katze_property_label (settings, "preferred-encoding");
-    INDENTED_ADD (label, 0, 1, 2, 3);
+    INDENTED_ADD (label, 0, 1, 3, 4);
     button = katze_property_proxy (settings, "preferred-encoding", NULL);
-    FILLED_ADD (button, 1, 2, 2, 3);
+    FILLED_ADD (button, 1, 2, 3, 4);
     label = katze_property_label (settings, "default-encoding");
     gtk_label_set_label (GTK_LABEL (label), _("Encoding"));
-    INDENTED_ADD (label, 0, 1, 3, 4);
+    INDENTED_ADD (label, 0, 1, 4, 5);
     entry = katze_property_proxy (settings, "default-encoding", NULL);
     gtk_widget_set_tooltip_text (entry, _("The character encoding to use by default"));
     g_signal_connect (settings, "notify::preferred-encoding",
         G_CALLBACK (midori_preferences_notify_preferred_encoding_cb), entry);
     midori_preferences_notify_preferred_encoding_cb (settings, NULL, entry);
-    FILLED_ADD (entry, 1, 2, 3, 4);
+    FILLED_ADD (entry, 1, 2, 4, 5);
 
     /* Page "Behavior" */
     PAGE_NEW (GTK_STOCK_SELECT_COLOR, _("Behavior"));
@@ -528,8 +499,8 @@ midori_preferences_set_settings (MidoriPreferences* preferences,
     gtk_widget_set_tooltip_text (button, _("Enable embedded scripting languages"));
     INDENTED_ADD (button, 0, 1, 2, 3);
     button = katze_property_proxy (settings, "enable-plugins", NULL);
-    gtk_button_set_label (GTK_BUTTON (button), _("Enable plugins"));
-    gtk_widget_set_tooltip_text (button, _("Enable embedded plugin objects"));
+    gtk_button_set_label (GTK_BUTTON (button), _("Enable Netscape plugins"));
+    gtk_widget_set_tooltip_text (button, _("Enable embedded Netscape plugin objects"));
     SPANNED_ADD (button, 1, 2, 2, 3);
     button = katze_property_proxy (settings, "enforce-96-dpi", NULL);
     gtk_button_set_label (GTK_BUTTON (button), _("Enforce 96 dots per inch"));
@@ -543,6 +514,18 @@ midori_preferences_set_settings (MidoriPreferences* preferences,
     SPANNED_ADD (button, 0, 1, 4, 5);
     button = katze_property_proxy (settings, "find-while-typing", NULL);
     SPANNED_ADD (button, 1, 2, 4, 5);
+    #if WEBKIT_CHECK_VERSION (1, 1, 6)
+    FRAME_NEW (_("Spell Checking"));
+    TABLE_NEW (1, 2);
+    button = katze_property_proxy (settings, "enable-spell-checking", NULL);
+    gtk_button_set_label (GTK_BUTTON (button), _("Enable Spell Checking"));
+    gtk_widget_set_tooltip_text (button, _("Enable spell checking while typing"));
+    INDENTED_ADD (button, 0, 1, 0, 1);
+    entry = katze_property_proxy (settings, "spell-checking-languages", NULL);
+    /* i18n: The example should be adjusted to contain a good local default */
+    gtk_widget_set_tooltip_text (entry, _("A comma separated list of languages to be used for spell checking, for example \"en_GB,de_DE\""));
+    FILLED_ADD (entry, 1, 2, 0, 1);
+    #endif
 
     /* Page "Interface" */
     PAGE_NEW (GTK_STOCK_CONVERT, _("Interface"));
@@ -585,6 +568,53 @@ midori_preferences_set_settings (MidoriPreferences* preferences,
     WIDGET_ADD (button, 0, 1, 5, 6);
     button = katze_property_proxy (settings, "close-buttons-on-tabs", NULL);
     WIDGET_ADD (button, 1, 2, 5, 6);
+
+    /* Page "Applications" */
+    PAGE_NEW (GTK_STOCK_CONVERT, _("Applications"));
+    FRAME_NEW (_("External applications"));
+    TABLE_NEW (3, 2);
+    label = katze_property_label (settings, "text-editor");
+    INDENTED_ADD (label, 0, 1, 0, 1);
+    hbox = gtk_hbox_new (FALSE, 4);
+    button = gtk_image_new ();
+    gtk_icon_size_lookup_for_settings (gtk_widget_get_settings (button),
+        GTK_ICON_SIZE_MENU, &icon_width, &icon_height);
+    gtk_widget_set_size_request (button, icon_width, icon_height);
+    gtk_box_pack_start (GTK_BOX (hbox), button, FALSE, FALSE, 4);
+    entry = katze_property_proxy (settings, "text-editor", NULL);
+    gtk_box_pack_start (GTK_BOX (hbox), entry, TRUE, TRUE, 0);
+    proxy_download_manager_icon_cb (entry, NULL, GTK_IMAGE (button));
+    g_signal_connect (entry, "focus-out-event",
+        G_CALLBACK (proxy_download_manager_icon_cb), button);
+    FILLED_ADD (hbox, 1, 2, 0, 1);
+    label = katze_property_label (settings, "download-manager");
+    INDENTED_ADD (label, 0, 1, 1, 2);
+    hbox = gtk_hbox_new (FALSE, 4);
+    button = gtk_image_new ();
+    gtk_icon_size_lookup_for_settings (gtk_widget_get_settings (button),
+        GTK_ICON_SIZE_MENU, &icon_width, &icon_height);
+    gtk_widget_set_size_request (button, icon_width, icon_height);
+    gtk_box_pack_start (GTK_BOX (hbox), button, FALSE, FALSE, 4);
+    entry = katze_property_proxy (settings, "download-manager", NULL);
+    gtk_box_pack_start (GTK_BOX (hbox), entry, TRUE, TRUE, 0);
+    proxy_download_manager_icon_cb (entry, NULL, GTK_IMAGE (button));
+    g_signal_connect (entry, "focus-out-event",
+        G_CALLBACK (proxy_download_manager_icon_cb), button);
+    FILLED_ADD (hbox, 1, 2, 1, 2);
+    label = katze_property_label (settings, "news-aggregator");
+    INDENTED_ADD (label, 0, 1, 2, 3);
+    hbox = gtk_hbox_new (FALSE, 4);
+    button = gtk_image_new ();
+    gtk_icon_size_lookup_for_settings (gtk_widget_get_settings (button),
+        GTK_ICON_SIZE_MENU, &icon_width, &icon_height);
+    gtk_widget_set_size_request (button, icon_width, icon_height);
+    gtk_box_pack_start (GTK_BOX (hbox), button, FALSE, FALSE, 4);
+    entry = katze_property_proxy (settings, "news-aggregator", NULL);
+    gtk_box_pack_start (GTK_BOX (hbox), entry, TRUE, TRUE, 0);
+    proxy_download_manager_icon_cb (entry, NULL, GTK_IMAGE (button));
+    g_signal_connect (entry, "focus-out-event",
+        G_CALLBACK (proxy_download_manager_icon_cb), button);
+    FILLED_ADD (hbox, 1, 2, 2, 3);
 
     /* Page "Network" */
     PAGE_NEW (GTK_STOCK_NETWORK, _("Network"));

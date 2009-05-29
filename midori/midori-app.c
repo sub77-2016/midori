@@ -24,6 +24,20 @@
     #include <unique/unique.h>
 #endif
 
+typedef struct _NotifyNotification NotifyNotification;
+
+typedef struct
+{
+    gboolean            (*init)               (const gchar* app_name);
+    void                (*uninit)             (void);
+    NotifyNotification* (*notification_new)   (const gchar* summary,
+                                               const gchar* body,
+                                               const gchar* icon,
+                                               GtkWidget*   attach);
+    gboolean            (*notification_show)  (NotifyNotification* notification,
+                                               GError**            error);
+} LibNotifyFuncs;
+
 struct _MidoriApp
 {
     GObject parent_instance;
@@ -41,6 +55,11 @@ struct _MidoriApp
     KatzeArray* browsers;
 
     gpointer instance;
+
+    /* libnotify handling */
+    gchar*         program_notify_send;
+    GModule*       libnotify_module;
+    LibNotifyFuncs libnotify_funcs;
 };
 
 struct _MidoriAppClass
@@ -50,6 +69,9 @@ struct _MidoriAppClass
     /* Signals */
     void
     (*add_browser)            (MidoriApp*     app,
+                               MidoriBrowser* browser);
+    void
+    (*remove_browser)         (MidoriApp*     app,
                                MidoriBrowser* browser);
     void
     (*quit)                   (MidoriApp*     app);
@@ -75,6 +97,7 @@ enum
 
 enum {
     ADD_BROWSER,
+    REMOVE_BROWSER,
     QUIT,
 
     LAST_SIGNAL
@@ -84,6 +107,9 @@ static guint signals[LAST_SIGNAL];
 
 static void
 midori_app_finalize (GObject* object);
+
+static void
+midori_app_init_libnotify (MidoriApp* app);
 
 static void
 midori_app_set_property (GObject*      object,
@@ -109,13 +135,18 @@ midori_browser_focus_in_event_cb (MidoriBrowser* browser,
 
 static void
 midori_browser_new_window_cb (MidoriBrowser* browser,
-                              const gchar*   uri,
+                              MidoriBrowser* new_browser,
                               MidoriApp*     app)
 {
-    MidoriBrowser* new_browser = midori_app_create_browser (app);
-    midori_app_add_browser (app, new_browser);
+    g_object_set (new_browser,
+                  "settings", app->settings,
+                  "bookmarks", app->bookmarks,
+                  "trash", app->trash,
+                  "search-engines", app->search_engines,
+                  "history", app->history,
+                  NULL);
 
-    midori_browser_add_uri (new_browser, uri);
+    midori_app_add_browser (app, new_browser);
     gtk_widget_show (GTK_WIDGET (new_browser));
 }
 
@@ -131,6 +162,7 @@ static gboolean
 midori_browser_destroy_cb (MidoriBrowser* browser,
                            MidoriApp*     app)
 {
+    g_signal_emit (app, signals[REMOVE_BROWSER], 0, browser);
     katze_array_remove_item (app->browsers, browser);
     if (!katze_array_is_empty (app->browsers))
         return FALSE;
@@ -160,6 +192,8 @@ _midori_app_add_browser (MidoriApp*     app,
         "signal::destroy", midori_browser_destroy_cb, app,
         "signal::quit", midori_browser_quit_cb, app,
         NULL);
+    g_signal_connect_swapped (browser, "send-notification",
+        G_CALLBACK (midori_app_send_notification), app);
 
     katze_array_add_item (app->browsers, browser);
 
@@ -185,6 +219,26 @@ midori_app_class_init (MidoriAppClass* class)
         G_TYPE_FROM_CLASS (class),
         (GSignalFlags)(G_SIGNAL_RUN_LAST | G_SIGNAL_ACTION),
         G_STRUCT_OFFSET (MidoriAppClass, add_browser),
+        0,
+        NULL,
+        g_cclosure_marshal_VOID__OBJECT,
+        G_TYPE_NONE, 1,
+        MIDORI_TYPE_BROWSER);
+
+    /**
+     * MidoriApp::remove-browser:
+     * @app: the object on which the signal is emitted
+     * @browser: a #MidoriBrowser
+     *
+     * A new browser is being added to the app.
+     *
+     * Since: 0.1.7
+     */
+    signals[REMOVE_BROWSER] = g_signal_new (
+        "remove-browser",
+        G_TYPE_FROM_CLASS (class),
+        (GSignalFlags)(G_SIGNAL_RUN_LAST | G_SIGNAL_ACTION),
+        0,
         0,
         NULL,
         g_cclosure_marshal_VOID__OBJECT,
@@ -461,6 +515,8 @@ midori_app_init (MidoriApp* app)
     app->browsers = katze_array_new (MIDORI_TYPE_BROWSER);
 
     app->instance = NULL;
+
+    midori_app_init_libnotify (app);
 }
 
 static void
@@ -480,6 +536,13 @@ midori_app_finalize (GObject* object)
     katze_object_assign (app->browsers, NULL);
 
     katze_object_assign (app->instance, NULL);
+
+    if (app->libnotify_module)
+    {
+        app->libnotify_funcs.uninit ();
+        g_module_close (app->libnotify_module);
+    }
+    katze_assign (app->program_notify_send, NULL);
 
     G_OBJECT_CLASS (midori_app_parent_class)->finalize (object);
 }
@@ -752,7 +815,7 @@ midori_app_add_browser (MidoriApp*     app,
  *
  * Return value: a new #MidoriBrowser
  *
- * Since: 1.0.2
+ * Since: 0.1.2
  **/
 MidoriBrowser*
 midori_app_create_browser (MidoriApp* app)
@@ -782,4 +845,87 @@ midori_app_quit (MidoriApp* app)
     g_return_if_fail (MIDORI_IS_APP (app));
 
     g_signal_emit (app, signals[QUIT], 0);
+}
+
+static void
+midori_app_init_libnotify (MidoriApp* app)
+{
+    gint i;
+    const gchar* sonames[] = { "libnotify.so", "libnotify.so.1", NULL };
+
+    for (i = 0; sonames[i] != NULL && app->libnotify_module == NULL; i++ )
+    {
+        app->libnotify_module = g_module_open (sonames[i], G_MODULE_BIND_LOCAL);
+    }
+
+    if (app->libnotify_module != NULL)
+    {
+        g_module_symbol (app->libnotify_module, "notify_init",
+            (void*) &(app->libnotify_funcs.init));
+        g_module_symbol (app->libnotify_module, "notify_uninit",
+            (void*) &(app->libnotify_funcs.uninit));
+        g_module_symbol (app->libnotify_module, "notify_notification_new",
+            (void*) &(app->libnotify_funcs.notification_new));
+        g_module_symbol (app->libnotify_module, "notify_notification_show",
+            (void*) &(app->libnotify_funcs.notification_show));
+
+        /* init libnotify */
+        if (!app->libnotify_funcs.init || !app->libnotify_funcs.init ("midori"))
+        {
+             g_module_close (app->libnotify_module);
+             app->libnotify_module = NULL;
+        }
+    }
+
+    app->program_notify_send = g_find_program_in_path ("notify-send");
+}
+
+/**
+ * midori_app_send_notification:
+ * @app: a #MidoriApp
+ * @title: title of the notification
+ * @message: text of the notification, or NULL
+ *
+ * Send #message to the notification daemon to display it.
+ * This is done by using libnotify if available or by using the program
+ * "notify-send" as a fallback.
+ *
+ * There is no guarantee that the message have been sent and displayed, as
+ * neither libnotify nor "notify-send" might be available or the
+ * notification daemon might not be running.
+ *
+ * Since 0.1.7
+ **/
+void
+midori_app_send_notification (MidoriApp*   app,
+                              const gchar* title,
+                              const gchar* message)
+{
+    gboolean sent = FALSE;
+
+    g_return_if_fail (MIDORI_IS_APP (app));
+    g_return_if_fail (title);
+
+    if (app->libnotify_module)
+    {
+        NotifyNotification* n;
+
+        n = app->libnotify_funcs.notification_new (title, message, "midori", NULL);
+        sent = app->libnotify_funcs.notification_show (n, NULL);
+        g_object_unref (n);
+    }
+    /* Fall back to the command line program "notify-send" */
+    if (!sent && app->program_notify_send)
+    {
+        gchar* msgq = g_shell_quote (message);
+        gchar* titleq = g_shell_quote (title);
+        gchar* command = g_strdup_printf ("%s -i midori %s %s",
+            app->program_notify_send, titleq, msgq);
+
+        g_spawn_command_line_async (command, NULL);
+
+        g_free (titleq);
+        g_free (msgq);
+        g_free (command);
+    }
 }

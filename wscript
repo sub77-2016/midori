@@ -22,7 +22,7 @@ import UnitTest
 
 major = 0
 minor = 1
-micro = 6
+micro = 7
 
 APPNAME = 'midori'
 VERSION = str (major) + '.' + str (minor) + '.' + str (micro)
@@ -212,7 +212,6 @@ def configure (conf):
     print "User documentation:  " + user_docs + " (docutils)"
     print "API documentation:   " + api_docs + " (gtk-doc)"
     print
-    print "Optional run time dependencies:"
     print "Single instance:     " + unique + " (unique)"
     if unique == 'yes' and conf.check_cfg (modversion='unique-1.0') == '1.0.4':
             Utils.pprint ('RED', 'unique 1.0.4 found, this version is erroneous.')
@@ -336,9 +335,13 @@ def build (bld):
             ' -o ' + blddir + '/data/logo-shade.png ' + \
             srcdir + '/data/logo-shade.svg'
         if not Utils.exec_command (command):
-            bld.install_files ('${DATADIR}/' + APPNAME, blddir + '/data/logo-shade.png')
+            bld.install_files ('${DATADIR}/' + APPNAME + '/res', blddir + '/data/logo-shade.png')
         else:
             Utils.pprint ('BLUE', "logo-shade could not be rasterized.")
+    bld.install_files ('${DATADIR}/' + APPNAME + '/res', 'data/error.html')
+    bld.install_files ('${DATADIR}/' + APPNAME + '/res', 'data/speeddial-head.html')
+    bld.install_files ('${DATADIR}/' + APPNAME + '/res', 'data/speeddial.json')
+    bld.install_files ('${DATADIR}/' + APPNAME + '/res', 'data/mootools.js')
 
     if Options.commands['check']:
         bld.add_subdirs ('tests')
@@ -393,8 +396,12 @@ def shutdown ():
     elif Options.options.run:
         folder = os.path.dirname (Build.bld.env['waf_config_files'][0])
         try:
-            ext = 'MIDORI_EXTENSION_PATH=' + folder + os.sep + 'extensions'
-            nls = 'NLSPATH=' + folder + os.sep + 'po'
+            relfolder = os.path.relpath (folder)
+        except:
+            pass
+        try:
+            ext = 'MIDORI_EXTENSION_PATH=' + relfolder + os.sep + 'extensions'
+            nls = 'NLSPATH=' + relfolder + os.sep + 'po'
             lang = os.environ['LANG']
             try:
                 for lang in os.listdir (folder + os.sep + 'po'):
@@ -410,7 +417,7 @@ def shutdown ():
                         'LC_MESSAGES' + os.sep + APPNAME + '.mo')
             except:
                 pass
-            command = folder + os.sep + APPNAME + os.sep + APPNAME
+            command = relfolder + os.sep + APPNAME + os.sep + APPNAME
             print ext + ' ' + nls + ' ' + command
             Utils.exec_command (ext + ' ' + nls + ' ' + command)
         except:

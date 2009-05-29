@@ -88,6 +88,11 @@ void
 midori_browser_remove_tab             (MidoriBrowser*     browser,
                                        GtkWidget*         widget);
 
+void
+midori_browser_foreach                (MidoriBrowser*     browser,
+                                       GtkCallback        callback,
+                                       gpointer           callback_data);
+
 gint
 midori_browser_add_item               (MidoriBrowser*     browser,
                                        KatzeItem*         item);
@@ -126,6 +131,9 @@ midori_browser_get_current_tab        (MidoriBrowser*     browser);
 
 KatzeArray*
 midori_browser_get_proxy_array        (MidoriBrowser*     browser);
+
+MidoriBrowser*
+midori_browser_get_for_widget         (GtkWidget*         widget);
 
 void
 midori_browser_quit                   (MidoriBrowser*     browser);

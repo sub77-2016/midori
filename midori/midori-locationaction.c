@@ -1,5 +1,5 @@
 /*
- Copyright (C) 2008 Christian Dywan <christian@twotoasts.de>
+ Copyright (C) 2008-2009 Christian Dywan <christian@twotoasts.de>
  Copyright (C) 2008 Dale Whittaker <dayul@users.sf.net>
 
  This library is free software; you can redistribute it and/or
@@ -189,12 +189,23 @@ midori_location_action_class_init (MidoriLocationActionClass* class)
                                      G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 }
 
+/* Allow this to be used in tests, it's otherwise private */
+/*static*/ GtkWidget*
+midori_location_action_entry_for_proxy (GtkWidget* proxy)
+{
+    GtkWidget* alignment = gtk_bin_get_child (GTK_BIN (proxy));
+    GtkWidget* hbox = gtk_bin_get_child (GTK_BIN (alignment));
+    GList* children = gtk_container_get_children (GTK_CONTAINER (hbox));
+    GtkWidget* entry = g_list_nth_data (children, 0);
+    g_list_free (children);
+    return entry;
+}
+
 static void
 midori_location_action_set_model (MidoriLocationAction* location_action,
                                   GtkTreeModel*         model)
 {
     GSList* proxies;
-    GtkWidget* alignment;
     GtkWidget* location_entry;
     GtkWidget* entry;
 
@@ -203,8 +214,7 @@ midori_location_action_set_model (MidoriLocationAction* location_action,
     for (; proxies != NULL; proxies = g_slist_next (proxies))
     if (GTK_IS_TOOL_ITEM (proxies->data))
     {
-        alignment = gtk_bin_get_child (GTK_BIN (proxies->data));
-        location_entry = gtk_bin_get_child (GTK_BIN (alignment));
+        location_entry = midori_location_action_entry_for_proxy (proxies->data);
         entry = gtk_bin_get_child (GTK_BIN (location_entry));
 
         g_object_set (location_entry, "model", model, NULL);
@@ -379,7 +389,6 @@ static void
 midori_location_action_activate (GtkAction* action)
 {
     GSList* proxies;
-    GtkWidget* alignment;
     GtkWidget* entry;
 
     proxies = gtk_action_get_proxies (action);
@@ -387,8 +396,7 @@ midori_location_action_activate (GtkAction* action)
     for (; proxies != NULL; proxies = g_slist_next (proxies))
     if (GTK_IS_TOOL_ITEM (proxies->data))
     {
-        alignment = gtk_bin_get_child (GTK_BIN (proxies->data));
-        entry = gtk_bin_get_child (GTK_BIN (alignment));
+        entry = midori_location_action_entry_for_proxy (proxies->data);
 
         /* Obviously only one widget can end up with the focus.
         Yet we can't predict which one that is, can we? */
@@ -399,22 +407,51 @@ midori_location_action_activate (GtkAction* action)
         GTK_ACTION_CLASS (midori_location_action_parent_class)->activate (action);
 }
 
+static void
+midori_location_action_go_clicked_cb (GtkWidget* button,
+                                      GtkAction* action)
+{
+    GtkWidget* hbox = gtk_widget_get_parent (button);
+    GList* children = gtk_container_get_children (GTK_CONTAINER (hbox));
+    GtkWidget* location_entry = g_list_nth_data (children, 0);
+    g_list_free (children);
+    GtkWidget* entry = gtk_bin_get_child (GTK_BIN (location_entry));
+    const gchar* uri = gtk_entry_get_text (GTK_ENTRY (entry));
+    if (uri && *uri)
+        g_signal_emit (action, signals[SUBMIT_URI], 0, uri, FALSE);
+}
+
 static GtkWidget*
 midori_location_action_create_tool_item (GtkAction* action)
 {
     GtkWidget* toolitem;
-    GtkWidget* location_entry;
     GtkWidget* alignment;
+    GtkWidget* hbox;
+    GtkWidget* location_entry;
+    GtkWidget* go_button;
+    GtkWidget* go_icon;
 
     toolitem = GTK_WIDGET (gtk_tool_item_new ());
     gtk_tool_item_set_expand (GTK_TOOL_ITEM (toolitem), TRUE);
-    location_entry = midori_location_entry_new ();
 
     alignment = gtk_alignment_new (0.0f, 0.5f, 1.0f, 0.1f);
-    gtk_container_add (GTK_CONTAINER (alignment), location_entry);
-    gtk_widget_show (location_entry);
-    gtk_container_add (GTK_CONTAINER (toolitem), alignment);
     gtk_widget_show (alignment);
+    gtk_container_add (GTK_CONTAINER (toolitem), alignment);
+    hbox = gtk_hbox_new (FALSE, 0);
+    gtk_widget_show (hbox);
+    gtk_container_add (GTK_CONTAINER (alignment), hbox);
+    location_entry = midori_location_entry_new ();
+    gtk_widget_show (location_entry);
+    gtk_box_pack_start (GTK_BOX (hbox), location_entry, TRUE, TRUE, 0);
+    go_button = gtk_button_new ();
+    gtk_button_set_focus_on_click (GTK_BUTTON (go_button), FALSE);
+    gtk_button_set_relief (GTK_BUTTON (go_button), GTK_RELIEF_NONE);
+    go_icon = gtk_image_new_from_stock (GTK_STOCK_JUMP_TO, GTK_ICON_SIZE_MENU);
+    gtk_button_set_image (GTK_BUTTON (go_button), go_icon);
+    gtk_widget_show (go_button);
+    gtk_box_pack_start (GTK_BOX (hbox), go_button, FALSE, FALSE, 0);
+    g_signal_connect (go_button, "clicked",
+        G_CALLBACK (midori_location_action_go_clicked_cb), action);
 
     return toolitem;
 }
@@ -620,6 +657,10 @@ midori_location_action_set_item (MidoriLocationAction*    location_action,
     GdkPixbuf* icon;
     GdkPixbuf* new_icon;
 
+    /* Ensure we keep the title if we added the same URI with a title before */
+    if (!item->title)
+        gtk_tree_model_get (location_action->model, iter, TITLE_COL, &item->title, -1);
+
     gtk_list_store_set (GTK_LIST_STORE (location_action->model), iter,
         URI_COL, item->uri, TITLE_COL, item->title, -1);
 
@@ -750,10 +791,7 @@ midori_location_entry_action_activated_cb (GtkEntryCompletion*   completion,
         gchar* search;
         if (!item)
             return;
-        if (strstr (uri, "%s"))
-            search = g_strdup_printf (uri, keywords);
-        else
-            search = g_strconcat (uri, " ", keywords, NULL);
+        search = sokoke_search_uri (uri, keywords);
         midori_location_action_set_uri (location_action, search);
         g_signal_emit (location_action, signals[SUBMIT_URI], 0, search, FALSE);
         g_free (search);
@@ -858,7 +896,6 @@ static void
 midori_location_action_connect_proxy (GtkAction* action,
                                       GtkWidget* proxy)
 {
-    GtkWidget* alignment;
     GtkWidget* entry;
     MidoriLocationAction* location_action;
     GtkCellRenderer* renderer;
@@ -873,8 +910,7 @@ midori_location_action_connect_proxy (GtkAction* action,
 
     if (GTK_IS_TOOL_ITEM (proxy))
     {
-        alignment = gtk_bin_get_child (GTK_BIN (proxy));
-        entry = gtk_bin_get_child (GTK_BIN (alignment));
+        entry = midori_location_action_entry_for_proxy (proxy);
 
         midori_location_entry_set_progress (MIDORI_LOCATION_ENTRY (entry),
             MIDORI_LOCATION_ACTION (action)->progress);
@@ -942,7 +978,6 @@ midori_location_action_set_text (MidoriLocationAction* location_action,
                                  const gchar*          text)
 {
     GSList* proxies;
-    GtkWidget* alignment;
     GtkWidget* location_entry;
     GtkWidget* entry;
     GtkTreeIter iter;
@@ -960,8 +995,7 @@ midori_location_action_set_text (MidoriLocationAction* location_action,
     for (; proxies != NULL; proxies = g_slist_next (proxies))
     if (GTK_IS_TOOL_ITEM (proxies->data))
     {
-        alignment = gtk_bin_get_child (GTK_BIN (proxies->data));
-        location_entry = gtk_bin_get_child (GTK_BIN (alignment));
+        location_entry = midori_location_action_entry_for_proxy (proxies->data);
         entry = gtk_bin_get_child (GTK_BIN (location_entry));
 
         gtk_entry_set_text (GTK_ENTRY (entry), text);
@@ -990,7 +1024,6 @@ midori_location_action_set_icon (MidoriLocationAction* location_action,
                                  GdkPixbuf*            icon)
 {
     GSList* proxies;
-    GtkWidget* alignment;
     GtkWidget* location_entry;
     GtkWidget* entry;
 
@@ -1002,8 +1035,7 @@ midori_location_action_set_icon (MidoriLocationAction* location_action,
     for (; proxies != NULL; proxies = g_slist_next (proxies))
     if (GTK_IS_TOOL_ITEM (proxies->data))
     {
-        alignment = gtk_bin_get_child (GTK_BIN (proxies->data));
-        location_entry = gtk_bin_get_child (GTK_BIN (alignment));
+        location_entry = midori_location_action_entry_for_proxy (proxies->data);
         entry = gtk_bin_get_child (GTK_BIN (location_entry));
 
         gtk_icon_entry_set_icon_from_pixbuf (GTK_ICON_ENTRY (entry),
@@ -1121,7 +1153,6 @@ midori_location_action_add_item (MidoriLocationAction* location_action,
                                  const gchar*          title)
 {
     GSList* proxies;
-    GtkWidget* alignment;
     GtkWidget* location_entry;
     GtkWidget* entry;
     MidoriLocationEntryItem item;
@@ -1147,8 +1178,7 @@ midori_location_action_add_item (MidoriLocationAction* location_action,
     if (GTK_IS_TOOL_ITEM (proxies->data) &&
         !strcmp (location_action->uri, uri))
     {
-        alignment = gtk_bin_get_child (GTK_BIN (proxies->data));
-        location_entry = gtk_bin_get_child (GTK_BIN (alignment));
+        location_entry = midori_location_action_entry_for_proxy (proxies->data);
         entry = gtk_bin_get_child (GTK_BIN (location_entry));
 
         gtk_icon_entry_set_icon_from_pixbuf (GTK_ICON_ENTRY (entry),
@@ -1162,7 +1192,6 @@ midori_location_action_set_icon_for_uri (MidoriLocationAction* location_action,
                                          const gchar*          uri)
 {
     GSList* proxies;
-    GtkWidget* alignment;
     GtkWidget* location_entry;
     GtkWidget* entry;
     MidoriLocationEntryItem item;
@@ -1182,8 +1211,7 @@ midori_location_action_set_icon_for_uri (MidoriLocationAction* location_action,
     if (GTK_IS_TOOL_ITEM (proxies->data) &&
         !g_strcmp0 (location_action->uri, uri))
     {
-        alignment = gtk_bin_get_child (GTK_BIN (proxies->data));
-        location_entry = gtk_bin_get_child (GTK_BIN (alignment));
+        location_entry = midori_location_action_entry_for_proxy (proxies->data);
         entry = gtk_bin_get_child (GTK_BIN (location_entry));
 
         gtk_icon_entry_set_icon_from_pixbuf (GTK_ICON_ENTRY (entry),
@@ -1223,7 +1251,6 @@ midori_location_action_set_search_engines (MidoriLocationAction* location_action
                                            KatzeArray*           search_engines)
 {
     GSList* proxies;
-    GtkWidget* alignment;
     GtkWidget* entry;
     GtkWidget* child;
     GtkEntryCompletion* completion;
@@ -1241,8 +1268,7 @@ midori_location_action_set_search_engines (MidoriLocationAction* location_action
         KatzeItem* item;
         guint i;
 
-        alignment = gtk_bin_get_child (GTK_BIN (proxies->data));
-        entry = gtk_bin_get_child (GTK_BIN (alignment));
+        entry = midori_location_action_entry_for_proxy (proxies->data);
         child = gtk_bin_get_child (GTK_BIN (entry));
 
         completion = gtk_entry_get_completion (GTK_ENTRY (child));
@@ -1270,7 +1296,6 @@ midori_location_action_set_progress (MidoriLocationAction* location_action,
                                      gdouble               progress)
 {
     GSList* proxies;
-    GtkWidget* alignment;
     GtkWidget* entry;
 
     g_return_if_fail (MIDORI_IS_LOCATION_ACTION (location_action));
@@ -1282,8 +1307,7 @@ midori_location_action_set_progress (MidoriLocationAction* location_action,
     for (; proxies != NULL; proxies = g_slist_next (proxies))
     if (GTK_IS_TOOL_ITEM (proxies->data))
     {
-        alignment = gtk_bin_get_child (GTK_BIN (proxies->data));
-        entry = gtk_bin_get_child (GTK_BIN (alignment));
+        entry = midori_location_action_entry_for_proxy (proxies->data);
 
         midori_location_entry_set_progress (MIDORI_LOCATION_ENTRY (entry),
                                             location_action->progress);
@@ -1295,7 +1319,6 @@ midori_location_action_set_secondary_icon (MidoriLocationAction* location_action
                                            const gchar*          stock_id)
 {
     GSList* proxies;
-    GtkWidget* alignment;
     GtkWidget* entry;
     GtkWidget* child;
     GtkStockItem stock_item;
@@ -1310,16 +1333,11 @@ midori_location_action_set_secondary_icon (MidoriLocationAction* location_action
     for (; proxies != NULL; proxies = g_slist_next (proxies))
     if (GTK_IS_TOOL_ITEM (proxies->data))
     {
-        alignment = gtk_bin_get_child (GTK_BIN (proxies->data));
-        entry = gtk_bin_get_child (GTK_BIN (alignment));
+        entry = midori_location_action_entry_for_proxy (proxies->data);
         child = gtk_bin_get_child (GTK_BIN (entry));
 
-        if (stock_id)
-            gtk_icon_entry_set_icon_from_stock (GTK_ICON_ENTRY (child),
-                GTK_ICON_ENTRY_SECONDARY, stock_id);
-        else
-            gtk_icon_entry_set_icon_from_pixbuf (GTK_ICON_ENTRY (child),
-                GTK_ICON_ENTRY_SECONDARY, NULL);
+        gtk_icon_entry_set_icon_from_stock (GTK_ICON_ENTRY (child),
+            GTK_ICON_ENTRY_SECONDARY, stock_id);
     }
 }
 

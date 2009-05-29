@@ -1,5 +1,6 @@
 /*
  Copyright (C) 2008-2009 Christian Dywan <christian@twotoasts.de>
+ Copyright (C) 2009 Dale Whittaker <dayul@users.sf.net>
 
  This library is free software; you can redistribute it and/or
  modify it under the terms of the GNU Lesser General Public
@@ -29,7 +30,7 @@ struct _MidoriExtensionPrivate
     gchar* authors;
 
     MidoriApp* app;
-    gboolean active;
+    gint active;
     gchar* config_dir;
     GList* lsettings;
     GHashTable* settings;
@@ -60,20 +61,37 @@ typedef struct
     gchar* value;
 } MESettingString;
 
+typedef struct
+{
+    gchar* name;
+    GType type;
+    gchar** default_value;
+    gchar** value;
+    gsize default_length;
+    gsize length;
+} MESettingStringList;
+
 void me_setting_free (gpointer setting)
 {
     MESettingString* string_setting = (MESettingString*)setting;
+    MESettingStringList* strlist_setting = (MESettingStringList*)setting;
 
-    g_free (string_setting->name);
     if (string_setting->type == G_TYPE_STRING)
     {
+        g_free (string_setting->name);
         g_free (string_setting->default_value);
         g_free (string_setting->value);
+    }
+    if (strlist_setting->type == G_TYPE_STRV)
+    {
+        g_free (strlist_setting->name);
+        g_strfreev (strlist_setting->default_value);
+        g_strfreev (strlist_setting->value);
     }
 }
 
 #define midori_extension_can_install_setting(extension, name) \
-    if (extension->priv->active) \
+    if (extension->priv->active > 0) \
     { \
         g_critical ("%s: Settings have to be installed before " \
                     "the extension is activated.", G_STRFUNC); \
@@ -276,6 +294,19 @@ midori_extension_activate_cb (MidoriExtension* extension,
             else
                 setting->value = g_strdup (setting->default_value);
         }
+        else if (setting->type == G_TYPE_STRV)
+        {
+            MESettingStringList* setting_ = (MESettingStringList*)setting;
+            if (extension->priv->key_file)
+            {
+                setting_->value = sokoke_key_file_get_string_list_default (
+                    extension->priv->key_file,
+                    "settings", setting->name, &setting_->length,
+                    setting_->default_value, &setting_->default_length, NULL);
+            }
+            else
+                setting_->value = g_strdupv (setting_->default_value);
+        }
         else
             g_assert_not_reached ();
 
@@ -283,7 +314,7 @@ midori_extension_activate_cb (MidoriExtension* extension,
     }
 
     extension->priv->app = g_object_ref (app);
-    extension->priv->active = TRUE;
+    extension->priv->active = 1;
     /* FIXME: Disconnect all signal handlers */
 }
 
@@ -294,7 +325,7 @@ midori_extension_init (MidoriExtension* extension)
         MIDORI_TYPE_EXTENSION, MidoriExtensionPrivate);
 
     extension->priv->app = NULL;
-    extension->priv->active = FALSE;
+    extension->priv->active = 0;
     extension->priv->config_dir = NULL;
     extension->priv->lsettings = NULL;
     extension->priv->settings = g_hash_table_new_full (g_str_hash, g_str_equal,
@@ -416,7 +447,30 @@ midori_extension_is_active (MidoriExtension* extension)
 {
     g_return_val_if_fail (MIDORI_IS_EXTENSION (extension), FALSE);
 
-    return extension->priv->active;
+    return extension->priv->active > 0;
+}
+
+/**
+ * midori_extension_is_deactivating:
+ * @extension: a #MidoriExtension
+ *
+ * Determines if @extension is currently in the process of
+ * being deactivated.
+ *
+ * Extensions remain fully functional even while being
+ * deactivated, so you can for instance still save settings
+ * but you may need to cleanup during deactivation.
+ *
+ * Return value: %TRUE if @extension is deactivating
+ *
+ * Since: 0.1.7
+ **/
+gboolean
+midori_extension_is_deactivating (MidoriExtension* extension)
+{
+    g_return_val_if_fail (MIDORI_IS_EXTENSION (extension), FALSE);
+
+    return extension->priv->active == 2;
 }
 
 /**
@@ -430,8 +484,9 @@ midori_extension_deactivate (MidoriExtension* extension)
 {
     g_return_if_fail (midori_extension_is_active (extension));
 
+    extension->priv->active = 2;
     g_signal_emit (extension, signals[DEACTIVATE], 0);
-    extension->priv->active = FALSE;
+    extension->priv->active = 0;
     katze_object_assign (extension->priv->app, NULL);
 }
 
@@ -459,8 +514,7 @@ midori_extension_get_app (MidoriExtension* extension)
  * @extension: a #MidoriExtension
  *
  * Retrieves the path to a directory reserved for configuration
- * files specific to the extension. For that purpose the 'name'
- * of the extension is actually part of the path.
+ * files specific to the extension.
  *
  * If settings are installed on the extension, they will be
  * loaded from and saved to a file "config" in this path.
@@ -470,12 +524,16 @@ midori_extension_get_app (MidoriExtension* extension)
 const gchar*
 midori_extension_get_config_dir (MidoriExtension* extension)
 {
+
     g_return_val_if_fail (midori_extension_is_prepared (extension), NULL);
 
     if (!extension->priv->config_dir)
+    {
+        gchar* filename = g_object_get_data (G_OBJECT (extension), "filename");
+        g_return_val_if_fail (filename != NULL, NULL);
         extension->priv->config_dir = g_build_filename (
-            sokoke_set_config_dir (NULL), "extensions",
-            extension->priv->name, NULL);
+            sokoke_set_config_dir (NULL), "extensions", filename, NULL);
+    }
 
     return extension->priv->config_dir;
 }
@@ -761,6 +819,118 @@ midori_extension_set_string (MidoriExtension* extension,
         g_mkdir_with_parents (extension->priv->config_dir, 0700);
         g_key_file_set_string (extension->priv->key_file,
                                 "settings", name, value);
+        sokoke_key_file_save_to_file (extension->priv->key_file, config_file, &error);
+        if (error)
+        {
+            printf (_("The configuration of the extension '%s' couldn't be saved: %s\n"),
+                    extension->priv->name, error->message);
+            g_error_free (error);
+        }
+    }
+}
+
+/**
+ * midori_extension_install_string_list:
+ * @extension: a #MidoriExtension
+ * @name: the name of the setting
+ * @default_value: the default value
+ *
+ * Installs a string list that can be used to conveniently
+ * store user configuration.
+ *
+ * Note that all settings have to be installed before
+ * the extension is activated.
+ *
+ * Since: 0.1.7
+ **/
+void
+midori_extension_install_string_list (MidoriExtension* extension,
+                                      const gchar*     name,
+                                      gchar**          default_value,
+                                      gsize            default_length)
+{
+    MESettingStringList* setting;
+
+    g_return_if_fail (midori_extension_is_prepared (extension));
+    midori_extension_can_install_setting (extension, name);
+
+    me_setting_install (MESettingStringList, g_strdup (name), G_TYPE_STRV,
+                        g_strdupv (default_value), NULL);
+
+    setting->default_length = default_length;
+}
+
+/**
+ * midori_extension_get_string_list:
+ * @extension: a #MidoriExtension
+ * @name: the name of the setting
+ * @length: return location to store number of strings, or %NULL
+ *
+ * Retrieves the value of the specified setting.
+ *
+ * Return value: a newly allocated NULL-terminated list of strings,
+ *     should be freed with g_strfreev()
+ *
+ * Since: 0.1.7
+ **/
+gchar**
+midori_extension_get_string_list (MidoriExtension* extension,
+                                  const gchar*     name,
+                                  gsize*           length)
+{
+    MESettingStringList* setting;
+
+    g_return_val_if_fail (midori_extension_is_prepared (extension), NULL);
+    g_return_val_if_fail (name != NULL, NULL);
+
+    setting = g_hash_table_lookup (extension->priv->settings, name);
+
+    me_setting_type (setting, G_TYPE_STRV, return NULL);
+
+    if (length)
+        *length = setting->length;
+
+    return g_strdupv (setting->value);
+}
+
+/**
+ * midori_extension_set_string_list:
+ * @extension: a #MidoriExtension
+ * @name: the name of the setting
+ * @value: the new value
+ * @length: number of strings in @value, or G_MAXSIZE
+ *
+ * Assigns a new value to the specified setting.
+ *
+ * Since: 0.1.7
+ **/
+void
+midori_extension_set_string_list (MidoriExtension* extension,
+                                  const gchar*     name,
+                                  gchar**          value,
+                                  gsize            length)
+{
+    MESettingStringList* setting;
+
+    g_return_if_fail (midori_extension_is_active (extension));
+    g_return_if_fail (name != NULL);
+
+    setting = g_hash_table_lookup (extension->priv->settings, name);
+
+    me_setting_type (setting, G_TYPE_STRV, return);
+
+    katze_strv_assign (setting->value, g_strdupv (value));
+    setting->length = length;
+
+    if (extension->priv->key_file)
+    {
+        GError* error = NULL;
+        /* FIXME: Handle readonly folder/ file */
+        gchar* config_file = g_build_filename (extension->priv->config_dir,
+                                               "config", NULL);
+        g_mkdir_with_parents (extension->priv->config_dir, 0700);
+        g_key_file_set_string_list (extension->priv->key_file,
+                                    "settings", name, (const gchar**)value, length);
         sokoke_key_file_save_to_file (extension->priv->key_file, config_file, &error);
         if (error)
         {

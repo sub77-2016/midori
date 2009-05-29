@@ -1,5 +1,6 @@
 /*
  Copyright (C) 2007-2009 Christian Dywan <christian@twotoasts.de>
+ Copyright (C) 2009 Jean-François Guchens <zcx000@gmail.com>
 
  This library is free software; you can redistribute it and/or
  modify it under the terms of the GNU Lesser General Public
@@ -23,26 +24,26 @@
 #include <string.h>
 #include <stdlib.h>
 #include <glib/gi18n.h>
+#include <glib/gprintf.h>
+#include <glib/gstdio.h>
 #include <webkit/webkit.h>
-
-#if GLIB_CHECK_VERSION (2, 18, 0)
-    #define D_(__domain, __message) g_dgettext (__domain, __message)
-#elif ENABLE_NLS
-    #define D_(__domain, __message) dgettext (__domain, __message)
-#else
-    #define D_(__domain, __message) __message
-#endif
 
 /* This is unstable API, so we need to declare it */
 gchar*
 webkit_web_view_get_selected_text (WebKitWebView* web_view);
+/* This is public API since WebKitGTK+ 1.1.6 */
+#if !WEBKIT_CHECK_VERSION (1, 1, 6)
 void
 webkit_web_frame_print (WebKitWebFrame* web_frame);
+#endif
 
 GdkPixbuf*
 midori_search_action_get_icon (KatzeNet*  net,
                                KatzeItem* item,
                                GtkWidget* widget);
+
+static void
+midori_view_construct_web_view (MidoriView* view);
 
 struct _MidoriView
 {
@@ -60,8 +61,9 @@ struct _MidoriView
     gchar* selected_text;
     MidoriWebSettings* settings;
     GtkWidget* web_view;
-    /* KatzeArray* news_feeds; */
+    KatzeArray* news_feeds;
 
+    gboolean speed_dial_in_new_tabs;
     gchar* download_manager;
     gchar* news_aggregator;
     gboolean middle_click_opens_selection;
@@ -135,7 +137,7 @@ enum
     PROP_LOAD_STATUS,
     PROP_PROGRESS,
     PROP_ZOOM_LEVEL,
-    /* PROP_NEWS_FEEDS, */
+    PROP_NEWS_FEEDS,
     PROP_STATUSBAR_TEXT,
     PROP_SETTINGS,
     PROP_NET
@@ -153,6 +155,7 @@ enum {
     SEARCH_TEXT,
     ADD_BOOKMARK,
     SAVE_AS,
+    ADD_SPEED_DIAL,
 
     LAST_SIGNAL
 };
@@ -178,6 +181,16 @@ static void
 midori_view_settings_notify_cb (MidoriWebSettings* settings,
                                 GParamSpec*        pspec,
                                 MidoriView*        view);
+
+static void
+midori_view_speed_dial_get_thumb (GtkWidget*   web_view,
+                                 const gchar* message,
+                                 MidoriView*  view);
+
+static void
+midori_view_speed_dial_save (GtkWidget*   web_view,
+                             const gchar* message);
+
 
 static void
 midori_view_class_init (MidoriViewClass* class)
@@ -354,6 +367,26 @@ midori_view_class_init (MidoriViewClass* class)
         G_TYPE_NONE, 1,
         G_TYPE_STRING);
 
+    /**
+     * MidoriView::add-speed-dial:
+     * @view: the object on which the signal is emitted
+     * @uri: the URI to add to the speed dial
+     *
+     * Emitted when an URI is added to the spee dial page.
+     *
+     * Since: 0.1.7
+     */
+    signals[ADD_SPEED_DIAL] = g_signal_new (
+        "add-speed-dial",
+        G_TYPE_FROM_CLASS (class),
+        (GSignalFlags)(G_SIGNAL_RUN_LAST | G_SIGNAL_ACTION),
+        0,
+        0,
+        NULL,
+        g_cclosure_marshal_VOID__STRING,
+        G_TYPE_NONE, 1,
+        G_TYPE_STRING);
+
     gobject_class = G_OBJECT_CLASS (class);
     gobject_class->finalize = midori_view_finalize;
     gobject_class->set_property = midori_view_set_property;
@@ -434,14 +467,21 @@ midori_view_class_init (MidoriViewClass* class)
                                      1.0f,
                                      G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 
-    /* g_object_class_install_property (gobject_class,
+    /**
+    * MidoriView:news-feeds:
+    *
+    * The news feeds advertised by the currently loaded page.
+    *
+    * Since: 0.1.7
+    */
+    g_object_class_install_property (gobject_class,
                                      PROP_NEWS_FEEDS,
                                      g_param_spec_object (
                                      "news-feeds",
                                      "News Feeds",
                                      "The list of available news feeds",
                                      KATZE_TYPE_ARRAY,
-                                     G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)); */
+                                     G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 
     g_object_class_install_property (gobject_class,
                                      PROP_STATUSBAR_TEXT,
@@ -469,6 +509,52 @@ midori_view_class_init (MidoriViewClass* class)
                                      "The associated net",
                                      KATZE_TYPE_NET,
                                      flags));
+}
+
+static void
+midori_view_update_title (MidoriView* view)
+{
+    /* If left-to-right text is combined with right-to-left text the default
+       behaviour of Pango can result in awkwardly aligned text. For example
+       "‪بستيان نوصر (hadess) | An era comes to an end - Midori" becomes
+       "hadess) | An era comes to an end - Midori) بستيان نوصر". So to prevent
+       this we insert an LRE character before the title which indicates that
+       we want left-to-right but retains the direction of right-to-left text. */
+    if (view->title && !g_str_has_prefix (view->title, "‪"))
+    {
+        gchar* new_title = g_strconcat ("‪", view->title, NULL);
+        katze_assign (view->title, new_title);
+    }
+    #define title midori_view_get_display_title (view)
+    if (view->tab_label)
+    {
+        /* If the title starts with the presumed name of the website, we
+            ellipsize differently, to emphasize the subtitle */
+        if (gtk_label_get_angle (GTK_LABEL (view->tab_title)) == 0.0)
+        {
+            SoupURI* uri = soup_uri_new (view->uri);
+            const gchar* host = uri ? (uri->host ? uri->host : "") : "";
+            const gchar* name = g_str_has_prefix (host, "www.") ? &host[4] : host;
+            guint i = 0;
+            while (name[i++])
+                if (name[i] == '.')
+                    break;
+            if (!g_ascii_strncasecmp (title, name, i))
+                gtk_label_set_ellipsize (GTK_LABEL (view->tab_title), PANGO_ELLIPSIZE_START);
+            else
+                gtk_label_set_ellipsize (GTK_LABEL (view->tab_title), PANGO_ELLIPSIZE_END);
+            if (uri)
+                soup_uri_free (uri);
+        }
+        gtk_label_set_text (GTK_LABEL (view->tab_title), title);
+        gtk_widget_set_tooltip_text (view->tab_title, title);
+    }
+    if (view->menu_item)
+        gtk_label_set_text (GTK_LABEL (gtk_bin_get_child (GTK_BIN (
+                            view->menu_item))), title);
+    if (view->item)
+        katze_item_set_name (view->item, title);
+    #undef title
 }
 
 static GdkPixbuf*
@@ -502,7 +588,10 @@ midori_view_update_icon (MidoriView* view,
         {
             icon_theme = gtk_icon_theme_get_for_screen (screen);
             if ((parts = g_strsplit (view->mime_type, "/", 2)))
-                parts = (parts[0] && parts[1]) ? parts : NULL;
+            {
+                if (!(parts[0] && parts[1]))
+                    katze_assign (parts, NULL);
+            }
         }
         else
             parts = NULL;
@@ -623,6 +712,55 @@ webkit_web_view_progress_changed_cb (WebKitWebView* web_view,
     g_object_notify (G_OBJECT (view), "progress");
 }
 
+#if WEBKIT_CHECK_VERSION (1, 1, 6)
+static gboolean
+webkit_web_view_load_error_cb (WebKitWebView*  web_view,
+                               WebKitWebFrame* web_frame,
+                               const gchar*    uri,
+                               GError*         error,
+                               MidoriView*     view)
+{
+    const gchar* template_file = DATADIR "/midori/res/error.html";
+    gchar* template;
+
+    if (g_file_get_contents (template_file, &template, NULL, NULL))
+    {
+        SoupServer* res_server;
+        guint port;
+        gchar* res_root;
+        gchar* stock_root;
+        gchar* message;
+        gchar* result;
+
+        res_server = sokoke_get_res_server ();
+        port = soup_server_get_port (res_server);
+        res_root = g_strdup_printf ("http://localhost:%d/res", port);
+        stock_root = g_strdup_printf ("http://localhost:%d/stock", port);
+
+        message = g_strdup_printf (_("The page '%s' couldn't be loaded."), uri);
+        result = sokoke_replace_variables (template,
+            "{title}", _("Error"),
+            "{message}", message,
+            "{description}", error->message,
+            "{tryagain}", _("Try again"),
+            "{res}", res_root,
+            "{stock}", stock_root,
+            NULL);
+        g_free (template);
+        g_free (message);
+
+        webkit_web_frame_load_alternate_string (web_frame,
+            result, res_root, uri);
+        g_free (res_root);
+        g_free (stock_root);
+        g_free (result);
+
+        return TRUE;
+    }
+
+    return FALSE;
+}
+#else
 static void
 webkit_web_frame_load_done_cb (WebKitWebFrame* web_frame,
                                gboolean        success,
@@ -653,6 +791,7 @@ webkit_web_frame_load_done_cb (WebKitWebFrame* web_frame,
 
     midori_view_update_load_status (view, MIDORI_LOAD_FINISHED);
 }
+#endif
 
 static void
 webkit_web_view_load_finished_cb (WebKitWebView*  web_view,
@@ -668,14 +807,34 @@ webkit_web_view_load_finished_cb (WebKitWebView*  web_view,
     if (view->news_aggregator && *view->news_aggregator)
     {
         JSContextRef js_context = webkit_web_frame_get_global_context (web_frame);
+        /* This snippet joins the available news feeds into a string like this:
+           URI1|title1,URI2|title2
+           FIXME: Ensure separators contained in the string can't break it */
         gchar* value = sokoke_js_script_eval (js_context,
         "function feeds (l) { var f = new Array (); for (i in l) "
         "{ var t = l[i].type; "
         "if (t && (t.indexOf ('rss') != -1 || t.indexOf ('atom') != -1)) "
-        "f.push (l[i].href); } return f; }"
+        "f.push (l[i].href + '|' + l[i].title); } return f; }"
         "feeds (document.getElementsByTagName ('link'))", NULL);
+        gchar** items = g_strsplit (value, ",", 0);
+        gchar** iter;
+
+        katze_array_clear (view->news_feeds);
+        for (iter = items; iter && *iter; iter++)
+        {
+            gchar** parts = g_strsplit (*iter, "|", 2);
+            KatzeItem* item = g_object_new (KATZE_TYPE_ITEM,
+                "uri", parts ? *parts : "",
+                "name", parts && *parts ? parts[1] : NULL,
+                NULL);
+            katze_array_add_item (view->news_feeds, item);
+            g_object_unref (item);
+            g_strfreev (parts);
+        }
+        g_strfreev (items);
         g_object_set_data (G_OBJECT (view), "news-feeds",
                            value && *value ? (void*)1 : (void*)0);
+        g_free (value);
         /* Ensure load-status is notified again, whether it changed or not */
         g_object_notify (G_OBJECT (view), "load-status");
     }
@@ -683,6 +842,26 @@ webkit_web_view_load_finished_cb (WebKitWebView*  web_view,
     g_object_thaw_notify (G_OBJECT (view));
 }
 
+#if WEBKIT_CHECK_VERSION (1, 1, 4)
+static void
+webkit_web_view_notify_uri_cb (WebKitWebView* web_view,
+                               GParamSpec*    pspec,
+                               MidoriView*    view)
+{
+    g_object_get (web_view, "uri", &view->uri, NULL);
+    g_object_notify (G_OBJECT (view), "uri");
+}
+
+static void
+webkit_web_view_notify_title_cb (WebKitWebView* web_view,
+                                 GParamSpec*    pspec,
+                                 MidoriView*    view)
+{
+    g_object_get (web_view, "title", &view->title, NULL);
+    midori_view_update_title (view);
+    g_object_notify (G_OBJECT (view), "title");
+}
+#else
 static void
 webkit_web_view_title_changed_cb (WebKitWebView*  web_view,
                                   WebKitWebFrame* web_frame,
@@ -691,6 +870,7 @@ webkit_web_view_title_changed_cb (WebKitWebView*  web_view,
 {
     g_object_set (view, "title", title, NULL);
 }
+#endif
 
 static void
 webkit_web_view_statusbar_text_changed_cb (WebKitWebView* web_view,
@@ -814,6 +994,17 @@ gtk_widget_button_press_event_cb (WebKitWebView*  web_view,
     case 9:
         midori_view_go_forward (view);
         return TRUE;
+    /*
+     * On some fancier mice the scroll wheel can be used to scroll horizontally.
+     * A middle click usually registers both a middle click (2) and a
+     * horizontal scroll (11 or 12).
+     * We catch horizontal scrolls and ignore them to prevent middle clicks from
+     * accidentally being interpreted as first button clicks.
+     */
+    case 11:
+        return TRUE;
+    case 12:
+        return TRUE;
     }
 
     return FALSE;
@@ -829,10 +1020,15 @@ gtk_widget_key_press_event_cb (WebKitWebView* web_view,
     if (character == (event->keyval | 0x01000000))
         return FALSE;
 
-    if (view->find_while_typing && !webkit_web_view_can_cut_clipboard (web_view)
+    if (character == '.' || character == '/')
+        character = '\0';
+    else if (!view->find_while_typing)
+        return FALSE;
+
+    if (!webkit_web_view_can_cut_clipboard (web_view)
         && !webkit_web_view_can_paste_clipboard (web_view))
     {
-        gchar* text = g_strdup_printf ("%c", character);
+        gchar* text = character ? g_strdup_printf ("%c", character) : g_strdup ("");
 
         g_signal_emit (view, signals[SEARCH_TEXT], 0, TRUE, text);
         g_free (text);
@@ -875,10 +1071,10 @@ midori_web_view_menu_new_tab_activate_cb (GtkWidget*  widget,
 }
 
 static void
-midori_web_view_menu_new_window_activate_cb (GtkWidget*  widget,
-                                             MidoriView* view)
+midori_web_view_menu_action_add_speed_dial_cb (GtkWidget*  widget,
+                                              MidoriView* view)
 {
-    g_signal_emit (view, signals[NEW_WINDOW], 0, view->link_uri);
+    g_signal_emit (view, signals[ADD_SPEED_DIAL], 0, view->link_uri);
 }
 
 static void
@@ -893,10 +1089,7 @@ midori_web_view_menu_search_web_activate_cb (GtkWidget*  widget,
     else
         g_object_get (view->settings, "location-entry-search",
                       &search, NULL);
-    if (strstr (search, "%s"))
-        uri = g_strdup_printf (search, view->selected_text);
-    else
-        uri = g_strconcat (search, view->selected_text, NULL);
+    uri = sokoke_search_uri (search, view->selected_text);
     g_free (search);
 
     g_signal_emit (view, signals[NEW_TAB], 0, uri,
@@ -918,7 +1111,7 @@ static void
 midori_web_view_menu_download_activate_cb (GtkWidget*  widget,
                                            MidoriView* view)
 {
-    sokoke_spawn_program (view->download_manager, view->link_uri);
+    sokoke_spawn_program (view->download_manager, view->link_uri, TRUE);
 }
 
 static void
@@ -993,9 +1186,6 @@ webkit_web_view_populate_popup_cb (WebKitWebView* web_view,
         /* hack to localize menu item */
         label = gtk_bin_get_child (GTK_BIN (menuitem));
         gtk_label_set_label (GTK_LABEL (label), _("Open Link in New _Window"));
-        /* hack to implement New Window */
-        g_signal_connect (menuitem, "activate",
-            G_CALLBACK (midori_web_view_menu_new_window_activate_cb), view);
         menuitem = (GtkWidget*)g_list_nth_data (items, 3);
         g_list_free (items);
         #if WEBKIT_CHECK_VERSION (1, 1, 3)
@@ -1103,8 +1293,12 @@ webkit_web_view_populate_popup_cb (WebKitWebView* web_view,
         /* hack to localize menu item */
         if (GTK_IS_BIN (menuitem))
         {
-            label = gtk_bin_get_child (GTK_BIN (menuitem));
-            gtk_label_set_label (GTK_LABEL (label), D_("gtk20", "_Refresh"));
+            GtkStockItem stock_item;
+            if (gtk_stock_lookup (GTK_STOCK_REFRESH, &stock_item))
+            {
+                label = gtk_bin_get_child (GTK_BIN (menuitem));
+                gtk_label_set_label (GTK_LABEL (label), stock_item.label);
+            }
         }
         g_list_free (items);
         menuitem = gtk_image_menu_item_new_with_mnemonic (_("Undo Close Tab"));
@@ -1116,15 +1310,28 @@ webkit_web_view_populate_popup_cb (WebKitWebView* web_view,
             G_CALLBACK (midori_web_view_menu_action_activate_cb), view);
         /* FIXME: Make this sensitive only when there is a tab to undo */
         gtk_widget_show (menuitem);
+
         menuitem = gtk_separator_menu_item_new ();
         gtk_menu_shell_append (GTK_MENU_SHELL (menu), menuitem);
         gtk_widget_show (menuitem);
+
         menuitem = gtk_image_menu_item_new_from_stock (STOCK_BOOKMARK_ADD, NULL);
         gtk_menu_shell_append (GTK_MENU_SHELL (menu), menuitem);
         g_object_set_data (G_OBJECT (menuitem), "action", "BookmarkAdd");
         g_signal_connect (menuitem, "activate",
             G_CALLBACK (midori_web_view_menu_action_activate_cb), view);
         gtk_widget_show (menuitem);
+
+        if (view->speed_dial_in_new_tabs && !midori_view_is_blank (view))
+        {
+            menuitem = gtk_image_menu_item_new_with_mnemonic (_("Add to Speed _dial"));
+            gtk_menu_shell_append (GTK_MENU_SHELL (menu), menuitem);
+            g_object_set_data (G_OBJECT (menuitem), "action", "AddSpeedDial");
+            g_signal_connect (menuitem, "activate",
+                G_CALLBACK (midori_web_view_menu_action_add_speed_dial_cb), view);
+            gtk_widget_show (menuitem);
+        }
+
         menuitem = gtk_image_menu_item_new_from_stock (GTK_STOCK_SAVE_AS, NULL);
         gtk_menu_shell_append (GTK_MENU_SHELL (menu), menuitem);
         g_object_set_data (G_OBJECT (menuitem), "action", "SaveAs");
@@ -1135,6 +1342,7 @@ webkit_web_view_populate_popup_cb (WebKitWebView* web_view,
            saving either. If that changes, we need to think of something. */
         if (!midori_view_can_view_source (view))
             gtk_widget_set_sensitive (menuitem, FALSE);
+
         menuitem = gtk_image_menu_item_new_with_mnemonic (_("View _Source"));
         gtk_menu_shell_append (GTK_MENU_SHELL (menu), menuitem);
         g_object_set_data (G_OBJECT (menuitem), "action", "SourceView");
@@ -1143,6 +1351,7 @@ webkit_web_view_populate_popup_cb (WebKitWebView* web_view,
         gtk_widget_show (menuitem);
         if (!midori_view_can_view_source (view))
             gtk_widget_set_sensitive (menuitem, FALSE);
+
         menuitem = gtk_image_menu_item_new_from_stock (GTK_STOCK_PRINT, NULL);
         gtk_menu_shell_append (GTK_MENU_SHELL (menu), menuitem);
         g_object_set_data (G_OBJECT (menuitem), "action", "Print");
@@ -1187,7 +1396,7 @@ webkit_web_view_create_web_view_cb (GtkWidget*      web_view,
         "net", view->net,
         "settings", view->settings,
         NULL);
-    midori_view_set_uri (MIDORI_VIEW (new_view), "");
+    midori_view_construct_web_view (MIDORI_VIEW (new_view));
     g_signal_connect (MIDORI_VIEW (new_view)->web_view, "web-view-ready",
       G_CALLBACK (webkit_web_view_web_view_ready_cb), view);
     return MIDORI_VIEW (new_view)->web_view;
@@ -1322,14 +1531,20 @@ webkit_web_view_download_requested_cb (GtkWidget*      web_view,
 }
 #endif
 
-static void
+static gboolean
 webkit_web_view_console_message_cb (GtkWidget*   web_view,
                                     const gchar* message,
                                     guint        line,
                                     const gchar* source_id,
                                     MidoriView*  view)
 {
-    g_signal_emit (view, signals[CONSOLE_MESSAGE], 0, message, line, source_id);
+    if (!strncmp (message, "speed_dial-get-thumbnail", 22))
+        midori_view_speed_dial_get_thumb (web_view, message, view);
+    else if (!strncmp (message, "speed_dial-save", 13))
+        midori_view_speed_dial_save (web_view, message);
+    else
+        g_signal_emit (view, signals[CONSOLE_MESSAGE], 0, message, line, source_id);
+    return TRUE;
 }
 
 static void
@@ -1355,6 +1570,8 @@ midori_view_init (MidoriView* view)
     view->statusbar_text = NULL;
     view->link_uri = NULL;
     view->selected_text = NULL;
+    view->news_feeds = katze_array_new (KATZE_TYPE_ITEM);
+
     view->item = NULL;
 
     view->download_manager = NULL;
@@ -1382,6 +1599,7 @@ midori_view_finalize (GObject* object)
     katze_assign (view->statusbar_text, NULL);
     katze_assign (view->link_uri, NULL);
     katze_assign (view->selected_text, NULL);
+    katze_object_assign (view->news_feeds, NULL);
 
     katze_object_assign (view->settings, NULL);
     katze_object_assign (view->item, NULL);
@@ -1408,18 +1626,7 @@ midori_view_set_property (GObject*      object,
     {
     case PROP_TITLE:
         katze_assign (view->title, g_value_dup_string (value));
-        #define title midori_view_get_display_title (view)
-        if (view->tab_label)
-        {
-            gtk_label_set_text (GTK_LABEL (view->tab_title), title);
-            gtk_widget_set_tooltip_text (view->tab_title, title);
-        }
-        if (view->menu_item)
-            gtk_label_set_text (GTK_LABEL (gtk_bin_get_child (GTK_BIN (
-                                view->menu_item))), title);
-        if (view->item)
-            katze_item_set_name (view->item, title);
-        #undef title
+        midori_view_update_title (view);
         break;
     case PROP_ZOOM_LEVEL:
         midori_view_set_zoom_level (view, g_value_get_float (value));
@@ -1472,6 +1679,9 @@ midori_view_get_property (GObject*    object,
     case PROP_ZOOM_LEVEL:
         g_value_set_float (value, midori_view_get_zoom_level (view));
         break;
+    case PROP_NEWS_FEEDS:
+        g_value_set_object (value, view->news_feeds);
+        break;
     case PROP_STATUSBAR_TEXT:
         g_value_set_string (value, view->statusbar_text);
         break;
@@ -1509,6 +1719,7 @@ _midori_view_update_settings (MidoriView* view)
     gboolean zoom_text_and_images;
 
     g_object_get (view->settings,
+        "speed-dial-in-new-tabs", &view->speed_dial_in_new_tabs,
         "download-manager", &view->download_manager,
         "news-aggregator", &view->news_aggregator,
         "zoom-text-and-images", &zoom_text_and_images,
@@ -1536,7 +1747,11 @@ midori_view_settings_notify_cb (MidoriWebSettings* settings,
     g_value_init (&value, pspec->value_type);
     g_object_get_property (G_OBJECT (view->settings), name, &value);
 
-    if (name == g_intern_string ("download-manager"))
+    if (name == g_intern_string ("speed-dial-in-new-tabs"))
+    {
+        view->speed_dial_in_new_tabs = g_value_get_boolean (&value);
+    }
+    else if (name == g_intern_string ("download-manager"))
     {
         katze_assign (view->download_manager, g_value_dup_string (&value));
     }
@@ -1710,6 +1925,8 @@ midori_view_construct_web_view (MidoriView* view)
     WebKitWebFrame* web_frame;
     gpointer inspector;
 
+    g_return_if_fail (!view->web_view);
+
     view->web_view = webkit_web_view_new ();
 
     /* Load something to avoid a bug where WebKit might not set a main frame */
@@ -1725,15 +1942,22 @@ midori_view_construct_web_view (MidoriView* view)
                       webkit_web_view_progress_changed_cb, view,
                       "signal::load-finished",
                       webkit_web_view_load_finished_cb, view,
+                      #if WEBKIT_CHECK_VERSION (1, 1, 4)
+                      "signal::notify::uri",
+                      webkit_web_view_notify_uri_cb, view,
+                      "signal::notify::title",
+                      webkit_web_view_notify_title_cb, view,
+                      #else
                       "signal::title-changed",
                       webkit_web_view_title_changed_cb, view,
+                      #endif
                       "signal::status-bar-text-changed",
                       webkit_web_view_statusbar_text_changed_cb, view,
                       "signal::hovering-over-link",
                       webkit_web_view_hovering_over_link_cb, view,
                       "signal::button-press-event",
                       gtk_widget_button_press_event_cb, view,
-                      "signal::key-press-event",
+                      "signal-after::key-press-event",
                       gtk_widget_key_press_event_cb, view,
                       "signal::scroll-event",
                       gtk_widget_scroll_event_cb, view,
@@ -1751,12 +1975,18 @@ midori_view_construct_web_view (MidoriView* view)
                       "signal::download-requested",
                       webkit_web_view_download_requested_cb, view,
                       #endif
+                      #if WEBKIT_CHECK_VERSION (1, 1, 6)
+                      "signal::load-error",
+                      webkit_web_view_load_error_cb, view,
+                      #endif
                       NULL);
 
+    #if !WEBKIT_CHECK_VERSION (1, 1, 6)
     g_object_connect (web_frame,
                       "signal::load-done",
                       webkit_web_frame_load_done_cb, view,
                       NULL);
+    #endif
 
     if (view->settings)
     {
@@ -1787,17 +2017,81 @@ midori_view_set_uri (MidoriView*  view,
 
     g_return_if_fail (MIDORI_IS_VIEW (view));
 
+    /* Treat "about:blank" and "" equally, see midori_view_is_blank(). */
+    if (!g_strcmp0 (uri, "about:blank")) uri = "";
     if (!uri) uri = "";
 
     if (1)
     {
         if (!view->web_view)
             midori_view_construct_web_view (view);
+
+        if (view->speed_dial_in_new_tabs && !g_strcmp0 (uri, ""))
+        {
+            SoupServer* res_server;
+            guint port;
+            gchar* res_root;
+            gchar* speed_dial_head;
+            gchar* speed_dial_body;
+            gchar* body_fname;
+            gchar* stock_root;
+
+            katze_assign (view->uri, g_strdup (""));
+
+            g_file_get_contents (DATADIR "/midori/res/speeddial-head.html",
+                                 &speed_dial_head, NULL, NULL);
+
+            res_server = sokoke_get_res_server ();
+            port = soup_server_get_port (res_server);
+            res_root = g_strdup_printf ("http://localhost:%d/res", port);
+            stock_root = g_strdup_printf ("http://localhost:%d/stock", port);
+            body_fname = g_build_filename (sokoke_set_config_dir (NULL),
+                                           "speeddial.json", NULL);
+
+            if (!g_file_test (body_fname, G_FILE_TEST_EXISTS))
+            {
+                if (g_file_get_contents (DATADIR "/midori/res/speeddial.json",
+                                         &speed_dial_body, NULL, NULL))
+                    g_file_set_contents (body_fname, speed_dial_body, -1, NULL);
+                else
+                    speed_dial_body = g_strdup ("");
+            }
+            else
+                g_file_get_contents (body_fname, &speed_dial_body, NULL, NULL);
+
+            data = sokoke_replace_variables (speed_dial_head,
+                "{res}", res_root,
+                "{stock}", stock_root,
+                "{json_data}", speed_dial_body,
+                "{title}", _("Speed dial"),
+                "{click_to_add}", _("Click to add a shortcut"),
+                "{enter_shortcut_address}", _("Enter shortcut address"),
+                "{enter_shortcut_name}", _("Enter shortcut title"),
+                "{are_you_sure}", _("Are you sure you want to delete this shortcut?"), NULL);
+
+
+            #if WEBKIT_CHECK_VERSION (1, 1, 6)
+            webkit_web_frame_load_alternate_string (
+                webkit_web_view_get_main_frame (WEBKIT_WEB_VIEW (view->web_view)),
+                data, res_root, "about:blank");
+            #else
+            webkit_web_view_load_html_string (
+                WEBKIT_WEB_VIEW (view->web_view), data, res_root);
+            #endif
+
+            g_free (res_root);
+            g_free (stock_root);
+            g_free (data);
+            g_free (speed_dial_head);
+            g_free (speed_dial_body);
+            g_free (body_fname);
+        }
         /* This is not prefectly elegant, but creating an
            error page inline is the simplest solution. */
-        if (g_str_has_prefix (uri, "error:"))
+        else if (g_str_has_prefix (uri, "error:"))
         {
             data = NULL;
+            #if !WEBKIT_CHECK_VERSION (1, 1, 3)
             if (!strncmp (uri, "error:nodisplay ", 16))
             {
                 gchar* title;
@@ -1814,7 +2108,8 @@ midori_view_set_uri (MidoriView*  view,
                     title, title, view->uri, view->mime_type);
                 g_free (title);
             }
-            else if (!strncmp (uri, "error:nodocs ", 13))
+            #endif
+            if (!strncmp (uri, "error:nodocs ", 13))
             {
                 gchar* title;
 
@@ -1850,13 +2145,7 @@ midori_view_set_uri (MidoriView*  view,
         }
         else if (g_str_has_prefix (uri, "mailto:"))
         {
-            if (!gtk_show_uri (NULL, uri, GDK_CURRENT_TIME, NULL))
-            {
-                /* Fallback to Exo for example if GConf isn't setup */
-                gchar* command = g_strconcat ("exo-open ", uri, NULL);
-                g_spawn_command_line_async (command, NULL);
-                g_free (command);
-            }
+            sokoke_show_uri (NULL, uri, GDK_CURRENT_TIME, NULL);
         }
         else
         {
@@ -1945,11 +2234,10 @@ midori_view_get_display_title (MidoriView* view)
 {
     g_return_val_if_fail (MIDORI_IS_VIEW (view), "about:blank");
 
-    if (midori_view_is_blank (view))
-        return _("Blank page");
-
     if (view->title && *view->title)
         return view->title;
+    if (midori_view_is_blank (view))
+        return _("Blank page");
     return midori_view_get_display_uri (view);
 }
 
@@ -2154,7 +2442,8 @@ midori_view_update_tab_title (GtkWidget* label,
     if (angle == 0.0 || angle == 360.0)
     {
         gtk_widget_set_size_request (label, width * size, -1);
-        gtk_label_set_ellipsize (GTK_LABEL (label), PANGO_ELLIPSIZE_END);
+        if (gtk_label_get_ellipsize (GTK_LABEL (label)) != PANGO_ELLIPSIZE_START)
+            gtk_label_set_ellipsize (GTK_LABEL (label), PANGO_ELLIPSIZE_END);
     }
     else
     {
@@ -2468,9 +2757,15 @@ midori_view_reload (MidoriView* view,
 
     g_return_if_fail (MIDORI_IS_VIEW (view));
 
+#if WEBKIT_CHECK_VERSION (1, 1, 6)
+    /* WebKit 1.1.6 doesn't handle "alternate content" flawlessly,
+       so reloading via Javascript works but not via API calls. */
+    title = g_strdup (_("Error"));
+#else
     /* Error pages are special, we want to try loading the destination
        again, not the error page which isn't even a proper page */
     title = g_strdup_printf (_("Not found - %s"), view->uri);
+#endif
     if (view->title && strstr (title, view->title))
         webkit_web_view_open (WEBKIT_WEB_VIEW (view->web_view), view->uri);
     else if (from_cache)
@@ -2678,4 +2973,194 @@ midori_view_execute_script (MidoriView*  view,
     else
         webkit_web_view_execute_script (WEBKIT_WEB_VIEW (view->web_view), script);
     return TRUE;
+}
+
+/* For now this is private API */
+GdkPixbuf*
+midori_view_get_snapshot (MidoriView* view,
+                          guint       width,
+                          guint       height)
+{
+    GtkWidget* web_view;
+    GdkRectangle rect;
+    GdkPixmap* pixmap;
+    GdkEvent event;
+    gboolean result;
+    GdkColormap* colormap;
+    GdkPixbuf* pixbuf;
+
+    g_return_val_if_fail (MIDORI_IS_VIEW (view), NULL);
+    web_view = gtk_bin_get_child (GTK_BIN (view));
+    g_return_val_if_fail (web_view->window, NULL);
+
+    rect.x = web_view->allocation.x;
+    rect.y = web_view->allocation.y;
+    rect.width = web_view->allocation.width;
+    rect.height = web_view->allocation.height;
+
+    pixmap = gdk_pixmap_new (web_view->window,
+        web_view->allocation.width, web_view->allocation.height,
+        gdk_drawable_get_depth (web_view->window));
+    event.expose.type = GDK_EXPOSE;
+    event.expose.window = pixmap;
+    event.expose.send_event = FALSE;
+    event.expose.count = 0;
+    event.expose.area.x = 0;
+    event.expose.area.y = 0;
+    gdk_drawable_get_size (GDK_DRAWABLE (web_view->window),
+        &event.expose.area.width, &event.expose.area.height);
+    event.expose.region = gdk_region_rectangle (&event.expose.area);
+
+    g_signal_emit_by_name (web_view, "expose-event", &event, &result);
+
+    colormap = gdk_drawable_get_colormap (pixmap);
+    pixbuf = gdk_pixbuf_get_from_drawable (NULL, pixmap, colormap, 0, 0,
+                                           0, 0, rect.width, rect.height);
+    g_object_unref (pixmap);
+
+    if (width || height)
+    {
+        GdkPixbuf* scaled;
+        if (!width)
+            width = rect.width;
+        if (!height)
+            height = rect.height;
+        scaled = gdk_pixbuf_scale_simple (pixbuf, width, height,
+                                          GDK_INTERP_TILES);
+        g_object_unref (pixbuf);
+        return scaled;
+    }
+
+    return pixbuf;
+}
+
+static void
+thumb_view_load_status_cb (MidoriView* thumb_view,
+                           GParamSpec* pspec,
+                           MidoriView* view)
+{
+    GdkPixbuf* img;
+    gchar* file_content;
+    gchar* encoded;
+    gchar* dom_id;
+    gchar* js;
+    gsize sz;
+
+    if (katze_object_get_enum (thumb_view, "load-status") != MIDORI_LOAD_FINISHED)
+        return;
+
+    img = midori_view_get_snapshot (MIDORI_VIEW (thumb_view), 160, 107);
+    gdk_pixbuf_save_to_buffer (img, &file_content, &sz, "png", NULL, "compression", "7", NULL);
+    encoded = g_base64_encode ((guchar *)file_content, sz );
+
+    /* Call Javascript function to replace shortcut's content */
+    dom_id = g_object_get_data (G_OBJECT (thumb_view), "dom-id");
+    js = g_strdup_printf ("setThumbnail('%s','%s','%s');",
+                          dom_id, encoded, thumb_view->uri);
+    webkit_web_view_execute_script (WEBKIT_WEB_VIEW (view->web_view), js);
+    free (js);
+    g_object_unref (img);
+
+    g_free (dom_id);
+    g_free (encoded);
+    g_free (file_content);
+
+    gtk_widget_destroy (GTK_WIDGET (thumb_view));
+}
+
+/**
+ * midori_view_speed_dial_inject_thumb
+ * @view: a #MidoriView
+ * @filename: filename of the thumbnail
+ * @dom_id: Id of the shortcut on speed_dial page in wich to inject content
+ * @url: url of the shortcut
+ */
+static void
+midori_view_speed_dial_inject_thumb (MidoriView* view,
+                                     gchar*      filename,
+                                     gchar*      dom_id,
+                                     gchar*      url)
+{
+    GtkWidget* thumb_view;
+    MidoriWebSettings* settings;
+    GtkWidget* browser;
+    GtkWidget* notebook;
+    GtkWidget* label;
+
+    thumb_view = midori_view_new (view->net);
+    settings = g_object_new (MIDORI_TYPE_WEB_SETTINGS, "enable-scripts", FALSE,
+        "enable-plugins", FALSE, "auto-load-images", TRUE, NULL);
+    midori_view_set_settings (MIDORI_VIEW (thumb_view), settings);
+    browser = gtk_widget_get_toplevel (GTK_WIDGET (view));
+    if (!GTK_IS_WINDOW (browser))
+        return;
+    /* What we are doing here is a bit of a hack. In order to render a
+       thumbnail we need a new view and load the url in it. But it has
+       to be visible and packed in a container. So we secretly pack it
+       into the notebook of the parent browser. */
+    notebook = katze_object_get_object (browser, "notebook");
+    if (!notebook)
+        return;
+    gtk_container_add (GTK_CONTAINER (notebook), thumb_view);
+    /* We use an empty label. It's not invisible but at least hard to spot. */
+    label = gtk_event_box_new ();
+    gtk_notebook_set_tab_label (GTK_NOTEBOOK (notebook), thumb_view, label);
+    g_object_unref (notebook);
+    gtk_widget_show (thumb_view);
+    g_object_set_data (G_OBJECT (thumb_view), "dom-id", dom_id);
+    g_signal_connect (thumb_view, "notify::load-status",
+        G_CALLBACK (thumb_view_load_status_cb), view);
+    midori_view_set_uri (MIDORI_VIEW (thumb_view), url);
+}
+
+/**
+ * midori_view_speed_dial_save
+ * @web_view: a #WebkitView
+ * @message: Console log data
+ *
+ * Load a thumbnail, and set the DOM
+ *
+ * message[0] == console message call
+ * message[1] == shortcut id in the DOM
+ * message[2] == shortcut uri
+ *
+ **/
+static void
+midori_view_speed_dial_get_thumb (GtkWidget*   web_view,
+                                  const gchar* message,
+                                  MidoriView*  view)
+{
+    gchar** t_data = g_strsplit (message," ", 4);
+
+    if (t_data[1] == NULL || t_data[2] == NULL )
+        return;
+
+    midori_view_speed_dial_inject_thumb (view, NULL,
+        g_strdup (t_data[1]), g_strdup (t_data[2]));
+    g_strfreev (t_data);
+}
+
+/**
+ * midori_view_speed_dial_save
+ * @web_view: a #WebkitView
+ *
+ * Save speed_dial DOM structure to body template
+ *
+ **/
+static void
+midori_view_speed_dial_save (GtkWidget*   web_view,
+                             const gchar* message)
+{
+    gchar* json = g_strdup (message + 15);
+    gchar* fname = g_build_filename (sokoke_set_config_dir (NULL),
+                                     "speeddial.json", NULL);
+
+    GRegex* reg_double = g_regex_new ("\\\\\"", 0, 0, NULL);
+    gchar* safe = g_regex_replace_literal (reg_double, json, -1, 0, "\\\\\"", 0, NULL);
+    g_file_set_contents (fname, safe, -1, NULL);
+
+    g_free (fname);
+    g_free (json);
+    g_free (safe);
+    g_regex_unref (reg_double);
 }
