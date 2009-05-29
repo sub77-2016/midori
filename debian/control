@@ -30,6 +30,8 @@ Build-Conflicts: gtk-doc-tools,
  libhildon-1-dev
 Standards-Version: 3.8.1
 Homepage: http://software.twotoasts.de/index.php?/pages/midori_summary.html
+Vcs-Git: git://git.ryan52.info/git/midori
+Vcs-Browser: http://git.ryan52.info/?p=midori;a=summary
 
 Package: midori
 Architecture: any
