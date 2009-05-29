@@ -1,7 +1,6 @@
 midori (0.1.7-1) UNRELEASED; urgency=low
 
-  * adopt package: set myself as maintainer, remove uploaders, remove dm
-    flag (Closes: #528731)
+  * adopt package: set myself as maintainer, remove uploaders (Closes: #528731)
   * rearrange the debian/rules file
   * use xvfb for tests, but disable them, they don't work right
   * use 'dh --with quilt' for patching instead of including
