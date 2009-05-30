@@ -18,8 +18,9 @@ midori (0.1.7-1) UNRELEASED; urgency=low
     file. This sets it to 50 for debian, and 39 for ubuntu (just under
     firefox). This addresses the other half of the ubuntu diff.
   * add recommends on libnotify1
+  * update copyright information
 
- -- Ryan Niebur <ryanryan52@gmail.com>  Fri, 29 May 2009 01:05:40 -0700
+ -- Ryan Niebur <ryanryan52@gmail.com>  Fri, 29 May 2009 20:01:25 -0700
 
 midori (0.1.6-1) experimental; urgency=low
 
