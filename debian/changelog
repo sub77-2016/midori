@@ -17,7 +17,7 @@ midori (0.1.7-1) UNRELEASED; urgency=low
   * also set a priority number for the alternative in the distro config
     file. This sets it to 50 for debian, and 39 for ubuntu (just under
     firefox). This addresses the other half of the ubuntu diff.
-  * add dependency on libnotify1
+  * add recommends on libnotify1
 
  -- Ryan Niebur <ryanryan52@gmail.com>  Fri, 29 May 2009 01:05:40 -0700
 

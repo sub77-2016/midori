@@ -35,8 +35,8 @@ Vcs-Browser: http://git.ryan52.info/?p=midori;a=summary
 
 Package: midori
 Architecture: any
-Depends: ${shlibs:Depends}, ${misc:Depends}, libnotify1, dbus-x11
-Recommends: gnome-icon-theme
+Depends: ${shlibs:Depends}, ${misc:Depends}, dbus-x11
+Recommends: gnome-icon-theme, libnotify1
 Provides: www-browser
 # For http://bugs.debian.org/522436 (missing symbols):
 Conflicts: libsoup2.4-1 (<< 2.25.2)
