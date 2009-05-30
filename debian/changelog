@@ -1,4 +1,4 @@
-midori (0.1.7-1) UNRELEASED; urgency=low
+midori (0.1.7-1) unstable; urgency=low
 
   * adopt package: set myself as maintainer, remove uploaders (Closes: #528731)
   * rearrange the debian/rules file
@@ -22,7 +22,7 @@ midori (0.1.7-1) UNRELEASED; urgency=low
   * remove extra file, debian/patches/0001-Don-t-expressly-use-libkatze-
     in-extensions-to-avoid.patch
 
- -- Ryan Niebur <ryanryan52@gmail.com>  Fri, 29 May 2009 20:03:28 -0700
+ -- Ryan Niebur <ryanryan52@gmail.com>  Fri, 29 May 2009 20:31:09 -0700
 
 midori (0.1.6-1) experimental; urgency=low
 
