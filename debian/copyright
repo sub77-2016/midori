@@ -35,6 +35,22 @@ Copyright: © 2007, Emanuele Rocca <ema@debian.org>
  2009, Ryan Niebur <ryanryan52@gmail.com>
 License: expat
 
+Files: katze/katze-http-cookies.c
+Copyright: Copyright (C) 2008-2009 Christian Dywan <christian@twotoasts.de>
+ Copyright (C) 2008 Xan Lopez <xan@gnome.org>
+ Copyright (C) 2008 Dan Winship <danw@gnome.org>
+License: LGPL-2.1+
+
+Files: katze/katze-arrayaction.c
+Copyright: Copyright (C) 2008-2009 Christian Dywan <christian@twotoasts.de>
+ Copyright (C) 2009 Enrico Tröger <enrico.troeger@uvena.de>
+License: LGPL-2.1+
+
+Files: katze/katze-utils.h
+Copyright: Copyright (C) 2008-2009 Christian Dywan <christian@twotoasts.de>
+ Copyright (C) 2009 Dale Whittaker <dayul@users.sf.net
+License: LGPL-2.1+
+
 Files: midori/midori-browser.c
 Copyright:   Copyright (C) 2007-2009 Christian Dywan <christian@twotoasts.de>
  Copyright (C) 2008 Dale Whittaker <dayul@users.sf.net>
