@@ -10,7 +10,6 @@
 */
 
 #include "midori-websettings.h"
-#include "midori-debian.h"
 
 #include "sokoke.h"
 
@@ -559,7 +558,7 @@ midori_web_settings_class_init (MidoriWebSettingsClass* class)
                                      "homepage",
                                      _("Homepage"),
                                      _("The homepage"),
-                                     DEBIAN_DISTRO_DEFAULT_HOMEPAGE,
+                                     "http://www.google.com",
                                      flags));
 
     /**
