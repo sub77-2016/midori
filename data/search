@@ -19,3 +19,17 @@ text=Dictionary, Encyclopedia and Thesaurus
 uri=http://www.thefreedictionary.com/%s
 icon=
 token=fd
+
+[Debian Packages]
+name=Debian Packages
+text=Search Debian Packages
+uri=http://packages.debian.org/%s
+icon=
+token=d
+
+[Debian Bugs]
+name=Debian Bugs
+text=Debian Bugs Search
+uri=http://bugs.debian.org/cgi-bin/bugreport.cgi?bug=%s
+icon=
+token=dbs

@@ -19,8 +19,10 @@ midori (0.1.7-1) UNRELEASED; urgency=low
     firefox). This addresses the other half of the ubuntu diff.
   * add recommends on libnotify1
   * update copyright information
+  * remove extra file, debian/patches/0001-Don-t-expressly-use-libkatze-
+    in-extensions-to-avoid.patch
 
- -- Ryan Niebur <ryanryan52@gmail.com>  Fri, 29 May 2009 20:01:25 -0700
+ -- Ryan Niebur <ryanryan52@gmail.com>  Fri, 29 May 2009 20:03:28 -0700
 
 midori (0.1.6-1) experimental; urgency=low
 
