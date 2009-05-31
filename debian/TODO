@@ -1,24 +1,5 @@
 * Document how to use Firefox plugins.
 
-* Should midori.prerm remove the alternative for $1 = upgrade?
-
-  Scheme48's package does this, but I can't work out where in
-  debian-policy or update-alternatives(8) it says if this is right or
-  wrong.
-
-* Default home page should not require internet access
-
-  http://www.twotoasts.de/bugs/index.php?do=details&task_id=111
-
-  Midori might be run by users who do not have an (active) internet
-  connection. For example, they might want to read the ImageMagick
-  documentation, which is HTML files in /usr/share/doc/.
-
-  It's confusing for such users to have the default page be stored on
-  the internet. This can be alleviated by simply including (and
-  installing) an HTML file to be the default home page. The Debian
-  Firefox (Iceweasel) packages do this.
-
 * Remove runtime dependency on dbus-launch.
 
   http://www.twotoasts.de/bugs/index.php?do=details&task_id=113

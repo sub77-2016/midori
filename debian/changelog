@@ -21,6 +21,7 @@ midori (0.1.7-1) unstable; urgency=low
   * update copyright information
   * remove extra file, debian/patches/0001-Don-t-expressly-use-libkatze-
     in-extensions-to-avoid.patch
+  * remove some old todo items from debian/TODO
 
  -- Ryan Niebur <ryanryan52@gmail.com>  Fri, 29 May 2009 20:31:09 -0700
 
