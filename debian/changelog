@@ -1,5 +1,6 @@
 midori (0.1.7-1) unstable; urgency=low
 
+  * New Upstream Version
   * adopt package: set myself as maintainer, remove uploaders (Closes: #528731)
   * rearrange the debian/rules file
   * use xvfb for tests, but disable them, they don't work right
@@ -9,7 +10,6 @@ midori (0.1.7-1) unstable; urgency=low
   * build dep on debhelper 7.0.50 instead of 7.2
   * add debian bts to the list of searches, thanks to Giuseppe for the
     patch (Closes: #525991)
-  * New Upstream Version
   * refresh patches
   * change the default-homepage patch to use the files in debian/config/
     to set the default homepage based on whether it's debian, ubuntu,
