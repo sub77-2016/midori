@@ -44,7 +44,7 @@ static gboolean mouse_gestures_handle_events (GtkWidget     *widget,
                                               MidoriBrowser *browser)
 {
     /* A button was pressed */
-    if (event->type == GDK_BUTTON_PRESS)
+    if (event->type == GDK_BUTTON_PRESS && event->button.button == 2)
     {
         /* If the gesture was previously cleaned, start a new gesture and coordinates */
         if (gesture->last == MOUSE_BUTTON_UNSET)
@@ -75,7 +75,7 @@ static gboolean mouse_gestures_handle_events (GtkWidget     *widget,
                      (gesture->middle.y - y < DEVIANCE && gesture->middle.y - y > -DEVIANCE))
             {
                 gesture->end.x = x;
-		gesture->end.y = y;
+                gesture->end.y = y;
             }
         }
 
@@ -91,9 +91,9 @@ static gboolean mouse_gestures_handle_events (GtkWidget     *widget,
                 (gesture->middle.x - gesture->start.x > -DEVIANCE))
             {
                  /* We initially moved down more than MINLENGTH pixels */
-		if (gesture->middle.y > gesture->start.y + MINLENGTH)
-		{
-		    /* Then we the final vertical move is between the bounds and
+                if (gesture->middle.y > gesture->start.y + MINLENGTH)
+                {
+                    /* Then we the final vertical move is between the bounds and
                        we moved right more than MINLENGTH pixels */
                     if ((gesture->middle.y - gesture->end.y < DEVIANCE) &&
                         (gesture->middle.y - gesture->end.y > -DEVIANCE) &&
@@ -119,8 +119,8 @@ static gboolean mouse_gestures_handle_events (GtkWidget     *widget,
                     }
                 }
                 /* We initially moved up more than MINLENGTH pixels */
-		else if (gesture->middle.y + MINLENGTH < gesture->start.y)
-		{
+                else if (gesture->middle.y + MINLENGTH < gesture->start.y)
+                {
                     /* The end node was never updated, we only did a vertical move */
                     if (gesture->end.y == 0 && gesture->end.x == 0)
                     {
@@ -145,7 +145,7 @@ static gboolean mouse_gestures_handle_events (GtkWidget     *widget,
                 }
                 /* We initially moved left more than MINLENGTH pixels */
                 else if (gesture->middle.x + MINLENGTH < gesture->start.x)
-		{
+                {
                     /* The end node was never updated, we only did an horizontal move */
                     if (gesture->end.x == 0 && gesture->end.y == 0)
                     {
@@ -156,7 +156,7 @@ static gboolean mouse_gestures_handle_events (GtkWidget     *widget,
             }
         }
 
-	mouse_gesture_clear (gesture);
+        mouse_gesture_clear (gesture);
 
         return TRUE;
     }
@@ -177,32 +177,25 @@ static void mouse_gestures_browser_cb (MidoriApp *app, MidoriBrowser *browser)
 static void mouse_gestures_deactivate (MidoriExtension *extension, MidoriApp *app)
 {
     gulong signal_id;
-    KatzeArray *browsers;
+    KatzeArray* browsers;
+    MidoriBrowser* browser;
     guint i;
-    gint j;
-    GtkWidget *notebook;
 
-    signal_id =
-        g_signal_handler_find (app, G_SIGNAL_MATCH_FUNC,
-                               0, 0, NULL,
-                               mouse_gestures_browser_cb, NULL);
+    signal_id = g_signal_handler_find (app, G_SIGNAL_MATCH_FUNC, 0, 0, NULL,
+                                       mouse_gestures_browser_cb, NULL);
 
-    if(signal_id != 0)
+    if (signal_id != 0)
         g_signal_handler_disconnect (app, signal_id);
 
     browsers = katze_object_get_object (app, "browsers");
-
-    for (i = 0; i < katze_array_get_length (browsers); i++)
+    i = 0;
+    while ((browser = katze_array_get_nth_item (browsers, i++)))
     {
-        MidoriBrowser *browser;
+        gint j;
+        GtkWidget* notebook;
 
-        browser = katze_array_get_nth_item (browsers, i);
-
-        signal_id =
-            g_signal_handler_find (browser, G_SIGNAL_MATCH_FUNC,
-                                   0, 0, NULL,
-                                   mouse_gestures_tab_cb, NULL);
-
+        signal_id = g_signal_handler_find (browser, G_SIGNAL_MATCH_FUNC,
+            0, 0, NULL, mouse_gestures_tab_cb, NULL);
         if (signal_id != 0)
             g_signal_handler_disconnect (browser, signal_id);
 
@@ -212,15 +205,14 @@ static void mouse_gestures_deactivate (MidoriExtension *extension, MidoriApp *ap
         {
             GtkWidget *page = gtk_notebook_get_nth_page (GTK_NOTEBOOK (notebook), j);
 
-            signal_id =
-                g_signal_handler_find (page, G_SIGNAL_MATCH_FUNC,
-                                       0, 0, NULL,
-                                       mouse_gestures_handle_events, NULL);
+            signal_id = g_signal_handler_find (page, G_SIGNAL_MATCH_FUNC,
+                0, 0, NULL, mouse_gestures_handle_events, NULL);
 
             if (signal_id != 0)
                 g_signal_handler_disconnect (page, signal_id);
         }
     }
+    g_object_unref (browsers);
 
     g_signal_handlers_disconnect_by_func (extension, mouse_gestures_deactivate, app);
     g_free (gesture);

@@ -20,6 +20,10 @@
     #include <config.h>
 #endif
 
+#if defined (G_OS_UNIX)
+    #include <sys/utsname.h>
+#endif
+
 struct _MidoriWebSettings
 {
     WebKitWebSettings parent_instance;
@@ -513,7 +517,7 @@ midori_web_settings_class_init (MidoriWebSettingsClass* class)
                                      "toolbar-items",
                                      _("Toolbar Items"),
                                      _("The items to show on the toolbar"),
-                                     "Back,Forward,ReloadStop,Location,Panel,Trash,Search",
+                                     "Back,Forward,ReloadStop,Location,Panel,Search,Trash",
                                      flags));
 
     g_object_class_install_property (gobject_class,
@@ -592,11 +596,7 @@ midori_web_settings_class_init (MidoriWebSettingsClass* class)
                                      _("Show speed dial in new tabs"),
                                      _("Show speed dial in newly opened tabs"),
                                      TRUE,
-    #if GTK_CHECK_VERSION (2, 14, 0)
                                      flags));
-    #else
-                                     G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
-    #endif
 
     g_object_class_install_property (gobject_class,
                                      PROP_DOWNLOAD_FOLDER,
@@ -741,11 +741,7 @@ midori_web_settings_class_init (MidoriWebSettingsClass* class)
                                      _("Where to open externally opened pages"),
                                      MIDORI_TYPE_NEW_PAGE,
                                      MIDORI_NEW_PAGE_TAB,
-    #if HAVE_UNIQUE
                                      G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
-    #else
-                                     G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
-    #endif
 
     g_object_class_install_property (gobject_class,
                                      PROP_MIDDLE_CLICK_OPENS_SELECTION,
@@ -1033,6 +1029,24 @@ midori_web_settings_finalize (GObject* object)
     G_OBJECT_CLASS (midori_web_settings_parent_class)->finalize (object);
 }
 
+#if defined (G_OS_UNIX)
+static gchar*
+get_sys_name (void)
+{
+    static gchar* sys_name = NULL;
+
+    if (!sys_name)
+    {
+        struct utsname name;
+        if (uname (&name) != -1)
+            sys_name = g_strdup_printf ("%s %s", name.sysname, name.machine);
+        else
+            sys_name = "Unix";
+    }
+    return sys_name;
+}
+#endif
+
 static gchar*
 generate_ident_string (MidoriIdentity identify_as)
 {
@@ -1057,12 +1071,7 @@ generate_ident_string (MidoriIdentity identify_as)
     "PPC Mac OS X";
     #endif */
     #elif defined (G_OS_UNIX)
-    /* struct utsname name;
-    if (uname (&name) != -1)
-        String::format ("%s %s", name.sysname, name.machine);
-    else
-        "Unknown";*/
-    "Linux";
+    get_sys_name ();
     #elif defined (G_OS_WIN32)
     // FIXME: Windows NT version
     "Windows";
@@ -1296,7 +1305,8 @@ midori_web_settings_set_property (GObject*      object,
         }
         break;
     case PROP_IDENT_STRING:
-        katze_assign (web_settings->ident_string, g_value_dup_string (value));
+        if (web_settings->identify_as == MIDORI_IDENT_CUSTOM)
+            katze_assign (web_settings->ident_string, g_value_dup_string (value));
         break;
     case PROP_CACHE_SIZE:
         web_settings->cache_size = g_value_get_int (value);

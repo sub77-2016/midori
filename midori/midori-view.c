@@ -16,6 +16,7 @@
 
 #include "midori-view.h"
 #include "midori-stock.h"
+#include "midori-browser.h"
 
 #include "compat.h"
 #include "marshal.h"
@@ -26,6 +27,7 @@
 #include <glib/gi18n.h>
 #include <glib/gprintf.h>
 #include <glib/gstdio.h>
+#include <gdk/gdkkeysyms.h>
 #include <webkit/webkit.h>
 
 /* This is unstable API, so we need to declare it */
@@ -44,6 +46,11 @@ midori_search_action_get_icon (KatzeNet*  net,
 
 static void
 midori_view_construct_web_view (MidoriView* view);
+
+GdkPixbuf*
+midori_view_get_snapshot (MidoriView* view,
+                          gint        width,
+                          gint        height);
 
 struct _MidoriView
 {
@@ -74,6 +81,7 @@ struct _MidoriView
 
     GtkWidget* menu_item;
     GtkWidget* tab_label;
+    /* GtkWidget* tooltip_image; */
     GtkWidget* tab_icon;
     GtkWidget* tab_title;
     GtkWidget* tab_close;
@@ -514,6 +522,7 @@ midori_view_class_init (MidoriViewClass* class)
 static void
 midori_view_update_title (MidoriView* view)
 {
+    #ifndef G_OS_WIN32
     /* If left-to-right text is combined with right-to-left text the default
        behaviour of Pango can result in awkwardly aligned text. For example
        "‪بستيان نوصر (hadess) | An era comes to an end - Midori" becomes
@@ -525,6 +534,7 @@ midori_view_update_title (MidoriView* view)
         gchar* new_title = g_strconcat ("‪", view->title, NULL);
         katze_assign (view->title, new_title);
     }
+    #endif
     #define title midori_view_get_display_title (view)
     if (view->tab_label)
     {
@@ -547,7 +557,9 @@ midori_view_update_title (MidoriView* view)
                 soup_uri_free (uri);
         }
         gtk_label_set_text (GTK_LABEL (view->tab_title), title);
+        #if 1
         gtk_widget_set_tooltip_text (view->tab_title, title);
+        #endif
     }
     if (view->menu_item)
         gtk_label_set_text (GTK_LABEL (gtk_bin_get_child (GTK_BIN (
@@ -720,10 +732,12 @@ webkit_web_view_load_error_cb (WebKitWebView*  web_view,
                                GError*         error,
                                MidoriView*     view)
 {
-    const gchar* template_file = DATADIR "/midori/res/error.html";
+    gchar* template_file = g_build_filename ("midori", "res", "error.html", NULL);
+    gchar* path = sokoke_find_data_filename (template_file);
     gchar* template;
 
-    if (g_file_get_contents (template_file, &template, NULL, NULL))
+    g_free (template_file);
+    if (g_file_get_contents (path, &template, NULL, NULL))
     {
         SoupServer* res_server;
         guint port;
@@ -754,9 +768,11 @@ webkit_web_view_load_error_cb (WebKitWebView*  web_view,
         g_free (res_root);
         g_free (stock_root);
         g_free (result);
+        g_free (path);
 
         return TRUE;
     }
+    g_free (path);
 
     return FALSE;
 }
@@ -777,7 +793,7 @@ webkit_web_frame_load_done_cb (WebKitWebFrame* web_frame,
         data = g_strdup_printf (
             "<html><head><title>%s</title></head>"
             "<body><h1>%s</h1>"
-            "<img src=\"file://" DATADIR "/midori/logo-shade.png\" "
+            "<img src=\"file://" MDATADIR "/midori/logo-shade.png\" "
             "style=\"position: absolute; right: 15px; bottom: 15px;\">"
             "<p />The page you were opening doesn't exist."
             "<p />Try to <a href=\"%s\">load the page again</a>, "
@@ -817,12 +833,13 @@ webkit_web_view_load_finished_cb (WebKitWebView*  web_view,
         "f.push (l[i].href + '|' + l[i].title); } return f; }"
         "feeds (document.getElementsByTagName ('link'))", NULL);
         gchar** items = g_strsplit (value, ",", 0);
-        gchar** iter;
+        guint i = 0;
 
         katze_array_clear (view->news_feeds);
-        for (iter = items; iter && *iter; iter++)
+        if (items != NULL)
+        while (items[i] != NULL)
         {
-            gchar** parts = g_strsplit (*iter, "|", 2);
+            gchar** parts = g_strsplit (items[i], "|", 2);
             KatzeItem* item = g_object_new (KATZE_TYPE_ITEM,
                 "uri", parts ? *parts : "",
                 "name", parts && *parts ? parts[1] : NULL,
@@ -830,6 +847,7 @@ webkit_web_view_load_finished_cb (WebKitWebView*  web_view,
             katze_array_add_item (view->news_feeds, item);
             g_object_unref (item);
             g_strfreev (parts);
+            i++;
         }
         g_strfreev (items);
         g_object_set_data (G_OBJECT (view), "news-feeds",
@@ -1007,6 +1025,9 @@ gtk_widget_button_press_event_cb (WebKitWebView*  web_view,
         return TRUE;
     }
 
+    /* We propagate the event, since it may otherwise be stuck in WebKit */
+    g_signal_emit_by_name (view, "event", event, &background);
+
     return FALSE;
 }
 
@@ -1016,13 +1037,14 @@ gtk_widget_key_press_event_cb (WebKitWebView* web_view,
                                MidoriView*    view)
 {
     guint character = gdk_unicode_to_keyval (event->keyval);
-    /* Skip control characters */
-    if (character == (event->keyval | 0x01000000))
-        return FALSE;
 
-    if (character == '.' || character == '/')
+    if (event->keyval == '.' || event->keyval == '/' || event->keyval == GDK_KP_Divide)
         character = '\0';
     else if (!view->find_while_typing)
+        return FALSE;
+
+    /* Skip control characters */
+    if (character == (event->keyval | 0x01000000))
         return FALSE;
 
     if (!webkit_web_view_can_cut_clipboard (web_view)
@@ -1071,13 +1093,6 @@ midori_web_view_menu_new_tab_activate_cb (GtkWidget*  widget,
 }
 
 static void
-midori_web_view_menu_action_add_speed_dial_cb (GtkWidget*  widget,
-                                              MidoriView* view)
-{
-    g_signal_emit (view, signals[ADD_SPEED_DIAL], 0, view->link_uri);
-}
-
-static void
 midori_web_view_menu_search_web_activate_cb (GtkWidget*  widget,
                                              MidoriView* view)
 {
@@ -1122,18 +1137,12 @@ midori_web_view_menu_add_bookmark_activate_cb (GtkWidget*  widget,
 }
 
 static void
-midori_web_view_menu_action_activate_cb (GtkWidget*  widget,
-                                         MidoriView* view)
-{
-    const gchar* action = g_object_get_data (G_OBJECT (widget), "action");
-    g_signal_emit (view, signals[ACTIVATE_ACTION], 0, action);
-}
-
-static void
 webkit_web_view_populate_popup_cb (WebKitWebView* web_view,
                                    GtkWidget*     menu,
                                    MidoriView*    view)
 {
+    MidoriBrowser* browser = midori_browser_get_for_widget (GTK_WIDGET (view));
+    GtkActionGroup* actions = midori_browser_get_action_group (browser);
     GtkWidget* menuitem;
     GtkWidget* icon;
     gchar* stock_id;
@@ -1301,63 +1310,74 @@ webkit_web_view_populate_popup_cb (WebKitWebView* web_view,
             }
         }
         g_list_free (items);
-        menuitem = gtk_image_menu_item_new_with_mnemonic (_("Undo Close Tab"));
-        icon = gtk_image_new_from_stock (GTK_STOCK_UNDELETE, GTK_ICON_SIZE_MENU);
-        gtk_image_menu_item_set_image (GTK_IMAGE_MENU_ITEM (menuitem), icon);
+        menuitem = sokoke_action_create_popup_menu_item (
+                gtk_action_group_get_action (actions, "UndoTabClose"));
         gtk_menu_shell_append (GTK_MENU_SHELL (menu), menuitem);
-        g_object_set_data (G_OBJECT (menuitem), "action", "UndoTabClose");
-        g_signal_connect (menuitem, "activate",
-            G_CALLBACK (midori_web_view_menu_action_activate_cb), view);
-        /* FIXME: Make this sensitive only when there is a tab to undo */
-        gtk_widget_show (menuitem);
 
         menuitem = gtk_separator_menu_item_new ();
         gtk_menu_shell_append (GTK_MENU_SHELL (menu), menuitem);
         gtk_widget_show (menuitem);
 
-        menuitem = gtk_image_menu_item_new_from_stock (STOCK_BOOKMARK_ADD, NULL);
+        menuitem = sokoke_action_create_popup_menu_item (
+                gtk_action_group_get_action (actions, "ZoomIn"));
         gtk_menu_shell_append (GTK_MENU_SHELL (menu), menuitem);
-        g_object_set_data (G_OBJECT (menuitem), "action", "BookmarkAdd");
-        g_signal_connect (menuitem, "activate",
-            G_CALLBACK (midori_web_view_menu_action_activate_cb), view);
+        menuitem = sokoke_action_create_popup_menu_item (
+                gtk_action_group_get_action (actions, "ZoomOut"));
+        gtk_menu_shell_append (GTK_MENU_SHELL (menu), menuitem);
+
+        menuitem = sokoke_action_create_popup_menu_item (
+                gtk_action_group_get_action (actions, "Encoding"));
+        gtk_menu_shell_append (GTK_MENU_SHELL (menu), menuitem);
+        if (GTK_WIDGET_IS_SENSITIVE (menuitem))
+        {
+            GtkWidget* sub_menu;
+            static const GtkActionEntry encodings[] = {
+              { "EncodingAutomatic" },
+              { "EncodingChinese" },
+              { "EncodingJapanese" },
+              { "EncodingRussian" },
+              { "EncodingUnicode" },
+              { "EncodingWestern" },
+              { "EncodingCustom" },
+            };
+            guint i;
+
+            sub_menu = gtk_menu_new ();
+            gtk_menu_item_set_submenu (GTK_MENU_ITEM (menuitem), sub_menu);
+
+            for (i = 0; i < G_N_ELEMENTS (encodings); i++)
+            {
+                menuitem = sokoke_action_create_popup_menu_item (
+                    gtk_action_group_get_action (actions, encodings[i].name));
+                gtk_menu_shell_append (GTK_MENU_SHELL (sub_menu), menuitem);
+            }
+        }
+
+        menuitem = gtk_separator_menu_item_new ();
+        gtk_menu_shell_append (GTK_MENU_SHELL (menu), menuitem);
         gtk_widget_show (menuitem);
+
+        menuitem = sokoke_action_create_popup_menu_item (
+                gtk_action_group_get_action (actions, "BookmarkAdd"));
+        gtk_menu_shell_append (GTK_MENU_SHELL (menu), menuitem);
 
         if (view->speed_dial_in_new_tabs && !midori_view_is_blank (view))
         {
-            menuitem = gtk_image_menu_item_new_with_mnemonic (_("Add to Speed _dial"));
+            menuitem = sokoke_action_create_popup_menu_item (
+                gtk_action_group_get_action (actions, "AddSpeedDial"));
             gtk_menu_shell_append (GTK_MENU_SHELL (menu), menuitem);
-            g_object_set_data (G_OBJECT (menuitem), "action", "AddSpeedDial");
-            g_signal_connect (menuitem, "activate",
-                G_CALLBACK (midori_web_view_menu_action_add_speed_dial_cb), view);
-            gtk_widget_show (menuitem);
         }
 
-        menuitem = gtk_image_menu_item_new_from_stock (GTK_STOCK_SAVE_AS, NULL);
+        menuitem = sokoke_action_create_popup_menu_item (
+                gtk_action_group_get_action (actions, "SaveAs"));
         gtk_menu_shell_append (GTK_MENU_SHELL (menu), menuitem);
-        g_object_set_data (G_OBJECT (menuitem), "action", "SaveAs");
-        g_signal_connect (menuitem, "activate",
-            G_CALLBACK (midori_web_view_menu_action_activate_cb), view);
-        gtk_widget_show (menuitem);
         /* Currently views that don't support source, don't support
            saving either. If that changes, we need to think of something. */
         if (!midori_view_can_view_source (view))
             gtk_widget_set_sensitive (menuitem, FALSE);
-
-        menuitem = gtk_image_menu_item_new_with_mnemonic (_("View _Source"));
+        menuitem = sokoke_action_create_popup_menu_item (
+                gtk_action_group_get_action (actions, "SourceView"));
         gtk_menu_shell_append (GTK_MENU_SHELL (menu), menuitem);
-        g_object_set_data (G_OBJECT (menuitem), "action", "SourceView");
-        g_signal_connect (menuitem, "activate",
-            G_CALLBACK (midori_web_view_menu_action_activate_cb), view);
-        gtk_widget_show (menuitem);
-        if (!midori_view_can_view_source (view))
-            gtk_widget_set_sensitive (menuitem, FALSE);
-
-        menuitem = gtk_image_menu_item_new_from_stock (GTK_STOCK_PRINT, NULL);
-        gtk_menu_shell_append (GTK_MENU_SHELL (menu), menuitem);
-        g_object_set_data (G_OBJECT (menuitem), "action", "Print");
-        g_signal_connect (menuitem, "activate",
-            G_CALLBACK (midori_web_view_menu_action_activate_cb), view);
-        gtk_widget_show (menuitem);
     }
 }
 
@@ -1479,6 +1499,7 @@ webkit_web_view_mime_type_decision_cb (GtkWidget*               web_view,
     }
     gtk_dialog_add_buttons (GTK_DIALOG (dialog),
         GTK_STOCK_SAVE, 1,
+        GTK_STOCK_SAVE_AS, 4,
         GTK_STOCK_CANCEL, 2,
         GTK_STOCK_OPEN, 3,
         NULL);
@@ -1487,6 +1508,11 @@ webkit_web_view_mime_type_decision_cb (GtkWidget*               web_view,
     g_object_set_data (G_OBJECT (view), "open-download", (gpointer)0);
     switch (response)
     {
+       case 4:
+            g_object_set_data (G_OBJECT (view), "save-as-download", (gpointer)1);
+            webkit_web_policy_decision_download (decision);
+            webkit_web_view_stop_loading (WEBKIT_WEB_VIEW (view->web_view));
+            return TRUE;
         case 3:
             g_object_set_data (G_OBJECT (view), "open-download", (gpointer)1);
         case 1:
@@ -1525,7 +1551,10 @@ webkit_web_view_download_requested_cb (GtkWidget*      web_view,
     gboolean handled;
     g_object_set_data (G_OBJECT (download), "open-download",
         g_object_get_data (G_OBJECT (view), "open-download"));
+    g_object_set_data (G_OBJECT (download), "save-as-download",
+        g_object_get_data (G_OBJECT (view), "save-as-download"));
     g_object_set_data (G_OBJECT (view), "open-download", (gpointer)0);
+    g_object_set_data (G_OBJECT (view), "save-as-download", (gpointer)0);
     g_signal_emit (view, signals[DOWNLOAD_REQUESTED], 0, download, &handled);
     return handled;
 }
@@ -2038,7 +2067,7 @@ midori_view_set_uri (MidoriView*  view,
 
             katze_assign (view->uri, g_strdup (""));
 
-            g_file_get_contents (DATADIR "/midori/res/speeddial-head.html",
+            g_file_get_contents (MDATADIR "/midori/res/speeddial-head.html",
                                  &speed_dial_head, NULL, NULL);
 
             res_server = sokoke_get_res_server ();
@@ -2050,7 +2079,7 @@ midori_view_set_uri (MidoriView*  view,
 
             if (!g_file_test (body_fname, G_FILE_TEST_EXISTS))
             {
-                if (g_file_get_contents (DATADIR "/midori/res/speeddial.json",
+                if (g_file_get_contents (MDATADIR "/midori/res/speeddial.json",
                                          &speed_dial_body, NULL, NULL))
                     g_file_set_contents (body_fname, speed_dial_body, -1, NULL);
                 else
@@ -2101,7 +2130,7 @@ midori_view_set_uri (MidoriView*  view,
                 data = g_strdup_printf (
                     "<html><head><title>%s</title></head>"
                     "<body><h1>%s</h1>"
-                    "<img src=\"file://" DATADIR "/midori/logo-shade.png\" "
+                    "<img src=\"file://" MDATADIR "/midori/logo-shade.png\" "
                     "style=\"position: absolute; right: 15px; bottom: 15px;\">"
                     "<p />The document %s of type '%s' cannot be displayed."
                     "</body></html>",
@@ -2118,7 +2147,7 @@ midori_view_set_uri (MidoriView*  view,
                 data = g_strdup_printf (
                     "<html><head><title>%s</title></head>"
                     "<body><h1>%s</h1>"
-                    "<img src=\"file://" DATADIR "/midori/logo-shade.png\" "
+                    "<img src=\"file://" MDATADIR "/midori/logo-shade.png\" "
                     "style=\"position: absolute; right: 15px; bottom: 15px;\">"
                     "<p />There is no documentation installed at %s."
                     "You may want to ask your distribution or "
@@ -2177,6 +2206,8 @@ midori_view_is_blank (MidoriView*  view)
  * @view: a #MidoriView
  *
  * Retrieves the icon of the view.
+ *
+ * The returned icon is owned by the @view and must not be modified.
  *
  * Return value: a #GdkPixbuf
  **/
@@ -2396,6 +2427,84 @@ midori_view_get_proxy_menu_item (MidoriView* view)
     return view->menu_item;
 }
 
+static void
+midori_view_tab_label_menu_open_cb (GtkWidget* menuitem,
+                                    GtkWidget* view)
+{
+    MidoriBrowser* browser = midori_browser_get_for_widget (view);
+    midori_browser_set_current_tab (browser, view);
+}
+
+static void
+midori_view_tab_label_menu_window_new_cb (GtkWidget* menuitem,
+                                          GtkWidget* view)
+{
+    g_signal_emit (view, signals[NEW_WINDOW], 0,
+        midori_view_get_display_uri (MIDORI_VIEW (view)));
+}
+
+static void
+midori_view_tab_label_menu_duplicate_tab_cb (GtkWidget*  menuitem,
+                                             MidoriView* view)
+{
+    MidoriNewView where = MIDORI_NEW_VIEW_TAB;
+    GtkWidget* new_view = g_object_new (MIDORI_TYPE_VIEW,
+        "net", view->net, "settings", view->settings, NULL);
+    midori_view_set_uri (MIDORI_VIEW (new_view),
+        midori_view_get_display_uri (view));
+    g_signal_emit (view, signals[NEW_VIEW], 0, new_view, where);
+}
+
+static void
+midori_view_tab_label_menu_close_cb (GtkWidget* menuitem,
+                                     GtkWidget* view)
+{
+    gtk_widget_destroy (view);
+}
+
+/**
+ * midori_view_get_tab_menu:
+ * @view: a #MidoriView
+ *
+ * Retrieves a menu that is typically shown when right-clicking
+ * a tab label or equivalent representation.
+ *
+ * Return value: a #GtkMenu
+ *
+ * Since: 0.1.8
+ **/
+GtkWidget*
+midori_view_get_tab_menu (MidoriView* view)
+{
+    GtkWidget* menu;
+    GtkWidget* menuitem;
+
+    g_return_val_if_fail (MIDORI_IS_VIEW (view), NULL);
+
+    menu = gtk_menu_new ();
+    menuitem = gtk_image_menu_item_new_from_stock (GTK_STOCK_OPEN, NULL);
+    gtk_menu_shell_append (GTK_MENU_SHELL (menu), menuitem);
+    g_signal_connect (menuitem, "activate",
+        G_CALLBACK (midori_view_tab_label_menu_open_cb), view);
+    menuitem = gtk_image_menu_item_new_from_stock (STOCK_WINDOW_NEW, NULL);
+    gtk_menu_shell_append (GTK_MENU_SHELL (menu), menuitem);
+    g_signal_connect (menuitem, "activate",
+        G_CALLBACK (midori_view_tab_label_menu_window_new_cb), view);
+    menuitem = gtk_menu_item_new_with_mnemonic (_("_Duplicate Tab"));
+    gtk_menu_shell_append (GTK_MENU_SHELL (menu), menuitem);
+    g_signal_connect (menuitem, "activate",
+        G_CALLBACK (midori_view_tab_label_menu_duplicate_tab_cb), view);
+    menuitem = gtk_separator_menu_item_new ();
+    gtk_menu_shell_append (GTK_MENU_SHELL (menu), menuitem);
+    menuitem = gtk_image_menu_item_new_from_stock (GTK_STOCK_CLOSE, NULL);
+    gtk_menu_shell_append (GTK_MENU_SHELL (menu), menuitem);
+    g_signal_connect (menuitem, "activate",
+        G_CALLBACK (midori_view_tab_label_menu_close_cb), view);
+    gtk_widget_show_all (menu);
+
+    return menu;
+}
+
 static gboolean
 midori_view_tab_label_button_release_event (GtkWidget*      tab_label,
                                             GdkEventButton* event,
@@ -2405,6 +2514,15 @@ midori_view_tab_label_button_release_event (GtkWidget*      tab_label,
     {
         /* Close the widget on middle click */
         gtk_widget_destroy (widget);
+        return TRUE;
+    }
+    else if (event->button == 3)
+    {
+        /* Show a context menu on right click */
+        GtkWidget* menu = midori_view_get_tab_menu (MIDORI_VIEW (widget));
+
+        katze_widget_popup (widget, GTK_MENU (menu),
+                            event, SOKOKE_MENU_POSITION_CURSOR);
         return TRUE;
     }
 
@@ -2533,6 +2651,23 @@ midori_view_tab_label_parent_set (GtkWidget*  tab_label,
     }
 }
 
+#if 0
+static gboolean
+midori_view_tab_label_query_tooltip_cb (GtkWidget*  tab_label,
+                                        gint        x,
+                                        gint        y,
+                                        gboolean    keyboard,
+                                        GtkTooltip* tooltip,
+                                        MidoriView* view)
+{
+    if (view->speed_dial_in_new_tabs)
+        gtk_tooltip_set_icon (tooltip, midori_view_get_snapshot (view, -160, -107));
+    else
+        gtk_tooltip_set_text (tooltip, midori_view_get_display_title (view));
+    return TRUE;
+}
+#endif
+
 /**
  * midori_view_get_proxy_tab_label:
  * @view: a #MidoriView
@@ -2609,6 +2744,11 @@ midori_view_get_proxy_tab_label (MidoriView* view)
             G_CALLBACK (midori_view_tab_close_clicked), view);
 
         view->tab_label = event_box;
+        #if 0
+        gtk_widget_set_has_tooltip (view->tab_label, TRUE);
+        g_signal_connect (view->tab_label, "query-tooltip",
+            G_CALLBACK (midori_view_tab_label_query_tooltip_cb), view);
+        #endif
         g_signal_connect (view->tab_icon, "destroy",
                           G_CALLBACK (gtk_widget_destroyed),
                           &view->tab_icon);
@@ -2768,6 +2908,8 @@ midori_view_reload (MidoriView* view,
 #endif
     if (view->title && strstr (title, view->title))
         webkit_web_view_open (WEBKIT_WEB_VIEW (view->web_view), view->uri);
+    else if (midori_view_is_blank (view))
+        midori_view_set_uri (view, view->uri);
     else if (from_cache)
         webkit_web_view_reload (WEBKIT_WEB_VIEW (view->web_view));
     else
@@ -2978,10 +3120,12 @@ midori_view_execute_script (MidoriView*  view,
 /* For now this is private API */
 GdkPixbuf*
 midori_view_get_snapshot (MidoriView* view,
-                          guint       width,
-                          guint       height)
+                          gint        width,
+                          gint        height)
 {
     GtkWidget* web_view;
+    gboolean fast;
+    gint x, y, w, h;
     GdkRectangle rect;
     GdkPixmap* pixmap;
     GdkEvent event;
@@ -2993,13 +3137,30 @@ midori_view_get_snapshot (MidoriView* view,
     web_view = gtk_bin_get_child (GTK_BIN (view));
     g_return_val_if_fail (web_view->window, NULL);
 
-    rect.x = web_view->allocation.x;
-    rect.y = web_view->allocation.y;
-    rect.width = web_view->allocation.width;
-    rect.height = web_view->allocation.height;
+    x = web_view->allocation.x;
+    y = web_view->allocation.y;
+    w = web_view->allocation.width;
+    h = web_view->allocation.height;
 
-    pixmap = gdk_pixmap_new (web_view->window,
-        web_view->allocation.width, web_view->allocation.height,
+    /* If width and height are both negative, we try to render faster at
+       the cost of correctness or beauty. Only a part of the page is
+       rendered which makes it a lot faster and scaling isn't as nice. */
+    fast = FALSE;
+    if (width < 0 && height < 0)
+    {
+        width *= -1;
+        height *= -1;
+        w = w > 320 ? 320 : w;
+        h = h > 240 ? 240 : h;
+        fast = TRUE;
+    }
+
+    rect.x = x;
+    rect.y = y;
+    rect.width = w;
+    rect.height = h;
+
+    pixmap = gdk_pixmap_new (web_view->window, w, h,
         gdk_drawable_get_depth (web_view->window));
     event.expose.type = GDK_EXPOSE;
     event.expose.window = pixmap;
@@ -3025,8 +3186,9 @@ midori_view_get_snapshot (MidoriView* view,
             width = rect.width;
         if (!height)
             height = rect.height;
+
         scaled = gdk_pixbuf_scale_simple (pixbuf, width, height,
-                                          GDK_INTERP_TILES);
+            fast ? GDK_INTERP_NEAREST : GDK_INTERP_TILES);
         g_object_unref (pixbuf);
         return scaled;
     }

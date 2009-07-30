@@ -48,6 +48,7 @@ Translations:
     hu: SZERVÁC Attila <sas@321.hu>
     id: Andhika Padmawan <andhika.padmawan@gmail.com>
     it: Sergio Durzu <sergio.durzu@ildeposito.org>
+    it: Luca Perri <kurama_luka@yahoo.it>
     ja: Masato Hashimoto <cabezon.hashimoto@gmail.com>
     nl: Vincent Tunru <projects@vinnl.nl>
     pl: Przemysław Sitek <el.pescado@gazeta.pl>
@@ -58,8 +59,10 @@ Translations:
     ru: Troitskiy Nikita <niktr@mail.ru>
     ru: Anton Shestakov <engored@ya.ru>
     sk: Robert Hartl <hartl.robert@gmail.com>
+    sr: Miloš Popović <gpopac@gmail.com>
     sv: Mikael Magnusson <mikachu@comhem.se>
     tr: Mirat Can Bayrak <MiratCanBayrak@gmail.com>
+    tr: Gökmen Görgen <gkmngrgn@gmail.com>
     uk: Dmitry Nikitin <luckas_fb@mail.ru>
     zh_CN: Stanley Zhang <yatzhang@gmail.com>
     zh_TW: Wei-Lun Chao <william.chao@ossii.com.tw>
@@ -67,5 +70,7 @@ Translations:
 Code from other projects:
     GTK+/ GdkPixbuf, Matthias Clasen <mclasen@redhat.com>
     GTK+/ GtkEntry, Copyright (C) 1995-1997 Peter Mattis, Spencer Kimball and Josh MacDonald
+    GTK+/ GtkToolbar, Copyright (C) 1995-1997 Peter Mattis, Spencer Kimball and Josh MacDonald
     Modified by the GTK+ Team and others 1997-2000
     libSoup/ CookieJarText, Copyright (C) 2008 Xan Lopez <xan@gnome.org>, Dan Winship <danw@gnome.org>
+    libSylph, Copyright 1999-2008 Hiroyuki Yamamoto, Copyright 2006-2009 Enrico Tröger <enrico.troeger@uvena.de>

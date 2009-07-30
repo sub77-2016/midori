@@ -231,7 +231,6 @@ static void
 midori_panel_button_detach_clicked_cb (GtkWidget*   toolbutton,
                                        MidoriPanel* panel)
 {
-    /* FIXME: Use stock icon for window */
     /* FIXME: What happens when the browser is destroyed? */
     /* FIXME: What about multiple browsers? */
     /* FIXME: Should we remember if the child was detached? */
@@ -248,6 +247,7 @@ midori_panel_button_detach_clicked_cb (GtkWidget*   toolbutton,
     GtkWidget* vbox = gtk_vbox_new (FALSE, 0);
     g_object_set_data (G_OBJECT (window), "scrolled", scrolled);
     gtk_window_set_title (GTK_WINDOW (window), title);
+    gtk_window_set_skip_taskbar_hint (GTK_WINDOW (window), TRUE);
     gtk_window_set_default_size (GTK_WINDOW (window), 250, 400);
     gtk_window_set_transient_for (GTK_WINDOW (window),
         GTK_WINDOW (gtk_widget_get_toplevel (panel->notebook)));
@@ -329,10 +329,8 @@ midori_panel_init (MidoriPanel* panel)
     toolitem = gtk_tool_button_new_from_stock (GTK_STOCK_FULLSCREEN);
     gtk_widget_set_sensitive (GTK_WIDGET (toolitem), FALSE);
     panel->button_detach = toolitem;
-    gtk_tool_button_set_label (GTK_TOOL_BUTTON (toolitem),
-                               _("Detach chosen panel from the window"));
     gtk_tool_item_set_tooltip_text (GTK_TOOL_ITEM (toolitem),
-                               _("Whether to detach the chosen panel from the window"));
+        _("Detach chosen panel from the window"));
     g_signal_connect (toolitem, "clicked",
         G_CALLBACK (midori_panel_button_detach_clicked_cb), panel);
     #if HAVE_OSX
@@ -341,10 +339,8 @@ midori_panel_init (MidoriPanel* panel)
     gtk_toolbar_insert (GTK_TOOLBAR (labelbar), toolitem, -1);
     #endif
     toolitem = gtk_tool_button_new_from_stock (GTK_STOCK_GO_FORWARD);
-    gtk_tool_button_set_label (GTK_TOOL_BUTTON (toolitem),
-                               _("Align sidepanel on the right"));
     gtk_tool_item_set_tooltip_text (GTK_TOOL_ITEM (toolitem),
-                               _("Whether to align the sidepanel on the right"));
+        _("Align sidepanel to the right"));
     g_signal_connect (toolitem, "clicked",
         G_CALLBACK (midori_panel_button_align_clicked_cb), panel);
     #if HAVE_OSX
@@ -488,7 +484,7 @@ midori_panel_set_compact (MidoriPanel* panel,
 
 /**
  * midori_panel_set_right_aligned:
- * @compact: %TRUE if the panel should be aligned to the right
+ * @right_aligned: %TRUE if the panel should be aligned to the right
  *
  * Determines if the panel should be right aligned.
  *
@@ -508,6 +504,9 @@ midori_panel_set_right_aligned (MidoriPanel* panel,
     gtk_tool_button_set_stock_id (GTK_TOOL_BUTTON (panel->button_align),
         right_aligned ? GTK_STOCK_GO_BACK : GTK_STOCK_GO_FORWARD);
     panel->right_aligned = right_aligned;
+    gtk_tool_item_set_tooltip_text (GTK_TOOL_ITEM (panel->button_align),
+        !panel->right_aligned ? _("Align sidepanel to the right")
+            : _("Align sidepanel to the left"));
     g_object_notify (G_OBJECT (panel), "right-aligned");
 }
 
@@ -662,7 +661,7 @@ midori_panel_append_page (MidoriPanel*    panel,
         g_signal_connect (menuitem, "activate",
                           G_CALLBACK (midori_panel_menu_item_activate_cb),
                           panel);
-        gtk_menu_shell_append (GTK_MENU_SHELL (panel->menu), menuitem);
+        gtk_menu_shell_insert (GTK_MENU_SHELL (panel->menu), menuitem, 4);
         g_object_set_data (G_OBJECT (scrolled), "panel-menuitem", menuitem);
         g_signal_connect (viewable, "destroy",
                           G_CALLBACK (midori_panel_widget_destroy_cb), menuitem);
@@ -798,6 +797,8 @@ midori_panel_page_num (MidoriPanel* panel,
  *
  * The child must be visible, otherwise the underlying GtkNotebook will
  * silently ignore the attempt to switch the page.
+ *
+ * Since 0.1.8 the "page" property is notifying changes.
  **/
 void
 midori_panel_set_current_page (MidoriPanel* panel,
@@ -807,15 +808,15 @@ midori_panel_set_current_page (MidoriPanel* panel,
 
     g_return_if_fail (MIDORI_IS_PANEL (panel));
 
-    gtk_notebook_set_current_page (GTK_NOTEBOOK (panel->toolbook), n);
-    gtk_notebook_set_current_page (GTK_NOTEBOOK (panel->notebook), n);
-
     if ((viewable = midori_panel_get_nth_page (panel, n)))
     {
         const gchar* label;
 
+        gtk_notebook_set_current_page (GTK_NOTEBOOK (panel->toolbook), n);
+        gtk_notebook_set_current_page (GTK_NOTEBOOK (panel->notebook), n);
         label = midori_viewable_get_label (MIDORI_VIEWABLE (viewable));
         g_object_set (panel->toolbar_label, "label", label, NULL);
+        g_object_notify (G_OBJECT (panel), "page");
     }
 }
 

@@ -17,6 +17,29 @@
 #include "midori-bookmarks.h"
 #include "sokoke.h"
 
+typedef struct
+{
+    const gchar* type;
+    const gchar* property;
+} ObjectProperty;
+
+static ObjectProperty properties_object_skip[] =
+{
+    { "MidoriWebSettings", "ident-string" },
+};
+
+static gboolean
+properties_should_skip (const gchar* type,
+                        const gchar* property)
+{
+    guint i;
+    for (i = 0; i < G_N_ELEMENTS (properties_object_skip); i++)
+        if (g_str_equal (properties_object_skip[i].type, type))
+            if (g_str_equal (properties_object_skip[i].property, property))
+                return TRUE;
+    return FALSE;
+}
+
 #define pspec_is_writable(pspec) (pspec->flags & G_PARAM_WRITABLE \
     && !(pspec->flags & (G_PARAM_CONSTRUCT | G_PARAM_CONSTRUCT_ONLY)))
 
@@ -35,10 +58,25 @@ properties_object_get_set (GObject* object)
         GType type = G_PARAM_SPEC_TYPE (pspec);
         const gchar* property = g_param_spec_get_name (pspec);
         void* value = NULL;
+        guint j;
 
         /* Skip properties of parent classes */
         if (pspec->owner_type != G_OBJECT_TYPE (object))
             continue;
+
+        /* Skip properties that cannot be tested generically */
+        if (properties_should_skip (G_OBJECT_TYPE_NAME (object), property))
+            continue;
+
+        /* Verify that the ID is unique */
+        if (pspecs[i]->owner_type == G_OBJECT_TYPE (object))
+        for (j = 0; j < n_properties; j++)
+            if (i != j && pspecs[j]->owner_type == G_OBJECT_TYPE (object))
+                if (pspec->param_id == pspecs[j]->param_id)
+                    g_error ("Duplicate ID %d of %s and %s",
+                        pspec->param_id,
+                        g_param_spec_get_name (pspec),
+                        g_param_spec_get_name (pspecs[j]));
 
         g_object_get (object, property, &value, NULL);
         if (type == G_TYPE_PARAM_BOOLEAN)
@@ -84,25 +122,25 @@ properties_object_get_set (GObject* object)
         {
             GEnumClass* enum_class = G_ENUM_CLASS (
                 g_type_class_ref (pspec->value_type));
-            gint j;
 
             if (pspec_is_writable (pspec))
             {
+                gint k;
                 g_object_set (object, property,
                     G_PARAM_SPEC_ENUM (pspec)->default_value, NULL);
-                for (j = enum_class->minimum; j < enum_class->maximum; j++)
+                for (k = enum_class->minimum; k < enum_class->maximum; k++)
                 {
-                    GEnumValue* enum_value = g_enum_get_value (enum_class, j);
+                    GEnumValue* enum_value = g_enum_get_value (enum_class, k);
                     if (!enum_value)
                         g_error ("%s.%s has no value %d",
-                            G_OBJECT_TYPE_NAME (object), property, j);
+                            G_OBJECT_TYPE_NAME (object), property, k);
                     GEnumValue* enum_value_ = g_enum_get_value_by_name (enum_class,
                         enum_value->value_name);
                     if (!enum_value)
                         g_error ("%s.%s has no value '%s'",
                             G_OBJECT_TYPE_NAME (object), property, enum_value->value_name);
                     g_assert_cmpint (enum_value->value, ==, enum_value_->value);
-                    g_object_set (object, property, j, NULL);
+                    g_object_set (object, property, k, NULL);
                 }
             }
 

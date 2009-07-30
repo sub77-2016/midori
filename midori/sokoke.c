@@ -36,6 +36,7 @@
     #include <idna.h>
 #endif
 
+#ifdef HAVE_JSCORE
 static gchar*
 sokoke_js_string_utf8 (JSStringRef js_string)
 {
@@ -49,18 +50,22 @@ sokoke_js_string_utf8 (JSStringRef js_string)
     JSStringGetUTF8CString (js_string, string_utf8, size_utf8);
     return string_utf8;
 }
+#endif
 
 gchar*
 sokoke_js_script_eval (JSContextRef js_context,
                        const gchar* script,
                        gchar**      exception)
 {
+    #ifdef HAVE_JSCORE
     gchar* value;
     JSStringRef js_value_string;
+    #endif
 
     g_return_val_if_fail (js_context, FALSE);
     g_return_val_if_fail (script, FALSE);
 
+    #ifdef HAVE_JSCORE
     JSStringRef js_script = JSStringCreateWithUTF8CString (script);
     JSValueRef js_exception = NULL;
     JSValueRef js_value = JSEvaluateScript (js_context, js_script,
@@ -79,6 +84,9 @@ sokoke_js_script_eval (JSContextRef js_context,
     value = sokoke_js_string_utf8 (js_value_string);
     JSStringRelease (js_value_string);
     return value;
+    #else
+    return g_strdup ("");
+    #endif
 }
 
 static void
@@ -92,8 +100,6 @@ error_dialog (const gchar* short_message,
     gtk_widget_show (dialog);
     g_signal_connect_swapped (dialog, "response",
                               G_CALLBACK (gtk_widget_destroy), dialog);
-
-
 }
 
 /**
@@ -355,11 +361,11 @@ sokoke_magic_uri (const gchar* uri,
     search_uri = NULL;
     /* Do we have a keyword and a string? */
     parts = g_strsplit (uri, " ", 2);
-    if (parts[0] && parts[1])
+    if (parts[0])
         if ((item = katze_array_find_token (search_engines, parts[0])))
         {
             search_uri = katze_item_get_uri (item);
-            search = sokoke_search_uri (search_uri, parts[1]);
+            search = sokoke_search_uri (search_uri, parts[1] ? parts[1] : "");
         }
     g_strfreev (parts);
     return search;
@@ -511,12 +517,16 @@ sokoke_hig_frame_new (const gchar* title)
 {
     /* Create a frame with no actual frame but a bold label and indentation */
     GtkWidget* frame = gtk_frame_new (NULL);
+    #ifdef G_OS_WIN32
+    gtk_frame_set_label (GTK_FRAME (frame), title);
+    #else
     gchar* title_bold = g_strdup_printf ("<b>%s</b>", title);
     GtkWidget* label = gtk_label_new (NULL);
     gtk_label_set_markup (GTK_LABEL (label), title_bold);
     g_free (title_bold);
     gtk_frame_set_label_widget (GTK_FRAME (frame), label);
     gtk_frame_set_shadow_type (GTK_FRAME (frame), GTK_SHADOW_NONE);
+    #endif
     return frame;
 }
 
@@ -735,6 +745,9 @@ sokoke_action_create_popup_menu_item (GtkAction* action)
 
     g_return_val_if_fail (GTK_IS_ACTION (action), NULL);
 
+    if (KATZE_IS_ARRAY_ACTION (action))
+        return gtk_action_create_menu_item (action);
+
     g_object_get (action,
                   "label", &label,
                   "stock-id", &stock_id,
@@ -747,6 +760,9 @@ sokoke_action_create_popup_menu_item (GtkAction* action)
         menuitem = gtk_check_menu_item_new_with_mnemonic (label);
         gtk_check_menu_item_set_active (GTK_CHECK_MENU_ITEM (menuitem),
             gtk_toggle_action_get_active (GTK_TOGGLE_ACTION (action)));
+        if (GTK_IS_RADIO_ACTION (action))
+            gtk_check_menu_item_set_draw_as_radio (GTK_CHECK_MENU_ITEM (menuitem),
+                                                   TRUE);
     }
     else if (stock_id)
     {
@@ -839,6 +855,7 @@ sokoke_register_stock_items (void)
     {
         { STOCK_EXTENSION, NULL, 0, 0, GTK_STOCK_CONVERT },
         { STOCK_IMAGE, NULL, 0, 0, GTK_STOCK_ORIENTATION_PORTRAIT },
+        { STOCK_WEB_BROWSER, NULL, 0, 0, "gnome-web-browser" },
         { STOCK_NEWS_FEED, NULL, 0, 0, GTK_STOCK_INDEX },
         { STOCK_SCRIPT, NULL, 0, 0, GTK_STOCK_EXECUTE },
         { STOCK_STYLE, NULL, 0, 0, GTK_STOCK_SELECT_COLOR },
@@ -846,7 +863,7 @@ sokoke_register_stock_items (void)
 
         { STOCK_BOOKMARK,       N_("_Bookmark"), 0, 0, GTK_STOCK_FILE },
         { STOCK_BOOKMARKS,      N_("_Bookmarks"), 0, 0, GTK_STOCK_DIRECTORY },
-        { STOCK_BOOKMARK_ADD,   N_("_Add Bookmark"), 0, 0, GTK_STOCK_ADD },
+        { STOCK_BOOKMARK_ADD,   N_("Add Boo_kmark"), 0, 0, GTK_STOCK_ADD },
         { STOCK_CONSOLE,        N_("_Console"), 0, 0, GTK_STOCK_DIALOG_WARNING },
         { STOCK_EXTENSIONS,     N_("_Extensions"), 0, 0, GTK_STOCK_CONVERT },
         { STOCK_HISTORY,        N_("_History"), 0, 0, GTK_STOCK_SORT_ASCENDING },
@@ -948,6 +965,32 @@ sokoke_remove_path (const gchar* path,
     return TRUE;
 }
 
+/**
+ * sokoke_find_data_filename:
+ * @filename: a filename or relative path
+ *
+ * Looks for the specified filename in the system data
+ * directories, depending on the platform.
+ *
+ * Return value: a full path
+ **/
+gchar*
+sokoke_find_data_filename (const gchar* filename)
+{
+    const gchar* const* data_dirs = g_get_system_data_dirs ();
+    guint i = 0;
+    const gchar* data_dir;
+
+    while ((data_dir = data_dirs[i++]))
+    {
+        gchar* path = g_build_filename (data_dir, filename, NULL);
+        if (g_file_test (path, G_FILE_TEST_EXISTS))
+            return path;
+        g_free (path);
+    }
+    return g_build_filename (MDATADIR, filename, NULL);
+}
+
 static void
 res_server_handler_cb (SoupServer*        res_server,
                        SoupMessage*       msg,
@@ -958,13 +1001,15 @@ res_server_handler_cb (SoupServer*        res_server,
 {
     if (g_str_has_prefix (path, "/res"))
     {
-        gchar* filename = g_strconcat (DATADIR "/midori", path, NULL);
+        gchar* filename = g_build_filename ("midori", path, NULL);
+        gchar* filepath = sokoke_find_data_filename (filename);
         gchar* contents;
         gsize length;
 
-        if (g_file_get_contents (filename, &contents, &length, NULL))
+        g_free (filename);
+        if (g_file_get_contents (filepath, &contents, &length, NULL))
         {
-            gchar* content_type = g_content_type_guess (filename, (guchar*)contents,
+            gchar* content_type = g_content_type_guess (filepath, (guchar*)contents,
                                                         length, NULL);
             gchar* mime_type = g_content_type_get_mime_type (content_type);
             g_free (content_type);
@@ -975,7 +1020,7 @@ res_server_handler_cb (SoupServer*        res_server,
         }
         else
             soup_message_set_status (msg, 404);
-        g_free (filename);
+        g_free (filepath);
     }
     else if (g_str_has_prefix (path, "/stock/"))
     {
