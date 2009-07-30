@@ -220,9 +220,9 @@ settings_save_to_file (MidoriWebSettings* settings,
         }
         else if (type == G_TYPE_PARAM_BOOLEAN)
         {
-            gboolean boolean;
-            g_object_get (settings, property, &boolean, NULL);
-            g_key_file_set_boolean (key_file, "settings", property, boolean);
+            gboolean truth;
+            g_object_get (settings, property, &truth, NULL);
+            g_key_file_set_boolean (key_file, "settings", property, truth);
         }
         else if (type == G_TYPE_PARAM_ENUM)
         {
@@ -745,6 +745,15 @@ settings_notify_cb (MidoriWebSettings* settings,
 }
 
 static void
+extension_activate_cb (MidoriExtension* extension,
+                       MidoriApp*       app)
+{
+    MidoriWebSettings* settings = katze_object_get_object (app, "settings");
+    settings_notify_cb (settings, NULL, app);
+    g_object_unref (settings);
+}
+
+static void
 accel_map_changed_cb (GtkAccelMap*    accel_map,
                       gchar*          accel_path,
                       guint           accel_key,
@@ -1185,6 +1194,8 @@ midori_load_extensions (gpointer data)
         if (extension_dir != NULL)
         {
             const gchar* filename;
+            gchar* config_file = build_config_filename ("config");
+            gboolean is_writable = is_writable (config_file);
 
             while ((filename = g_dir_read_name (extension_dir)))
             {
@@ -1228,9 +1239,17 @@ midori_load_extensions (gpointer data)
                         if (!g_strcmp0 (filename, name))
                             g_signal_emit_by_name (extension, "activate", app);
                 }
+                if (is_writable)
+                {
+                    g_signal_connect_after (extension, "activate",
+                        G_CALLBACK (extension_activate_cb), app);
+                    g_signal_connect_after (extension, "deactivate",
+                        G_CALLBACK (extension_activate_cb), app);
+                }
                 g_object_unref (extension);
             }
             g_dir_close (extension_dir);
+            g_free (config_file);
         }
         g_free (extension_path);
     }
@@ -1250,6 +1269,8 @@ midori_load_session (gpointer data)
     KatzeArray* session;
     KatzeItem* item;
     guint i;
+    gint64 current;
+    gchar** command = g_object_get_data (G_OBJECT (app), "execute-command");
 
     browser = midori_app_create_browser (app);
     midori_app_add_browser (app, browser);
@@ -1285,8 +1306,12 @@ midori_load_session (gpointer data)
     i = 0;
     while ((item = katze_array_get_nth_item (_session, i++)))
         midori_browser_add_item (browser, item);
-    /* FIXME: Switch to the last active page */
-    item = katze_array_get_nth_item (_session, 0);
+    current = katze_item_get_meta_integer (KATZE_ITEM (_session), "current");
+    if (current < 0)
+        current = 0;
+    midori_browser_set_current_page (browser, current);
+    if (!(item = katze_array_get_nth_item (_session, current)))
+        item = katze_array_get_nth_item (_session, 0);
     if (!strcmp (katze_item_get_uri (item), ""))
         midori_browser_activate_action (browser, "Location");
     g_object_unref (_session);
@@ -1304,9 +1329,13 @@ midori_load_session (gpointer data)
             (GWeakNotify)(midori_browser_weak_notify_cb), browser);
     }
 
+    if (command)
+        midori_app_send_command (app, command);
+
     return FALSE;
 }
 
+#ifdef HAVE_JSCORE
 static gint
 midori_run_script (const gchar* filename)
 {
@@ -1344,6 +1373,7 @@ midori_run_script (const gchar* filename)
     g_print ("%s - Exception: %s\n", filename, exception);
     return 1;
 }
+#endif
 
 #if WEBKIT_CHECK_VERSION (1, 1, 6)
 static void
@@ -1372,6 +1402,19 @@ snapshot_load_finished_cb (GtkWidget*      web_view,
 }
 #endif
 
+static void
+midori_web_app_browser_notify_load_status_cb (MidoriBrowser* browser,
+                                              GParamSpec*    pspec,
+                                              gpointer       data)
+{
+    if (katze_object_get_enum (browser, "load-status") != MIDORI_LOAD_PROVISIONAL)
+    {
+        GtkWidget* view = midori_browser_get_current_tab (browser);
+        GdkPixbuf* icon = midori_view_get_icon (MIDORI_VIEW (view));
+        gtk_window_set_icon (GTK_WINDOW (browser), icon);
+    }
+}
+
 int
 main (int    argc,
       char** argv)
@@ -1380,6 +1423,7 @@ main (int    argc,
     gchar* config;
     gboolean run;
     gchar* snapshot;
+    gboolean execute;
     gboolean version;
     gchar** uris;
     MidoriApp* app;
@@ -1391,12 +1435,16 @@ main (int    argc,
        N_("Run ADDRESS as a web application"), N_("ADDRESS") },
        { "config", 'c', 0, G_OPTION_ARG_FILENAME, &config,
        N_("Use FOLDER as configuration folder"), N_("FOLDER") },
+       #ifdef HAVE_JSCORE
        { "run", 'r', 0, G_OPTION_ARG_NONE, &run,
        N_("Run the specified filename as javascript"), NULL },
+       #endif
        #if WEBKIT_CHECK_VERSION (1, 1, 6)
        { "snapshot", 's', 0, G_OPTION_ARG_STRING, &snapshot,
        N_("Take a snapshot of the specified URI"), NULL },
        #endif
+       { "execute", 'e', 0, G_OPTION_ARG_NONE, &execute,
+       N_("Execute the specified command"), NULL },
        { "version", 'V', 0, G_OPTION_ARG_NONE, &version,
        N_("Display program version"), NULL },
        { G_OPTION_REMAINING, 0, 0, G_OPTION_ARG_STRING_ARRAY, &uris,
@@ -1430,7 +1478,15 @@ main (int    argc,
     if (g_getenv ("NLSPATH"))
         bindtextdomain (GETTEXT_PACKAGE, g_getenv ("NLSPATH"));
     else
+    #ifdef G_OS_WIN32
+    {
+        gchar* path = sokoke_find_data_filename ("locale");
+        bindtextdomain (GETTEXT_PACKAGE, path);
+        g_free (path);
+    }
+    #else
         bindtextdomain (GETTEXT_PACKAGE, LOCALEDIR);
+    #endif
     bind_textdomain_codeset (GETTEXT_PACKAGE, "UTF-8");
     textdomain (GETTEXT_PACKAGE);
     #endif
@@ -1440,6 +1496,7 @@ main (int    argc,
     config = NULL;
     run = FALSE;
     snapshot = NULL;
+    execute = FALSE;
     version = FALSE;
     uris = NULL;
     error = NULL;
@@ -1515,10 +1572,13 @@ main (int    argc,
                       "show-menubar", FALSE,
                       "show-navigationbar", TRUE,
                       "toolbar-items", "Back,Forward,ReloadStop,Location",
+                      "homepage", NULL,
                       "show-statusbar", TRUE,
                       NULL);
         g_object_unref (settings);
         g_object_set (browser, "settings", settings, NULL);
+        g_signal_connect (browser, "notify::load-status",
+            G_CALLBACK (midori_web_app_browser_notify_load_status_cb), NULL);
         midori_browser_add_uri (browser, webapp);
         g_object_set_data (G_OBJECT (browser), "locked", (void*)1);
         g_signal_connect (browser, "destroy",
@@ -1529,9 +1589,11 @@ main (int    argc,
         return 0;
     }
 
+    #ifdef HAVE_JSCORE
     /* Standalone javascript support */
     if (run)
         return midori_run_script (uris ? *uris : NULL);
+    #endif
 
     #if HAVE_HILDON
     osso_context = osso_initialize (PACKAGE_NAME, PACKAGE_VERSION, FALSE, NULL);
@@ -1569,8 +1631,9 @@ main (int    argc,
     {
         GtkWidget* dialog;
 
-        /* TODO: Open as many tabs as we have uris, seperated by pipes */
-        if (uris)
+        if (execute)
+            result = midori_app_send_command (app, uris);
+        else if (uris) /* TODO: Open a tab per URI, seperated by pipes */
             result = midori_app_instance_send_uris (app, uris);
         else
             result = midori_app_instance_send_new_browser (app);
@@ -1606,6 +1669,15 @@ main (int    argc,
     }
     if (!error && katze_array_is_empty (search_engines))
     {
+        #ifdef G_OS_WIN32
+        gchar* dir;
+
+        dir = g_win32_get_package_installation_directory_of_module (NULL);
+        katze_assign (config_file,
+            g_build_filename (dir, "etc", "xdg", PACKAGE_NAME, "search", NULL));
+        g_free (dir);
+        search_engines = search_engines_new_from_file (config_file, NULL);
+        #else
         const gchar* const * config_dirs = g_get_system_config_dirs ();
         i = 0;
         while (config_dirs[i])
@@ -1625,6 +1697,7 @@ main (int    argc,
                 g_build_filename (SYSCONFDIR, "xdg", PACKAGE_NAME, "search", NULL));
             search_engines = search_engines_new_from_file (config_file, NULL);
         }
+        #endif
     }
     else if (error)
     {
@@ -1730,6 +1803,9 @@ main (int    argc,
     }
     g_string_free (error_messages, TRUE);
 
+    /* If -e or --execute was specified, "uris" refers to the command. */
+    if (!execute)
+    {
     /* Open as many tabs as we have uris, seperated by pipes */
     i = 0;
     while (uris && uris[i])
@@ -1746,6 +1822,7 @@ main (int    argc,
         }
         g_free (uri);
         i++;
+    }
     }
 
     katze_assign (config_file, build_config_filename ("config"));
@@ -1844,6 +1921,9 @@ main (int    argc,
     g_idle_add (midori_load_extensions, app);
     katze_item_set_parent (KATZE_ITEM (_session), app);
     g_idle_add (midori_load_session, _session);
+
+    if (execute)
+        g_object_set_data (G_OBJECT (app), "execute-command", uris);
 
     gtk_main ();
 

@@ -129,6 +129,22 @@ proxy_object_notify_string_cb (GObject*    object,
     g_free (value);
 }
 
+static void
+proxy_widget_boolean_destroy_cb (GtkWidget* proxy,
+                                 GObject*   object)
+{
+    g_signal_handlers_disconnect_by_func (object,
+        proxy_object_notify_boolean_cb, proxy);
+}
+
+static void
+proxy_widget_string_destroy_cb (GtkWidget* proxy,
+                                 GObject*  object)
+{
+    g_signal_handlers_disconnect_by_func (object,
+        proxy_object_notify_string_cb, proxy);
+}
+
 /**
  * katze_property_proxy:
  * @object: a #GObject
@@ -153,6 +169,7 @@ proxy_object_notify_string_cb (GObject*    object,
  *     Since 0.1.6 the following hints are also supported:
  *     "toggle": the widget created will be an empty toggle button. This
  *         is only supported with boolean properties.
+ *         Since 0.1.8 "toggle" creates GtkCheckButton widgets without checkmarks.
  *
  * Any other values for @hint are silently ignored.
  *
@@ -196,16 +213,19 @@ katze_property_proxy (gpointer     object,
         gchar* notify_property;
         gboolean toggled = katze_object_get_boolean (object, property);
 
+        widget = gtk_check_button_new ();
         if (_hint == g_intern_string ("toggle"))
-            widget = gtk_toggle_button_new ();
+            gtk_toggle_button_set_mode (GTK_TOGGLE_BUTTON (widget), FALSE);
         else
-            widget = gtk_check_button_new_with_label (gettext (nick));
+            gtk_button_set_label (GTK_BUTTON (widget), gettext (nick));
         gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (widget), toggled);
         g_signal_connect (widget, "toggled",
                           G_CALLBACK (proxy_toggle_button_toggled_cb), object);
         notify_property = g_strdup_printf ("notify::%s", property);
         g_signal_connect (object, notify_property,
             G_CALLBACK (proxy_object_notify_boolean_cb), widget);
+        g_signal_connect (widget, "destroy",
+            G_CALLBACK (proxy_widget_boolean_destroy_cb), object);
         g_free (notify_property);
     }
     else if (type == G_TYPE_PARAM_STRING && _hint == g_intern_string ("file"))
@@ -298,6 +318,8 @@ katze_property_proxy (gpointer     object,
         notify_property = g_strdup_printf ("notify::%s", property);
         g_signal_connect (object, notify_property,
             G_CALLBACK (proxy_object_notify_string_cb), widget);
+        g_signal_connect (widget, "destroy",
+            G_CALLBACK (proxy_widget_string_destroy_cb), object);
         g_free (notify_property);
     }
     else if (type == G_TYPE_PARAM_FLOAT)
@@ -600,6 +622,64 @@ katze_tree_view_get_selected_iter (GtkTreeView*   treeview,
         if (gtk_tree_selection_get_selected (selection, model, iter))
             return TRUE;
     return FALSE;
+}
+
+/**
+ * katze_strip_mnemonics:
+ * @original: a string with mnemonics
+ *
+ * Parses the given string for mnemonics in the form
+ * "B_utton" or "Button (_U)" and returns a string
+ * without any mnemonics.
+ *
+ * Return value: a newly allocated string without mnemonics
+ *
+ * Since: 0.1.8
+ **/
+gchar*
+katze_strip_mnemonics (const gchar* original)
+{
+  /* A copy of _gtk_toolbar_elide_underscores
+     Copyright (C) 1995-1997 Peter Mattis, Spencer Kimball and Josh MacDonald
+     Copied from GTK+ 2.17.1 */
+  gchar *q, *result;
+  const gchar *p, *end;
+  gsize len;
+  gboolean last_underscore;
+
+  if (!original)
+    return NULL;
+
+  len = strlen (original);
+  q = result = g_malloc (len + 1);
+  last_underscore = FALSE;
+
+  end = original + len;
+  for (p = original; p < end; p++)
+    {
+      if (!last_underscore && *p == '_')
+	last_underscore = TRUE;
+      else
+	{
+	  last_underscore = FALSE;
+	  if (original + 2 <= p && p + 1 <= end &&
+              p[-2] == '(' && p[-1] == '_' && p[0] != '_' && p[1] == ')')
+	    {
+	      q--;
+	      *q = '\0';
+	      p++;
+	    }
+	  else
+	    *q++ = *p;
+	}
+    }
+
+  if (last_underscore)
+    *q++ = '_';
+
+  *q = '\0';
+
+  return result;
 }
 
 /**

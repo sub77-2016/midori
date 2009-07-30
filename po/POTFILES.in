@@ -5,6 +5,8 @@ midori/main.c
 midori/midori-app.c
 midori/midori-array.c
 midori/midori-browser.c
+midori/midori-locationaction.c
+midori/midori-locationentry.c
 midori/midori-panel.c
 midori/midori-websettings.c
 midori/midori-view.c
@@ -28,6 +30,7 @@ extensions/adblock.c
 extensions/colorful-tabs.c
 extensions/cookie-manager/cookie-manager.c
 extensions/cookie-manager/cookie-manager-page.c
+extensions/cookie-manager/main.c
 extensions/feed-panel/feed-atom.c
 extensions/feed-panel/feed-panel.c
 extensions/feed-panel/feed-parse.c
@@ -35,4 +38,7 @@ extensions/feed-panel/feed-rss.c
 extensions/feed-panel/main.c
 extensions/mouse-gestures/main.c
 extensions/page-holder.c
+extensions/shortcuts.c
 extensions/statusbar-features.c
+extensions/tab-panel.c
+extensions/toolbar-editor.c

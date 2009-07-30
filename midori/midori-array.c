@@ -22,6 +22,13 @@
     #include <libxml/tree.h>
 #endif
 
+static void
+katze_xbel_parse_info (KatzeItem* item,
+                       xmlNodePtr cur);
+
+static gchar*
+katze_item_metadata_to_xbel (KatzeItem* item);
+
 #if HAVE_LIBXML
 static KatzeItem*
 katze_item_from_xmlNodePtr (xmlNodePtr cur)
@@ -49,6 +56,8 @@ katze_item_from_xmlNodePtr (xmlNodePtr cur)
             katze_item_set_text (item, g_strstrip ((gchar*)key));
             g_free (key);
         }
+        else if (!xmlStrcmp (cur->name, (const xmlChar*)"info"))
+            katze_xbel_parse_info (item, cur);
         cur = cur->next;
     }
     return item;
@@ -109,6 +118,52 @@ katze_array_from_xmlNodePtr (xmlNodePtr cur)
     return array;
 }
 
+static void
+katze_xbel_parse_info (KatzeItem* item,
+                       xmlNodePtr cur)
+{
+    cur = cur->xmlChildrenNode;
+    while (cur)
+    {
+        if (!xmlStrcmp (cur->name, (const xmlChar*)"metadata"))
+        {
+            xmlChar* owner = xmlGetProp (cur, (xmlChar*)"owner");
+            g_strstrip ((gchar*)owner);
+            /* FIXME: Save metadata from unknown owners */
+            if (!g_strcmp0 ((gchar*)owner, "http://www.twotoasts.de"))
+            {
+                xmlAttrPtr properties = cur->properties;
+                while (properties)
+                {
+                    if (!xmlStrcmp (properties->name, (xmlChar*)"owner"))
+                    {
+                        properties = properties->next;
+                        continue;
+                    }
+                    xmlChar* value = xmlGetProp (cur, properties->name);
+                    if (properties->ns && properties->ns->prefix)
+                    {
+                        gchar* ns_value = g_strdup_printf ("%s:%s",
+                            properties->ns->prefix, properties->name);
+                        katze_item_set_meta_string (item,
+                            (gchar*)ns_value, (gchar*)value);
+                        g_free (ns_value);
+                    }
+                    else
+                        katze_item_set_meta_string (item,
+                            (gchar*)properties->name, (gchar*)value);
+                    xmlFree (value);
+                    properties = properties->next;
+                }
+            }
+            xmlFree (owner);
+        }
+        else if (g_strcmp0 ((gchar*)cur->name, "text"))
+            g_critical ("Unexpected element <%s> in <metadata>.", cur->name);
+        cur = cur->next;
+    }
+}
+
 /* Loads the contents from an xmlNodePtr into an array. */
 static gboolean
 katze_array_from_xmlDocPtr (KatzeArray* array,
@@ -153,8 +208,8 @@ katze_array_from_xmlDocPtr (KatzeArray* array,
             item = katze_item_from_xmlNodePtr (cur);
         else if (!xmlStrcmp (cur->name, (const xmlChar*)"separator"))
             item = katze_item_new ();
-        /*else if (!xmlStrcmp (cur->name, (const xmlChar*)"info"))
-            item = katze_xbel_parse_info (xbel, cur);*/
+        else if (!xmlStrcmp (cur->name, (const xmlChar*)"info"))
+            katze_xbel_parse_info (KATZE_ITEM (array), cur);
         if (item)
             katze_array_add_item (array, item);
         cur = cur->next;
@@ -236,10 +291,12 @@ static gchar*
 katze_item_to_data (KatzeItem* item)
 {
     gchar* markup;
+    gchar* metadata;
 
     g_return_val_if_fail (KATZE_IS_ITEM (item), NULL);
 
     markup = NULL;
+    metadata = katze_item_metadata_to_xbel (item);
     if (KATZE_IS_ARRAY (item))
     {
         GString* _markup = g_string_new (NULL);
@@ -254,10 +311,11 @@ katze_item_to_data (KatzeItem* item)
         /* gchar* folded = item->folded ? NULL : g_strdup_printf (" folded=\"no\""); */
         gchar* title = _simple_xml_element ("title", katze_item_get_name (item));
         gchar* desc = _simple_xml_element ("desc", katze_item_get_text (item));
-        markup = g_strdup_printf ("<folder%s>\n%s%s%s</folder>\n",
+        markup = g_strdup_printf ("<folder%s>\n%s%s%s%s</folder>\n",
                                   "" /* folded ? folded : "" */,
                                   title, desc,
-                                  _markup->str);
+                                  _markup->str,
+                                  metadata);
         g_string_free (_markup, TRUE);
         /* g_free (folded); */
         g_free (title);
@@ -273,14 +331,40 @@ katze_item_to_data (KatzeItem* item)
         markup = g_strdup_printf ("<bookmark%s>\n%s%s%s</bookmark>\n",
                                   href,
                                   title, desc,
-                                  "");
+                                  metadata);
         g_free (href);
         g_free (title);
         g_free (desc);
     }
     else
         markup = g_strdup ("<separator/>\n");
+    g_free (metadata);
     return markup;
+}
+
+static gchar*
+katze_item_metadata_to_xbel (KatzeItem* item)
+{
+    GList* keys = katze_item_get_meta_keys (item);
+    GString* markup;
+    /* FIXME: Allow specifying an alternative namespace/ URI */
+    const gchar* namespace_uri = "http://www.twotoasts.de";
+    const gchar* namespace = "midori";
+    gsize i;
+    const gchar* key;
+
+    if (!keys)
+        return g_strdup ("");
+
+    markup = g_string_new ("<info>\n<metadata owner=\"");
+    g_string_append_printf (markup, "%s\"", namespace_uri);
+    i = 0;
+    while ((key = g_list_nth_data (keys, i++)))
+        if (katze_item_get_meta_string (item, key))
+            g_string_append_printf (markup, " %s:%s=\"%s\"", namespace, key,
+                katze_item_get_meta_string (item, key));
+    g_string_append_printf (markup, "/>\n</info>\n");
+    return g_string_free (markup, FALSE);
 }
 
 static gchar*
@@ -291,8 +375,10 @@ katze_array_to_xbel (KatzeArray* array,
     guint i;
     KatzeItem* item;
     gchar* item_xml;
+    const gchar* namespacing;
     gchar* title;
     gchar* desc;
+    gchar* metadata;
     gchar* outer_markup;
 
     inner_markup = g_string_new (NULL);
@@ -304,20 +390,25 @@ katze_array_to_xbel (KatzeArray* array,
         g_free (item_xml);
     }
 
+    namespacing = " xmlns:midori=\"http://www.twotoasts.de\"";
     title = _simple_xml_element ("title", katze_item_get_name (KATZE_ITEM (array)));
     desc = _simple_xml_element ("desc", katze_item_get_text (KATZE_ITEM (array)));
+    metadata = katze_item_metadata_to_xbel (KATZE_ITEM (array));
     outer_markup = g_strdup_printf (
-                   "%s%s<xbel version=\"1.0\">\n%s%s%s</xbel>\n",
+                   "%s%s<xbel version=\"1.0\"%s>\n%s%s%s%s</xbel>\n",
                    "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n",
                    "<!DOCTYPE xbel PUBLIC \"+//IDN python.org//DTD "
                    "XML Bookmark Exchange Language 1.0//EN//XML\" "
                    "\"http://www.python.org/topics/xml/dtds/xbel-1.0.dtd\">\n",
+                   namespacing,
                    title,
                    desc,
+                   metadata,
                    inner_markup->str);
     g_string_free (inner_markup, TRUE);
     g_free (title);
     g_free (desc);
+    g_free (metadata);
 
     return outer_markup;
 }

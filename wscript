@@ -19,10 +19,13 @@ import Utils
 import pproc as subprocess
 import os
 import UnitTest
+import Task
+from TaskGen import extension
+import misc
 
 major = 0
 minor = 1
-micro = 7
+micro = 8
 
 APPNAME = 'midori'
 VERSION = str (major) + '.' + str (minor) + '.' + str (micro)
@@ -38,24 +41,45 @@ srcdir = '.'
 blddir = '_build_'
 
 def option_enabled (option):
-    if eval ('Options.options.enable_' + option):
+    if getattr (Options.options, 'enable_' + option):
         return True
-    if eval ('Options.options.disable_' + option):
+    if getattr (Options.options, 'disable_' + option):
         return False
     return True
 
+def is_mingw (env):
+    if 'CC' in env:
+        cc = env['CC']
+        if not isinstance (cc, str):
+            cc = ''.join (cc)
+        return cc.find ('mingw') != -1# or cc.find ('wine') != -1
+    return False
+
+# Compile Win32 res files to (resource) object files
+@extension ('.rc')
+def rc_file(self, node):
+    rctask = self.create_task ('winrc')
+    rctask.set_inputs (node)
+    rctask.set_outputs (node.change_ext ('.rc.o'))
+    self.compiled_tasks.append (rctask)
+Task.simple_task_type ('winrc', '${WINRC} -o${TGT} ${SRC}', color='BLUE',
+    before='cc cxx', shell=False)
+
 def configure (conf):
     def option_checkfatal (option, desc):
-        if eval ('Options.options.enable_' + option):
+        if hasattr (Options.options, 'enable_' + option):
+            if getattr (Options.options, 'enable_' + option):
                 Utils.pprint ('RED', desc + ' N/A')
                 sys.exit (1)
 
-    def dirname_default (dirname, default):
-        if eval ('Options.options.' + dirname) == '':
+    def dirname_default (dirname, default, defname=None):
+        if getattr (Options.options, dirname) == '':
             dirvalue = default
         else:
-            dirvalue = eval ('Options.options.' + dirname)
-        conf.define (dirname, dirvalue)
+            dirvalue = getattr (Options.options, dirname)
+        if not defname:
+            defname = dirname
+        conf.define (defname, dirvalue)
         return dirvalue
 
     conf.check_tool ('compiler_cc')
@@ -85,13 +109,47 @@ def configure (conf):
         nls = 'no '
     conf.define ('ENABLE_NLS', [0,1][nls == 'yes'])
 
-    dirname_default ('DATADIR', os.path.join (conf.env['PREFIX'], 'share'))
-    dirname_default ('DOCDIR', os.path.join (conf.env['DATADIR'], 'doc'))
+    if conf.find_program ('rsvg-convert', var='RSVG_CONVERT'):
+        icons = 'yes'
+    else:
+        icons = 'no '
+
+    if is_mingw (conf.env) or Options.platform == 'win32':
+        if not conf.find_program ('convert', var='CONVERT'):
+            Utils.pprint ('YELLOW', 'midori.ico won\'t be created')
+        conf.find_program ('windres', var='WINRC')
+
+    # This is specific to cross compiling with mingw
+    if is_mingw (conf.env) and Options.platform != 'win32':
+        if not 'AR' in os.environ and not 'RANLIB' in os.environ:
+            conf.env['AR'] = os.environ['CC'][:-3] + 'ar'
+        if conf.find_program (os.environ['CC'][:-3] + 'windres', var='WINRC'):
+            os.environ['WINRC'] = os.environ['CC'][:-3] + 'windres'
+        Options.platform = 'win32'
+        # Make sure we don't have -fPIC in the CCFLAGS
+        conf.env["shlib_CCFLAGS"] = []
+        # Adjust file naming
+        conf.env["shlib_PATTERN"] = 'lib%s.dll'
+        conf.env['program_PATTERN'] = '%s.exe'
+        # Use Visual C++ compatible alignment
+        conf.env.append_value ('CCFLAGS', '-mms-bitfields')
+        conf.env['staticlib_LINKFLAGS'] = []
+
+        Utils.pprint ('BLUE', 'Mingw recognized, assuming cross compile.')
+
+    if conf.env['CONVERT'] and not conf.env['WINRC']:
+        Utils.pprint ('YELLOW', 'midori.ico won\'t be created')
+
     dirname_default ('LIBDIR', os.path.join (conf.env['PREFIX'], 'lib'))
     if conf.env['PREFIX'] == '/usr':
         dirname_default ('SYSCONFDIR', '/etc')
     else:
         dirname_default ('SYSCONFDIR', os.path.join (conf.env['PREFIX'], 'etc'))
+    dirname_default ('DATADIR', os.path.join (conf.env['PREFIX'], 'share'),
+    # Use MDATADIR because DATADIR is a constant in objidl.h on Windows
+        'MDATADIR')
+    conf.undefine ('DATADIR')
+    dirname_default ('DOCDIR', os.path.join (conf.env['MDATADIR'], 'doc'))
 
     if option_enabled ('apidocs'):
         conf.find_program ('gtkdoc-scan', var='GTKDOC_SCAN')
@@ -107,33 +165,37 @@ def configure (conf):
     else:
         api_docs = 'no '
 
-    def check_pkg (name, version='', mandatory=True, var=None):
+    def check_pkg (name, version='', mandatory=True, var=None, args=''):
         if not var:
             var = name.split ('-')[0].upper ()
-        conf.check_cfg (package=name, uselib_store=var, args='--cflags --libs',
+        conf.check_cfg (package=name, uselib_store=var, args='--cflags --libs ' + args,
             atleast_version=version, mandatory=mandatory)
+        return conf.env['HAVE_' + var]
 
     if option_enabled ('unique'):
         check_pkg ('unique-1.0', '0.9', False)
         unique = ['N/A', 'yes'][conf.env['HAVE_UNIQUE'] == 1]
+        if unique != 'yes':
+            option_checkfatal ('unique', 'single instance')
     else:
-        option_checkfatal ('unique', 'single instance')
         unique = 'no '
     conf.define ('HAVE_UNIQUE', [0,1][unique == 'yes'])
 
     if option_enabled ('libidn'):
         check_pkg ('libidn', '1.0', False)
         libidn = ['N/A','yes'][conf.env['HAVE_LIBIDN'] == 1]
+        if libidn != 'yes':
+            option_checkfatal ('libidn', 'international domain names')
     else:
-        option_checkfatal ('libidn', 'international domain names')
         libidn = 'no '
     conf.define ('HAVE_LIBIDN', [0,1][libidn == 'yes'])
 
     if option_enabled ('sqlite'):
         check_pkg ('sqlite3', '3.0', False, var='SQLITE')
         sqlite = ['N/A','yes'][conf.env['HAVE_SQLITE'] == 1]
+        if sqlite != 'yes':
+            option_checkfatal ('sqlite', 'history database')
     else:
-        option_checkfatal ('sqlite', 'history database')
         sqlite = 'no '
     conf.define ('HAVE_SQLITE', [0,1][sqlite == 'yes'])
 
@@ -141,29 +203,44 @@ def configure (conf):
     check_pkg ('gmodule-2.0', '2.8.0', False)
     check_pkg ('gthread-2.0', '2.8.0', False)
     check_pkg ('gio-2.0', '2.16.0')
-    check_pkg ('gtk+-2.0', '2.10.0', var='GTK')
-    check_pkg ('webkit-1.0', '1.1.1')
+    args = ''
+    if Options.platform == 'win32':
+        args = '--define-variable=target=win32'
+    check_pkg ('gtk+-2.0', '2.10.0', var='GTK', args=args)
+    check_pkg ('webkit-1.0', '1.1.1', args=args)
     check_pkg ('libsoup-2.4', '2.25.2')
     conf.define ('HAVE_LIBSOUP_2_25_2', 1)
     check_pkg ('libxml-2.0', '2.6')
 
     if option_enabled ('hildon'):
-        check_pkg ('hildon-1', mandatory=False, var='HILDON')
-        if conf.env['HAVE_HILDON'] == 1:
-            check_pkg ('libosso', mandatory=False, var='HILDON')
+        if check_pkg ('hildon-1', mandatory=False, var='HILDON'):
+            check_pkg ('libosso', var='HILDON')
         hildon = ['N/A','yes'][conf.env['HAVE_HILDON'] == 1]
+        if hildon != 'yes':
+            option_checkfatal ('hildon', 'Maemo integration')
     else:
-        option_checkfatal ('hildon', 'Maemo integration')
         hildon = 'no '
     conf.define ('HAVE_HILDON', [0,1][hildon == 'yes'])
 
-    conf.check (header_name='unistd.h')
-    conf.define ('HAVE_OSX', int(sys.platform == 'darwin'))
+    # Store options in env, since 'Options' is not persistent
+    if 'CC' in os.environ: conf.env['CC'] = os.environ['CC'].split()
+    conf.env['addons'] = option_enabled ('addons')
+    conf.env['docs'] = option_enabled ('docs')
 
-    if conf.find_program ('rsvg-convert', var='RSVG_CONVERT'):
-        icons = 'yes'
-    else:
-        icons = 'no '
+    conf.check (header_name='unistd.h')
+    if not conf.env['HAVE_UNIQUE']:
+        if Options.platform == 'win32':
+            conf.check (lib='ws2_32')
+        check_pkg ('openssl', mandatory=False)
+        conf.define ('USE_SSL', [0,1][conf.env['HAVE_OPENSSL'] == 1])
+        conf.define ('HAVE_NETDB_H', [0,1][conf.check (header_name='netdb.h')])
+        conf.check (header_name='sys/wait.h')
+        conf.check (header_name='sys/select.h')
+        conf.check (function_name='inet_aton')
+        conf.check (function_name='inet_addr')
+    conf.define ('HAVE_OSX', int(sys.platform == 'darwin'))
+    if Options.platform == 'win32':
+        conf.env.append_value ('LINKFLAGS', '-mwindows')
 
     conf.define ('PACKAGE_VERSION', VERSION)
     conf.define ('PACKAGE_NAME', APPNAME)
@@ -205,22 +282,22 @@ def configure (conf):
             Utils.pprint ('RED', 'No debugging level support for ' + compiler)
             sys.exit (1)
 
-    print
-    print "Optional build time dependencies:"
-    print "Localization:        " + nls + " (intltool)"
-    print "Icon optimizations:  " + icons + " (rsvg-convert)"
-    print "User documentation:  " + user_docs + " (docutils)"
-    print "API documentation:   " + api_docs + " (gtk-doc)"
-    print
-    print "Single instance:     " + unique + " (unique)"
+    print '''
+        Localization:        %(nls)s (intltool)
+        Icon optimizations:  %(icons)s (rsvg-convert)
+        Persistent history:  %(sqlite)s (sqlite3)
+
+        IDN support:         %(libidn)s (libidn)
+        User documentation:  %(user_docs)s (docutils)
+        API documentation:   %(api_docs)s (gtk-doc)
+        ''' % locals ()
     if unique == 'yes' and conf.check_cfg (modversion='unique-1.0') == '1.0.4':
-            Utils.pprint ('RED', 'unique 1.0.4 found, this version is erroneous.')
-            Utils.pprint ('RED', 'Please use an older or newer version.')
-    print "IDN support:         " + libidn + " (libidn)"
-    print "Persistent history:  " + sqlite + " (sqlite3)"
-    print "Maemo integration:   " + hildon + " (hildon)"
+        Utils.pprint ('RED', 'unique 1.0.4 found, this version is erroneous.')
+        Utils.pprint ('RED', 'Please use an older or newer version.')
 
 def set_options (opt):
+    def is_maemo (): return os.path.exists ('/etc/osso-af-init/osso-gtk.defs')
+
     def add_enable_option (option, desc, group=None, disable=False):
         if group == None:
             group = opt
@@ -258,15 +335,44 @@ def set_options (opt):
     add_enable_option ('libidn', 'international domain name support', group)
     add_enable_option ('sqlite', 'history database support', group)
     add_enable_option ('addons', 'building of extensions', group)
-    add_enable_option ('hildon', 'Maemo integration', group)
+    add_enable_option ('hildon', 'Maemo integration', group, disable=not is_maemo ())
 
 def build (bld):
+    def image_to_win32ico (task):
+        'Converts an image to a Win32 ico'
+
+        if not os.path.exists (bld.env['CONVERT']):
+            return 1
+
+        infile = task.inputs[0].abspath (task.env)
+        outfile = task.outputs[0].abspath (task.env)
+        command = bld.env['CONVERT'] + ' -background transparent \
+            -geometry 16x16 -extent 16x16 ' + \
+            infile + ' ' + outfile
+        if Utils.exec_command (command):
+            return 1
+
+        if task.chmod:
+            os.chmod (outfile, task.chmod)
+        return 0
+
+    if bld.env['WINRC']:
+        obj = bld.new_task_gen ('copy',
+            fun = image_to_win32ico,
+            source = 'icons/16x16/midori.png',
+            target = 'data/midori.ico',
+            before = 'cc')
+
+    bld.add_group ()
+
     bld.add_subdirs ('katze midori icons')
 
-    if option_enabled ('addons'):
+    if bld.env['addons']:
         bld.add_subdirs ('extensions')
 
-    if option_enabled ('docs'):
+    bld.add_group ()
+
+    if bld.env['docs']:
         bld.install_files ('${DOCDIR}/' + APPNAME + '/', \
             'AUTHORS ChangeLog COPYING EXPAT README TRANSLATE')
 
@@ -295,39 +401,40 @@ def build (bld):
         bld.add_subdirs ('docs/api')
         bld.install_files ('${DOCDIR}/midori/api/', blddir + '/docs/api/*')
 
-    if bld.env['HAVE_HILDON']:
-        appdir = '${DATADIR}/applications/hildon'
-        bld.install_files ('${DATADIR}/dbus-1/services',
-                           'data/com.nokia.' + APPNAME + '.service')
-    else:
-        appdir = '${DATADIR}/applications'
-    if bld.env['INTLTOOL']:
-        obj = bld.new_task_gen ('intltool_in')
-        obj.source = 'data/' + APPNAME + '.desktop.in'
-        obj.install_path = appdir
-        obj.flags  = '-d'
-        bld.install_files (appdir, 'data/' + APPNAME + '.desktop')
-    else:
-        folder = os.path.dirname (bld.env['waf_config_files'][0]) + '/data'
-        Utils.check_dir (folder)
-        desktop = APPNAME + '.desktop'
-        pre = open ('data/' + desktop + '.in')
-        after = open (folder + '/' + desktop, 'w')
-        try:
+    if not is_mingw (bld.env) and Options.platform != 'win32':
+        if bld.env['HAVE_HILDON']:
+            appdir = '${MDATADIR}/applications/hildon'
+            bld.install_files ('${MDATADIR}/dbus-1/services',
+                               'data/com.nokia.' + APPNAME + '.service')
+        else:
+            appdir = '${MDATADIR}/applications'
+        if bld.env['INTLTOOL']:
+            obj = bld.new_task_gen ('intltool_in')
+            obj.source = 'data/' + APPNAME + '.desktop.in'
+            obj.install_path = appdir
+            obj.flags  = ['-d', '-c']
+            bld.install_files (appdir, 'data/' + APPNAME + '.desktop')
+        else:
+            folder = os.path.abspath (blddir + '/default/data')
+            Utils.check_dir (folder)
+            desktop = APPNAME + '.desktop'
+            pre = open ('data/' + desktop + '.in')
+            after = open (folder + '/' + desktop, 'w')
             try:
-                for line in pre:
-                    if line != '':
-                        if line[0] == '_':
-                            after.write (line[1:])
-                        else:
-                            after.write (line)
-                after.close ()
-                Utils.pprint ('BLUE', desktop + '.in -> ' + desktop)
-                bld.install_files (appdir, folder + '/' + desktop)
-            except:
-                Utils.pprint ('BLUE', 'File ' + desktop + ' not generated')
-        finally:
-            pre.close ()
+                try:
+                    for line in pre:
+                        if line != '':
+                            if line[0] == '_':
+                                after.write (line[1:])
+                            else:
+                                after.write (line)
+                    after.close ()
+                    Utils.pprint ('BLUE', desktop + '.in -> ' + desktop)
+                    bld.install_files (appdir, folder + '/' + desktop)
+                except:
+                    Utils.pprint ('BLUE', 'File ' + desktop + ' not generated')
+            finally:
+                pre.close ()
 
     if bld.env['RSVG_CONVERT']:
         Utils.check_dir (blddir + '/data')
@@ -335,20 +442,20 @@ def build (bld):
             ' -o ' + blddir + '/data/logo-shade.png ' + \
             srcdir + '/data/logo-shade.svg'
         if not Utils.exec_command (command):
-            bld.install_files ('${DATADIR}/' + APPNAME + '/res', blddir + '/data/logo-shade.png')
+            bld.install_files ('${MDATADIR}/' + APPNAME + '/res', blddir + '/data/logo-shade.png')
         else:
             Utils.pprint ('BLUE', "logo-shade could not be rasterized.")
-    bld.install_files ('${DATADIR}/' + APPNAME + '/res', 'data/error.html')
-    bld.install_files ('${DATADIR}/' + APPNAME + '/res', 'data/speeddial-head.html')
-    bld.install_files ('${DATADIR}/' + APPNAME + '/res', 'data/speeddial.json')
-    bld.install_files ('${DATADIR}/' + APPNAME + '/res', 'data/mootools.js')
+    bld.install_files ('${MDATADIR}/' + APPNAME + '/res', 'data/error.html')
+    bld.install_files ('${MDATADIR}/' + APPNAME + '/res', 'data/speeddial-head.html')
+    bld.install_files ('${MDATADIR}/' + APPNAME + '/res', 'data/speeddial.json')
+    bld.install_files ('${MDATADIR}/' + APPNAME + '/res', 'data/mootools.js')
 
     if Options.commands['check']:
         bld.add_subdirs ('tests')
 
 def shutdown ():
     if Options.commands['install'] or Options.commands['uninstall']:
-        dir = Build.bld.get_install_path ('${DATADIR}/icons/hicolor')
+        dir = Build.bld.get_install_path ('${MDATADIR}/icons/hicolor')
         icon_cache_updated = False
         if not Options.options.destdir:
             # update the pixmap cache directory
@@ -394,9 +501,11 @@ def shutdown ():
             Utils.pprint ('RED', "Make sure intltool is installed.")
         os.chdir ('..')
     elif Options.options.run:
-        folder = os.path.dirname (Build.bld.env['waf_config_files'][0])
+        folder = os.path.abspath (blddir + '/default')
         try:
-            relfolder = os.path.relpath (folder)
+            relfolder = folder
+            if not is_mingw (Build.bld.env):
+                relfolder = os.path.relpath (folder)
         except:
             pass
         try:
@@ -417,8 +526,14 @@ def shutdown ():
                         'LC_MESSAGES' + os.sep + APPNAME + '.mo')
             except:
                 pass
-            command = relfolder + os.sep + APPNAME + os.sep + APPNAME
-            print ext + ' ' + nls + ' ' + command
-            Utils.exec_command (ext + ' ' + nls + ' ' + command)
-        except:
-            Utils.pprint ('RED', "Failed to run application.")
+            command = ext + ' ' + nls + ' '
+            if is_mingw (Build.bld.env):
+                # This works only if everything is installed to that prefix
+                os.chdir (Build.bld.env['PREFIX'] + os.sep + 'bin')
+                command += ' wine cmd /k "PATH=%PATH%;' + Build.bld.env['PREFIX'] + os.sep + 'bin' + ' && ' + APPNAME + '.exe"'
+            else:
+                command += ' ' + relfolder + os.sep + APPNAME + os.sep + APPNAME
+            print command
+            Utils.exec_command (command)
+        except Exception, msg:
+            Utils.pprint ('RED', "Failed to run application: " + str (msg))
