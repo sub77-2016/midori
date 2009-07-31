@@ -21,14 +21,14 @@ Build-Depends: debhelper (>= 7.0.50),
  python-docutils,
  libsoup2.4-dev (>= 2.25.2),
 # For testing under xvfb:
-# xvfb,
-# xauth,
-# xfonts-base
+ xvfb,
+ xauth,
+ xfonts-base
 # Disabled optional dependencies:
 Build-Conflicts: gtk-doc-tools,
  libgtksourceview2.0-dev (>= 2.0),
  libhildon-1-dev
-Standards-Version: 3.8.1
+Standards-Version: 3.8.2
 Homepage: http://software.twotoasts.de/index.php?/pages/midori_summary.html
 Vcs-Git: git://git.ryan52.info/git/midori
 Vcs-Browser: http://git.ryan52.info/?p=midori;a=summary

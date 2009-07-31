@@ -27,8 +27,7 @@ override_dh_auto_build:
 	./waf --nocache build --debug full
 
 override_dh_auto_test:
-	@echo tests are broken
-#	xvfb-run ./waf --nocache check
+	xvfb-run ./waf --nocache check
 
 override_dh_auto_install:
 	./waf --nocache install --destdir debian/tmp
