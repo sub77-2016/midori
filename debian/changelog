@@ -1,7 +1,8 @@
 midori (0.1.8-1) UNRELEASED; urgency=low
 
   * New Upstream Version
-  * refresh patches
+    - refresh patches
+    - enable tests
   * Debian Policy 3.8.2
 
  -- Ryan Niebur <ryanryan52@gmail.com>  Thu, 30 Jul 2009 18:33:22 -0700
