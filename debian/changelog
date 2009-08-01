@@ -1,4 +1,4 @@
-midori (0.1.8-1) UNRELEASED; urgency=low
+midori (0.1.8-1) unstable; urgency=low
 
   * New Upstream Version
     - refresh patches
@@ -6,7 +6,7 @@ midori (0.1.8-1) UNRELEASED; urgency=low
     - update debian/copyright
   * Debian Policy 3.8.2
 
- -- Ryan Niebur <ryanryan52@gmail.com>  Thu, 30 Jul 2009 18:33:22 -0700
+ -- Ryan Niebur <ryanryan52@gmail.com>  Sat, 01 Aug 2009 09:07:30 -0700
 
 midori (0.1.7-1) unstable; urgency=low
 
