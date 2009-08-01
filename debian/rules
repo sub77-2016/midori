@@ -16,21 +16,24 @@ override_dh_quilt_patch:
 	test -e midori/midori-debian.h
 	$(CMD)
 
+#WAF=/usr/bin/waf
+WAF=./waf
+
 override_dh_auto_clean:
-	./waf --nocache distclean
+	$(WAF) --nocache distclean
 	rm -rf _build_
 
 override_dh_auto_configure:
-	./waf --nocache configure --prefix /usr
+	$(WAF) --nocache configure --prefix /usr
 
 override_dh_auto_build:
-	./waf --nocache build --debug full
+	$(WAF) --nocache build --debug full
 
 override_dh_auto_test:
-	xvfb-run ./waf --nocache check
+	xvfb-run $(WAF) --nocache test
 
 override_dh_auto_install:
-	./waf --nocache install --destdir debian/tmp
+	$(WAF) --nocache install --destdir debian/tmp
 	rm -f debian/tmp/usr/share/doc/midori/COPYING debian/tmp/usr/share/doc/midori/TRANSLATE
 
 PRIORITY=$(shell sed -r -e '/DEBIAN_WWW_ALTERNATIVES_PRIORITY/ !d' -e 's/.* ([^ ]*)$$/\1/' $(CONFIG_FILE))
