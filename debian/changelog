@@ -4,8 +4,10 @@ midori (0.1.9-1) UNRELEASED; urgency=low
   * New Upstream Version (Closes: #541354)
   * fix Homepage field, thanks to Francesco Poli (Closes: #541414)
   * refresh patches
+  * improve bugs search to work for packages too, thanks to Denis
+    Laxalde for the suggestion (Closes: #542050)
 
- -- Ryan Niebur <ryanryan52@gmail.com>  Wed, 02 Sep 2009 11:30:48 -0700
+ -- Ryan Niebur <ryanryan52@gmail.com>  Wed, 02 Sep 2009 11:32:06 -0700
 
 midori (0.1.8-1) unstable; urgency=low
 

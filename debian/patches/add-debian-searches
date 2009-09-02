@@ -17,6 +17,6 @@ and #525991 - Adding debian bugs search to pre-installed searches
 +[Debian Bugs]
 +name=Debian Bugs
 +text=Debian Bugs Search
-+uri=http://bugs.debian.org/cgi-bin/bugreport.cgi?bug=%s
++uri=http://bugs.debian.org/%s
 +icon=
 +token=dbs
