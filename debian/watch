@@ -1,2 +1,2 @@
 version=3
-http://goodies.xfce.org/releases/midori/midori-([\d.]+).tar.bz2
+http://archive.xfce.org/src/apps/midori/(?:[\d.]+)/midori-([\d.]+).tar.bz2
