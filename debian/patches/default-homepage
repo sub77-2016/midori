@@ -7,10 +7,8 @@ Unfortunately there is no generic page of that sort, and I can't be
 bothered writing one.  So for now, I will just make the homepage
 Midori's user documentation.  This is similar to what Dillo did/does.
 
-Index: midori/midori/midori-websettings.c
-===================================================================
---- midori.orig/midori/midori-websettings.c	2009-09-02 11:26:59.000000000 -0700
-+++ midori/midori/midori-websettings.c	2009-09-02 11:30:00.000000000 -0700
+--- a/midori/midori-websettings.c
++++ b/midori/midori-websettings.c
 @@ -10,6 +10,7 @@
  */
  
