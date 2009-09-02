@@ -1,4 +1,4 @@
-midori (0.1.9-1) UNRELEASED; urgency=low
+midori (0.1.9-1) unstable; urgency=low
 
   * fix watch file, thanks to Rogério Brito
   * New Upstream Version (Closes: #541354)
@@ -9,7 +9,7 @@ midori (0.1.9-1) UNRELEASED; urgency=low
     Laxalde for the suggestion (Closes: #542050)
   * Debian Policy 3.8.3
 
- -- Ryan Niebur <ryanryan52@gmail.com>  Wed, 02 Sep 2009 11:49:32 -0700
+ -- Ryan Niebur <ryanryan52@gmail.com>  Wed, 02 Sep 2009 15:36:37 -0700
 
 midori (0.1.8-1) unstable; urgency=low
 
