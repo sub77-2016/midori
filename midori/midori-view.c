@@ -52,6 +52,11 @@ midori_view_get_snapshot (MidoriView* view,
                           gint        width,
                           gint        height);
 
+static void
+midori_view_item_meta_data_changed (KatzeItem*   item,
+                                    const gchar* key,
+                                    MidoriView*  view);
+
 struct _MidoriView
 {
     GtkScrolledWindow parent_instance;
@@ -62,6 +67,7 @@ struct _MidoriView
     GdkPixbuf* icon;
     gdouble progress;
     MidoriLoadStatus load_status;
+    gboolean minimized;
     gchar* statusbar_text;
     gchar* link_uri;
     gboolean has_selection;
@@ -144,6 +150,7 @@ enum
     PROP_ICON,
     PROP_LOAD_STATUS,
     PROP_PROGRESS,
+    PROP_MINIMIZED,
     PROP_ZOOM_LEVEL,
     PROP_NEWS_FEEDS,
     PROP_STATUSBAR_TEXT,
@@ -463,6 +470,26 @@ midori_view_class_init (MidoriViewClass* class)
                                      "The current loading progress",
                                      0.0, 1.0, 0.0,
                                      G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
+
+    /**
+    * MidoriView:minimized:
+    *
+    * Whether the view is minimized or in normal state.
+    *
+    * Minimizing a view indicates that only the icon should
+    * be advertised rather than the full blown tab label and
+    * it might otherwise be presented specially.
+    *
+    * Since: 0.1.8
+    */
+    g_object_class_install_property (gobject_class,
+                                     PROP_MINIMIZED,
+                                     g_param_spec_boolean (
+                                     "minimized",
+                                     "Minimized",
+                                     "Whether the view is minimized or in normal state",
+                                     FALSE,
+                                     G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 
     g_object_class_install_property (gobject_class,
                                      PROP_ZOOM_LEVEL,
@@ -1084,12 +1111,17 @@ static void
 midori_web_view_menu_new_tab_activate_cb (GtkWidget*  widget,
                                           MidoriView* view)
 {
-    gchar* uri = view->link_uri;
-
-    if (!uri)
-        uri = (gchar*)g_object_get_data (G_OBJECT (widget), "uri");
-    g_signal_emit (view, signals[NEW_TAB], 0, uri,
-        view->open_tabs_in_the_background);
+    if (view->link_uri)
+        g_signal_emit (view, signals[NEW_TAB], 0, view->link_uri,
+                       view->open_tabs_in_the_background);
+    else
+    {
+        gchar* data = (gchar*)g_object_get_data (G_OBJECT (widget), "uri");
+        gchar* uri = sokoke_magic_uri (data, NULL);
+        g_signal_emit (view, signals[NEW_TAB], 0, uri,
+                       view->open_tabs_in_the_background);
+        g_free (uri);
+    }
 }
 
 static void
@@ -1259,6 +1291,10 @@ webkit_web_view_populate_popup_cb (WebKitWebView* web_view,
                 icon = gtk_image_new_from_pixbuf (pixbuf);
                 g_object_unref (pixbuf);
                 gtk_image_menu_item_set_image (GTK_IMAGE_MENU_ITEM (menuitem), icon);
+                #if GTK_CHECK_VERSION (2, 16, 0)
+                gtk_image_menu_item_set_always_show_image (
+                    GTK_IMAGE_MENU_ITEM (menuitem), TRUE);
+                #endif
                 gtk_menu_shell_insert (GTK_MENU_SHELL (sub_menu), menuitem, i - 1);
                 g_object_set_data (G_OBJECT (menuitem), "search",
                                    (gchar*)katze_item_get_uri (item));
@@ -1596,6 +1632,7 @@ midori_view_init (MidoriView* view)
                                          GTK_ICON_SIZE_MENU, NULL);
     view->progress = 0.0;
     view->load_status = MIDORI_LOAD_FINISHED;
+    view->minimized = FALSE;
     view->statusbar_text = NULL;
     view->link_uri = NULL;
     view->selected_text = NULL;
@@ -1621,6 +1658,9 @@ midori_view_finalize (GObject* object)
     if (view->settings)
         g_signal_handlers_disconnect_by_func (view->settings,
             midori_view_settings_notify_cb, view);
+    if (view->item)
+        g_signal_handlers_disconnect_by_func (view->item,
+            midori_view_item_meta_data_changed, view);
 
     katze_assign (view->uri, NULL);
     katze_assign (view->title, NULL);
@@ -1656,6 +1696,20 @@ midori_view_set_property (GObject*      object,
     case PROP_TITLE:
         katze_assign (view->title, g_value_dup_string (value));
         midori_view_update_title (view);
+        break;
+    case PROP_MINIMIZED:
+        view->minimized = g_value_get_boolean (value);
+        if (view->item)
+        {
+            g_signal_handlers_block_by_func (view->item,
+                midori_view_item_meta_data_changed, view);
+            katze_item_set_meta_integer (view->item, "minimized",
+                                         view->minimized ? 1 : -1);
+            g_signal_handlers_unblock_by_func (view->item,
+                midori_view_item_meta_data_changed, view);
+        }
+        if (view->tab_label)
+            sokoke_widget_set_visible (view->tab_title, !view->minimized);
         break;
     case PROP_ZOOM_LEVEL:
         midori_view_set_zoom_level (view, g_value_get_float (value));
@@ -1704,6 +1758,9 @@ midori_view_get_property (GObject*    object,
         break;
     case PROP_LOAD_STATUS:
         g_value_set_enum (value, midori_view_get_load_status (view));
+        break;
+    case PROP_MINIMIZED:
+        g_value_set_boolean (value, view->minimized);
         break;
     case PROP_ZOOM_LEVEL:
         g_value_set_float (value, midori_view_get_zoom_level (view));
@@ -2428,6 +2485,13 @@ midori_view_get_proxy_menu_item (MidoriView* view)
 }
 
 static void
+midori_view_tab_label_menu_new_tab_cb (GtkWidget*  menuitem,
+                                       MidoriView* view)
+{
+    g_signal_emit (view, signals[NEW_TAB], 0, "", FALSE);
+}
+
+static void
 midori_view_tab_label_menu_open_cb (GtkWidget* menuitem,
                                     GtkWidget* view)
 {
@@ -2452,7 +2516,15 @@ midori_view_tab_label_menu_duplicate_tab_cb (GtkWidget*  menuitem,
         "net", view->net, "settings", view->settings, NULL);
     midori_view_set_uri (MIDORI_VIEW (new_view),
         midori_view_get_display_uri (view));
+    gtk_widget_show (new_view);
     g_signal_emit (view, signals[NEW_VIEW], 0, new_view, where);
+}
+
+static void
+midori_view_tab_label_menu_minimize_tab_cb (GtkWidget*  menuitem,
+                                            MidoriView* view)
+{
+    g_object_set (view, "minimized", !view->minimized, NULL);
 }
 
 static void
@@ -2482,6 +2554,12 @@ midori_view_get_tab_menu (MidoriView* view)
     g_return_val_if_fail (MIDORI_IS_VIEW (view), NULL);
 
     menu = gtk_menu_new ();
+    menuitem = gtk_menu_item_new_with_mnemonic (_("New _Tab"));
+    gtk_menu_shell_append (GTK_MENU_SHELL (menu), menuitem);
+    g_signal_connect (menuitem, "activate",
+        G_CALLBACK (midori_view_tab_label_menu_new_tab_cb), view);
+    menuitem = gtk_separator_menu_item_new ();
+    gtk_menu_shell_append (GTK_MENU_SHELL (menu), menuitem);
     menuitem = gtk_image_menu_item_new_from_stock (GTK_STOCK_OPEN, NULL);
     gtk_menu_shell_append (GTK_MENU_SHELL (menu), menuitem);
     g_signal_connect (menuitem, "activate",
@@ -2494,6 +2572,11 @@ midori_view_get_tab_menu (MidoriView* view)
     gtk_menu_shell_append (GTK_MENU_SHELL (menu), menuitem);
     g_signal_connect (menuitem, "activate",
         G_CALLBACK (midori_view_tab_label_menu_duplicate_tab_cb), view);
+    menuitem = gtk_menu_item_new_with_mnemonic (
+        view->minimized ? _("_Restore Tab") : _("_Minimize Tab"));
+    gtk_menu_shell_append (GTK_MENU_SHELL (menu), menuitem);
+    g_signal_connect (menuitem, "activate",
+        G_CALLBACK (midori_view_tab_label_menu_minimize_tab_cb), view);
     menuitem = gtk_separator_menu_item_new ();
     gtk_menu_shell_append (GTK_MENU_SHELL (menu), menuitem);
     menuitem = gtk_image_menu_item_new_from_stock (GTK_STOCK_CLOSE, NULL);
@@ -2669,6 +2752,27 @@ midori_view_tab_label_query_tooltip_cb (GtkWidget*  tab_label,
 #endif
 
 /**
+ * midori_view_get_label_ellipsize:
+ * @view: a #MidoriView
+ *
+ * Determines how labels representing the view should be
+ * ellipsized, which is helpful for alternative labels.
+ *
+ * Return value: how to ellipsize the label
+ *
+ * Since: 0.1.9
+ **/
+PangoEllipsizeMode
+midori_view_get_label_ellipsize (MidoriView* view)
+{
+    g_return_val_if_fail (MIDORI_IS_VIEW (view), PANGO_ELLIPSIZE_END);
+
+    if (view->tab_label)
+        return gtk_label_get_ellipsize (GTK_LABEL (view->tab_title));
+    return PANGO_ELLIPSIZE_END;
+}
+
+/**
  * midori_view_get_proxy_tab_label:
  * @view: a #MidoriView
  *
@@ -2763,6 +2867,16 @@ midori_view_get_proxy_tab_label (MidoriView* view)
     return view->tab_label;
 }
 
+static void
+midori_view_item_meta_data_changed (KatzeItem*   item,
+                                    const gchar* key,
+                                    MidoriView*  view)
+{
+    if (g_str_equal (key, "minimized"))
+        g_object_set (view, "minimized",
+            katze_item_get_meta_string (item, key) != NULL, NULL);
+}
+
 /**
  * midori_view_get_proxy_item:
  * @view: a #MidoriView
@@ -2790,6 +2904,8 @@ midori_view_get_proxy_item (MidoriView* view)
         katze_item_set_uri (view->item, uri);
         title = midori_view_get_display_title (view);
         katze_item_set_name (view->item, title);
+        g_signal_connect (view->item, "meta-data-changed",
+            G_CALLBACK (midori_view_item_meta_data_changed), view);
     }
     return view->item;
 }
