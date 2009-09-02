@@ -7,8 +7,10 @@ Unfortunately there is no generic page of that sort, and I can't be
 bothered writing one.  So for now, I will just make the homepage
 Midori's user documentation.  This is similar to what Dillo did/does.
 
---- a/midori/midori-websettings.c
-+++ b/midori/midori-websettings.c
+Index: midori/midori/midori-websettings.c
+===================================================================
+--- midori.orig/midori/midori-websettings.c	2009-09-02 11:26:59.000000000 -0700
++++ midori/midori/midori-websettings.c	2009-09-02 11:30:00.000000000 -0700
 @@ -10,6 +10,7 @@
  */
  
@@ -17,9 +19,9 @@ Midori's user documentation.  This is similar to what Dillo did/does.
  
  #include "sokoke.h"
  
-@@ -562,7 +563,7 @@
+@@ -580,7 +581,7 @@
                                       "homepage",
-                                      _("Homepage"),
+                                      _("Homepage:"),
                                       _("The homepage"),
 -                                     "http://www.google.com",
 +                                     DEBIAN_DISTRO_DEFAULT_HOMEPAGE,
