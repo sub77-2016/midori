@@ -21,6 +21,11 @@ Files: data/mootools.js
 Copyright: Copyright (c) 2006-2009 Valerio Proietti
 License: MIT
 
+Files: extensions/adblock.c
+Copyright: Copyright (C) 2009 Christian Dywan <christian@twotoasts.de>
+ Copyright (C) 2009 Alexander Butenko <a.butenka@gmail.com>
+License: LGPL-2.1+
+
 Files: extensions/cookie-manager.c extensions/cookie-manager/*
 Copyright: Copyright (C) 2009 Enrico Tröger <enrico(dot)troeger(at)uvena(dot)de>
 License: LGPL-2.1+

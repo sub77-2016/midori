@@ -2,8 +2,9 @@ midori (0.1.9-1) UNRELEASED; urgency=low
 
   * fix watch file, thanks to Rogério Brito
   * New Upstream Version (Closes: #541354)
+    - refresh patches
+    - update copyright
   * fix Homepage field, thanks to Francesco Poli (Closes: #541414)
-  * refresh patches
   * improve bugs search to work for packages too, thanks to Denis
     Laxalde for the suggestion (Closes: #542050)
   * Debian Policy 3.8.3
