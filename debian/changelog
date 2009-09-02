@@ -2,8 +2,9 @@ midori (0.1.9-1) UNRELEASED; urgency=low
 
   * fix watch file, thanks to Rogério Brito
   * New Upstream Version (Closes: #541354)
+  * fix Homepage field, thanks to Francesco Poli (Closes: #541414)
 
- -- Ryan Niebur <ryanryan52@gmail.com>  Wed, 02 Sep 2009 11:27:00 -0700
+ -- Ryan Niebur <ryanryan52@gmail.com>  Wed, 02 Sep 2009 11:29:46 -0700
 
 midori (0.1.8-1) unstable; urgency=low
 
