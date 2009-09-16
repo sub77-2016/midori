@@ -25,6 +25,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifdef GDK_WINDOWING_X11
+    #include <gdk/gdkx.h>
+#endif
+
 #include <gdk/gdkkeysyms.h>
 #include <glib/gi18n.h>
 #include <glib/gprintf.h>
@@ -294,8 +298,6 @@ gchar*
 sokoke_magic_uri (const gchar* uri,
                   KatzeArray*  search_engines)
 {
-    gchar* current_dir;
-    gchar* result;
     gchar** parts;
     gchar* search;
     const gchar* search_uri;
@@ -313,20 +315,13 @@ sokoke_magic_uri (const gchar* uri,
     /* Add file:// if we have a local path */
     if (g_path_is_absolute (uri))
         return g_strconcat ("file://", uri, NULL);
-    /* Construct an absolute path if the file is relative */
-    if (g_file_test (uri, G_FILE_TEST_EXISTS | G_FILE_TEST_IS_REGULAR))
-    {
-        current_dir = g_get_current_dir ();
-        result = g_strconcat ("file://", current_dir,
-                              G_DIR_SEPARATOR_S, uri, NULL);
-        g_free (current_dir);
-        return result;
-    }
     /* Do we have a protocol? */
     if (g_strstr_len (uri, 8, "://"))
         return sokoke_idn_to_punycode (g_strdup (uri));
 
     /* Do we have a domain, ip address or localhost? */
+    if (g_ascii_isdigit (uri[0]))
+        return g_strconcat ("http://", uri, NULL);
     search = NULL;
     if (!strchr (uri, ' ') &&
         ((search = strchr (uri, ':')) || (search = strchr (uri, '@'))) &&
@@ -339,11 +334,11 @@ sokoke_magic_uri (const gchar* uri,
     {
         if (!(parts[1][1] == '\0' && !g_ascii_isalpha (parts[1][0])))
             if (!strchr (parts[0], ' ') && !strchr (parts[1], ' '))
-                if ((search = g_strconcat ("http://", uri, NULL)))
-                {
-                    g_strfreev (parts);
-                    return sokoke_idn_to_punycode (search);
-                }
+            {
+                search = g_strconcat ("http://", uri, NULL);
+                g_strfreev (parts);
+                return sokoke_idn_to_punycode (search);
+            }
     }
     g_strfreev (parts);
     /* We don't want to search? So return early. */
@@ -418,25 +413,35 @@ sokoke_get_desktop (void)
 {
     #if HAVE_OSX
     return SOKOKE_DESKTOP_OSX;
-    #else
+    #elif defined (GDK_WINDOWING_X11)
     static SokokeDesktop desktop = SOKOKE_DESKTOP_UNTESTED;
     if (G_UNLIKELY (desktop == SOKOKE_DESKTOP_UNTESTED))
     {
         /* Are we running in Xfce? */
-        gint result;
-        gchar *out = NULL;
-        gchar *err = NULL;
-        gboolean success = g_spawn_command_line_sync ("xprop -root _DT_SAVE_MODE",
-            &out, &err, &result, NULL);
-        g_free (err);
-        if (success && ! result && out != NULL && strstr (out, "xfce4") != NULL)
-            desktop = SOKOKE_DESKTOP_XFCE;
-        else
-            desktop = SOKOKE_DESKTOP_UNKNOWN;
-        g_free (out);
+        GdkDisplay* display = gdk_display_get_default ();
+        Display* xdisplay = GDK_DISPLAY_XDISPLAY (display);
+        Window root_window = RootWindow (xdisplay, 0);
+        Atom save_mode_atom = gdk_x11_get_xatom_by_name ("_DT_SAVE_MODE");
+        Atom actual_type;
+        int actual_format;
+        unsigned long n_items, bytes;
+        gchar* value;
+        int status = XGetWindowProperty (xdisplay, root_window,
+            save_mode_atom, 0, (~0L),
+            False, AnyPropertyType, &actual_type, &actual_format,
+            &n_items, &bytes, (unsigned char**)&value);
+        desktop = SOKOKE_DESKTOP_UNKNOWN;
+        if (status == Success)
+        {
+            if (n_items == 6 && !strncmp (value, "xfce4", 6))
+                desktop = SOKOKE_DESKTOP_XFCE;
+            XFree (value);
+        }
     }
 
     return desktop;
+    #else
+    return SOKOKE_DESKTOP_UNKNOWN;
     #endif
 }
 
@@ -955,6 +960,32 @@ sokoke_remove_path (const gchar* path,
     g_dir_close (dir);
     g_rmdir (path);
     return TRUE;
+}
+
+/**
+ * sokoke_find_config_filename:
+ * @filename: a filename or relative path
+ *
+ * Looks for the specified filename in the system config
+ * directories, depending on the platform.
+ *
+ * Return value: a full path
+ **/
+gchar*
+sokoke_find_config_filename (const gchar* filename)
+{
+    const gchar* const* config_dirs = g_get_system_config_dirs ();
+    guint i = 0;
+    const gchar* config_dir;
+
+    while ((config_dir = config_dirs[i++]))
+    {
+        gchar* path = g_build_filename (config_dir, PACKAGE_NAME, filename, NULL);
+        if (g_file_test (path, G_FILE_TEST_EXISTS))
+            return path;
+        g_free (path);
+    }
+    return g_build_filename (SYSCONFDIR, "xdg", PACKAGE_NAME, filename, NULL);
 }
 
 /**

@@ -767,7 +767,7 @@ midori_web_settings_class_init (MidoriWebSettingsClass* class)
                                      "middle-click-opens-selection",
                                      _("Middle click opens Selection"),
                                      _("Load an address from the selection via middle click"),
-                                     FALSE,
+                                     TRUE,
                                      flags));
 
     g_object_class_install_property (gobject_class,
@@ -1105,15 +1105,23 @@ generate_ident_string (MidoriIdentity identify_as)
 
     const gchar* lang = pango_language_to_string (gtk_get_default_language ());
 
+    #ifndef WEBKIT_USER_AGENT_MAJOR_VERSION
+        #define WEBKIT_USER_AGENT_MAJOR_VERSION 532
+        #define WEBKIT_USER_AGENT_MINOR_VERSION 1
+    #endif
+
+    const gchar* webcore = "WebKit/" G_STRINGIFY (WEBKIT_USER_AGENT_MAJOR_VERSION)
+        "." G_STRINGIFY (WEBKIT_USER_AGENT_MINOR_VERSION) "+";
+
     switch (identify_as)
     {
     case MIDORI_IDENT_MIDORI:
-        return g_strdup_printf ("%s (%s; %s; U; %s) WebKit/532+",
-                                appname, platform, os, lang);
+        return g_strdup_printf ("%s (%s; %s; U; %s) %s",
+                                appname, platform, os, lang, webcore);
     case MIDORI_IDENT_SAFARI:
         return g_strdup_printf ("Mozilla/5.0 (%s; U; %s; %s) "
-            "AppleWebKit/532+ (KHTML, like Gecko) Safari/419.3 %s",
-                                platform, os, lang, appname);
+            "AppleWebKit/532+ (KHTML, like Gecko) Safari/%s %s",
+                                platform, os, lang, webcore, appname);
     case MIDORI_IDENT_FIREFOX:
         return g_strdup_printf ("Mozilla/5.0 (%s; U; %s; %s; rv:1.8.1) "
             "Gecko/20061010 Firefox/2.0 %s",
@@ -1323,12 +1331,20 @@ midori_web_settings_set_property (GObject*      object,
         {
             gchar* string = generate_ident_string (web_settings->identify_as);
             katze_assign (web_settings->ident_string, string);
+            #if WEBKIT_CHECK_VERSION (1, 1, 11)
+            g_object_set (web_settings, "user-agent", string, NULL);
+            #endif
             g_object_notify (object, "ident-string");
         }
         break;
     case PROP_IDENT_STRING:
         if (web_settings->identify_as == MIDORI_IDENT_CUSTOM)
+        {
             katze_assign (web_settings->ident_string, g_value_dup_string (value));
+            #if WEBKIT_CHECK_VERSION (1, 1, 11)
+            g_object_set (web_settings, "user-agent", web_settings->ident_string, NULL);
+            #endif
+        }
         break;
     case PROP_CACHE_SIZE:
         web_settings->cache_size = g_value_get_int (value);

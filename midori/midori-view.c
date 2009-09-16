@@ -770,6 +770,7 @@ webkit_web_view_load_error_cb (WebKitWebView*  web_view,
         guint port;
         gchar* res_root;
         gchar* stock_root;
+        gchar* title;
         gchar* message;
         gchar* result;
 
@@ -778,9 +779,10 @@ webkit_web_view_load_error_cb (WebKitWebView*  web_view,
         res_root = g_strdup_printf ("http://localhost:%d/res", port);
         stock_root = g_strdup_printf ("http://localhost:%d/stock", port);
 
+        title = g_strdup_printf (_("Error - %s"), uri);
         message = g_strdup_printf (_("The page '%s' couldn't be loaded."), uri);
         result = sokoke_replace_variables (template,
-            "{title}", _("Error"),
+            "{title}", title,
             "{message}", message,
             "{description}", error->message,
             "{tryagain}", _("Try again"),
@@ -789,6 +791,7 @@ webkit_web_view_load_error_cb (WebKitWebView*  web_view,
             NULL);
         g_free (template);
         g_free (message);
+        g_free (title);
 
         webkit_web_frame_load_alternate_string (web_frame,
             result, res_root, uri);
@@ -847,7 +850,7 @@ webkit_web_view_load_finished_cb (WebKitWebView*  web_view,
     g_object_notify (G_OBJECT (view), "progress");
     midori_view_update_load_status (view, MIDORI_LOAD_FINISHED);
 
-    if (view->news_aggregator && *view->news_aggregator)
+    if (1)
     {
         JSContextRef js_context = webkit_web_frame_get_global_context (web_frame);
         /* This snippet joins the available news feeds into a string like this:
@@ -861,6 +864,7 @@ webkit_web_view_load_finished_cb (WebKitWebView*  web_view,
         "feeds (document.getElementsByTagName ('link'))", NULL);
         gchar** items = g_strsplit (value, ",", 0);
         guint i = 0;
+        gchar* default_uri = NULL;
 
         katze_array_clear (view->news_feeds);
         if (items != NULL)
@@ -873,12 +877,13 @@ webkit_web_view_load_finished_cb (WebKitWebView*  web_view,
                 NULL);
             katze_array_add_item (view->news_feeds, item);
             g_object_unref (item);
+            if (!default_uri)
+                default_uri = g_strdup (parts ? *parts : NULL);
             g_strfreev (parts);
             i++;
         }
         g_strfreev (items);
-        g_object_set_data (G_OBJECT (view), "news-feeds",
-                           value && *value ? (void*)1 : (void*)0);
+        g_object_set_data_full (G_OBJECT (view), "news-feeds", default_uri, g_free);
         g_free (value);
         /* Ensure load-status is notified again, whether it changed or not */
         g_object_notify (G_OBJECT (view), "load-status");
@@ -1005,6 +1010,9 @@ gtk_widget_button_press_event_cb (WebKitWebView*  web_view,
         else if (view->middle_click_opens_selection)
         {
             guint i = 0;
+            /* FIXME: This isn't quite correct, we need mouse context */
+            if (webkit_web_view_can_paste_clipboard (WEBKIT_WEB_VIEW (view->web_view)))
+                return FALSE;
             clipboard = gtk_clipboard_get_for_display (
                 gtk_widget_get_display (GTK_WIDGET (view)),
                 GDK_SELECTION_PRIMARY);
@@ -1196,7 +1204,26 @@ webkit_web_view_populate_popup_cb (WebKitWebView* web_view,
         icon = gtk_image_menu_item_get_image (GTK_IMAGE_MENU_ITEM (menuitem));
         gtk_image_get_stock (GTK_IMAGE (icon), &stock_id, NULL);
         if (!strcmp (stock_id, GTK_STOCK_CUT))
+        {
+        #if WEBKIT_CHECK_VERSION (1, 1, 14)
+            if (!strcmp (stock_id, GTK_STOCK_UNDO))
+                return;
+            menuitem = gtk_separator_menu_item_new ();
+            gtk_menu_shell_prepend (GTK_MENU_SHELL (menu), menuitem);
+            gtk_widget_show (menuitem);
+            menuitem = sokoke_action_create_popup_menu_item (
+                gtk_action_group_get_action (actions, "Redo"));
+            gtk_widget_set_sensitive (menuitem,
+                webkit_web_view_can_redo (web_view));
+            gtk_menu_shell_prepend (GTK_MENU_SHELL (menu), menuitem);
+            menuitem = sokoke_action_create_popup_menu_item (
+                gtk_action_group_get_action (actions, "Undo"));
+            gtk_widget_set_sensitive (menuitem,
+                webkit_web_view_can_undo (web_view));
+            gtk_menu_shell_prepend (GTK_MENU_SHELL (menu), menuitem);
+        #endif
             return;
+        }
         if (strcmp (stock_id, GTK_STOCK_FIND))
             has_selection = FALSE;
     }
@@ -1612,6 +1639,17 @@ webkit_web_view_console_message_cb (GtkWidget*   web_view,
     return TRUE;
 }
 
+#if WEBKIT_CHECK_VERSION (1, 1, 5)
+static gboolean
+midori_view_web_view_print_requested_cb (GtkWidget*      web_view,
+                                         WebKitWebFrame* web_frame,
+                                         MidoriView*     view)
+{
+    midori_view_print (view);
+    return TRUE;
+}
+#endif
+
 static void
 webkit_web_view_window_object_cleared_cb (GtkWidget*      web_view,
                                           WebKitWebFrame* web_frame,
@@ -1967,7 +2005,6 @@ webkit_web_inspector_inspect_web_view_cb (gpointer       inspector,
     toplevel = gtk_widget_get_toplevel (GTK_WIDGET (view));
     if (GTK_WIDGET_TOPLEVEL (toplevel))
     {
-        gtk_window_set_transient_for (GTK_WINDOW (window), GTK_WINDOW (toplevel));
         screen = gtk_window_get_screen (GTK_WINDOW (toplevel));
         width = gdk_screen_get_width (screen) / 1.7;
         height = gdk_screen_get_height (screen) / 1.7;
@@ -2061,6 +2098,10 @@ midori_view_construct_web_view (MidoriView* view)
                       "signal::download-requested",
                       webkit_web_view_download_requested_cb, view,
                       #endif
+                      #if WEBKIT_CHECK_VERSION (1, 1, 5)
+                      "signal::print-requested",
+                      midori_view_web_view_print_requested_cb, view,
+                      #endif
                       #if WEBKIT_CHECK_VERSION (1, 1, 6)
                       "signal::load-error",
                       webkit_web_view_load_error_cb, view,
@@ -2126,6 +2167,8 @@ midori_view_set_uri (MidoriView*  view,
 
             g_file_get_contents (MDATADIR "/midori/res/speeddial-head.html",
                                  &speed_dial_head, NULL, NULL);
+            if (G_UNLIKELY (!speed_dial_head))
+                speed_dial_head = g_strdup ("");
 
             res_server = sokoke_get_res_server ();
             port = soup_server_get_port (res_server);
@@ -3016,11 +3059,11 @@ midori_view_reload (MidoriView* view,
 #if WEBKIT_CHECK_VERSION (1, 1, 6)
     /* WebKit 1.1.6 doesn't handle "alternate content" flawlessly,
        so reloading via Javascript works but not via API calls. */
-    title = g_strdup (_("Error"));
+    title = g_strdup_printf (_("Error - %s"), view->uri);
 #else
     /* Error pages are special, we want to try loading the destination
        again, not the error page which isn't even a proper page */
-    title = g_strdup_printf (_("Not found - %s"), view->uri);
+    title = g_strdup_printf (_("Error - %s"), view->uri);
 #endif
     if (view->title && strstr (title, view->title))
         webkit_web_view_open (WEBKIT_WEB_VIEW (view->web_view), view->uri);
@@ -3110,6 +3153,43 @@ midori_view_go_forward (MidoriView* view)
     webkit_web_view_go_forward (WEBKIT_WEB_VIEW (view->web_view));
 }
 
+#if WEBKIT_CHECK_VERSION (1, 1, 5)
+static GtkWidget*
+midori_view_print_create_custom_widget_cb (GtkPrintOperation* operation,
+                                           MidoriView*        view)
+{
+    GtkWidget* box;
+    GtkWidget* button;
+
+    box = gtk_vbox_new (FALSE, 0);
+    gtk_container_set_border_width (GTK_CONTAINER (box), 4);
+    button = gtk_check_button_new ();
+    g_object_set_data (G_OBJECT (operation), "print-backgrounds", button);
+    gtk_button_set_label (GTK_BUTTON (button), _("Print background images"));
+    gtk_widget_set_tooltip_text (button, _("Whether background images should be printed"));
+    if (katze_object_get_boolean (view->settings, "print-backgrounds"))
+        gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (button), TRUE);
+    gtk_box_pack_start (GTK_BOX (box), button, FALSE, FALSE, 0);
+    gtk_widget_show_all (box);
+
+    return box;
+}
+
+static void
+midori_view_print_custom_widget_apply_cb (GtkPrintOperation* operation,
+                                          GtkWidget*         widget,
+                                          MidoriView*        view)
+{
+    GtkWidget* button;
+
+    button = g_object_get_data (G_OBJECT (operation), "print-backgrounds");
+    g_object_set (view->settings,
+        "print-backgrounds",
+        gtk_toggle_button_get_active (GTK_TOGGLE_BUTTON (button)),
+        NULL);
+}
+#endif
+
 /**
  * midori_view_print
  * @view: a #MidoriView
@@ -3119,10 +3199,43 @@ midori_view_go_forward (MidoriView* view)
 void
 midori_view_print (MidoriView* view)
 {
+    WebKitWebFrame* frame;
+    #if WEBKIT_CHECK_VERSION (1, 1, 5)
+    GtkPrintOperation* operation;
+    GError* error;
+    #endif
+
     g_return_if_fail (MIDORI_IS_VIEW (view));
 
-    webkit_web_frame_print (webkit_web_view_get_main_frame (
-        WEBKIT_WEB_VIEW (view->web_view)));
+    frame = webkit_web_view_get_main_frame (WEBKIT_WEB_VIEW (view->web_view));
+    #if WEBKIT_CHECK_VERSION (1, 1, 5)
+    operation = gtk_print_operation_new ();
+    gtk_print_operation_set_custom_tab_label (operation, _("Features"));
+    g_signal_connect (operation, "create-custom-widget",
+        G_CALLBACK (midori_view_print_create_custom_widget_cb), view);
+    g_signal_connect (operation, "custom-widget-apply",
+        G_CALLBACK (midori_view_print_custom_widget_apply_cb), view);
+    error = NULL;
+    webkit_web_frame_print_full (frame, operation,
+        GTK_PRINT_OPERATION_ACTION_PRINT_DIALOG, &error);
+    g_object_unref (operation);
+
+    if (error)
+    {
+        GtkWidget* window = gtk_widget_get_toplevel (GTK_WIDGET (view));
+        GtkWidget* dialog = gtk_message_dialog_new (
+            GTK_WIDGET_TOPLEVEL (window) ? GTK_WINDOW (window) : NULL,
+            GTK_DIALOG_DESTROY_WITH_PARENT, GTK_MESSAGE_ERROR,
+            GTK_BUTTONS_CLOSE, "%s", error->message);
+        g_error_free (error);
+
+        g_signal_connect (dialog, "response",
+                          G_CALLBACK (gtk_widget_destroy), NULL);
+        gtk_widget_show (dialog);
+    }
+    #else
+    webkit_web_frame_print (frame);
+    #endif
 }
 
 /**
