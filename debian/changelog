@@ -1,9 +1,9 @@
-midori (0.1.10-1) UNRELEASED; urgency=low
+midori (0.1.10-1) unstable; urgency=low
 
   * New upstream release
   * use mootools.js from the libjs-mootools package
 
- -- Ryan Niebur <ryanryan52@gmail.com>  Tue, 15 Sep 2009 22:34:32 -0700
+ -- Ryan Niebur <ryanryan52@gmail.com>  Tue, 15 Sep 2009 22:46:55 -0700
 
 midori (0.1.9-1) unstable; urgency=low
 
