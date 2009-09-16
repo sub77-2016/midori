@@ -1,3 +1,9 @@
+midori (0.1.10-1) UNRELEASED; urgency=low
+
+  * New upstream release
+
+ -- Ryan Niebur <ryanryan52@gmail.com>  Tue, 15 Sep 2009 21:59:40 -0700
+
 midori (0.1.9-1) unstable; urgency=low
 
   * fix watch file, thanks to Rogério Brito
