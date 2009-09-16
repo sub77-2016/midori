@@ -10,6 +10,7 @@ Build-Depends: debhelper (>= 7.0.50),
  libglib2.0-dev,
  libwebkit-dev (>= 1.1),
  libxml2-dev (>= 2.6),
+ libjs-mootools,
 # For waf:
  python,
 # Optional dependencies:
