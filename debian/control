@@ -10,7 +10,6 @@ Build-Depends: debhelper (>= 7.0.50),
  libglib2.0-dev,
  libwebkit-dev (>= 1.1),
  libxml2-dev (>= 2.6),
- libjs-mootools,
 # For waf:
  python,
 # Optional dependencies:
@@ -36,7 +35,7 @@ Vcs-Browser: http://git.ryan52.info/?p=midori;a=summary
 
 Package: midori
 Architecture: any
-Depends: ${shlibs:Depends}, ${misc:Depends}, dbus-x11
+Depends: ${shlibs:Depends}, ${misc:Depends}, dbus-x11, libjs-mootools
 Recommends: gnome-icon-theme, libnotify1
 Provides: www-browser
 # For http://bugs.debian.org/522436 (missing symbols):
