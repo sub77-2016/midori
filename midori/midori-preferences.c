@@ -487,18 +487,14 @@ midori_preferences_set_settings (MidoriPreferences* preferences,
     gtk_button_set_label (GTK_BUTTON (button), _("Load images automatically"));
     gtk_widget_set_tooltip_text (button, _("Load and display images automatically"));
     INDENTED_ADD (button, 0, 1, 0, 1);
+    #if 0
     button = katze_property_proxy (settings, "auto-shrink-images", NULL);
     gtk_button_set_label (GTK_BUTTON (button), _("Shrink images automatically"));
     gtk_widget_set_tooltip_text (button, _("Automatically shrink standalone images to fit"));
+    #else
+    button = katze_property_proxy (settings, "middle-click-opens-selection", NULL);
+    #endif
     SPANNED_ADD (button, 1, 2, 0, 1);
-    button = katze_property_proxy (settings, "print-backgrounds", NULL);
-    gtk_button_set_label (GTK_BUTTON (button), _("Print background images"));
-    gtk_widget_set_tooltip_text (button, _("Whether background images should be printed"));
-    INDENTED_ADD (button, 0, 1, 1, 2);
-    button = katze_property_proxy (settings, "resizable-text-areas", NULL);
-    gtk_button_set_label (GTK_BUTTON (button), _("Resizable text areas"));
-    gtk_widget_set_tooltip_text (button, _("Whether text areas are resizable"));
-    SPANNED_ADD (button, 1, 2, 1, 2);
     button = katze_property_proxy (settings, "enable-scripts", NULL);
     gtk_button_set_label (GTK_BUTTON (button), _("Enable scripts"));
     gtk_widget_set_tooltip_text (button, _("Enable embedded scripting languages"));
@@ -547,24 +543,22 @@ midori_preferences_set_settings (MidoriPreferences* preferences,
     FILLED_ADD (button, 1, 2, 1, 2);
     FRAME_NEW (_("Browsing"));
     TABLE_NEW (5, 2);
+    hbox = gtk_hbox_new (FALSE, 4);
     label = katze_property_label (settings, "open-new-pages-in");
-    INDENTED_ADD (label, 0, 1, 0, 1);
+    gtk_box_pack_start (GTK_BOX (hbox), label, FALSE, FALSE, 4);
     button = katze_property_proxy (settings, "open-new-pages-in", NULL);
-    FILLED_ADD (button, 1, 2, 0, 1);
+    gtk_box_pack_start (GTK_BOX (hbox), button, FALSE, FALSE, 4);
+    INDENTED_ADD (hbox, 0, 1, 0, 1);
+    hbox = gtk_hbox_new (FALSE, 4);
     label = katze_property_label (settings, "open-external-pages-in");
-    INDENTED_ADD (label, 0, 1, 1, 2);
+    gtk_box_pack_start (GTK_BOX (hbox), label, FALSE, FALSE, 4);
     button = katze_property_proxy (settings, "open-external-pages-in", NULL);
-    FILLED_ADD (button, 1, 2, 1, 2);
+    gtk_box_pack_start (GTK_BOX (hbox), button, FALSE, FALSE, 4);
+    FILLED_ADD (hbox, 1, 2, 0, 1);
     button = katze_property_proxy (settings, "always-show-tabbar", NULL);
     INDENTED_ADD (button, 0, 1, 2, 3);
     button = katze_property_proxy (settings, "open-tabs-in-the-background", NULL);
     INDENTED_ADD (button, 1, 2, 2, 3);
-    #if !HAVE_HILDON
-    button = katze_property_proxy (settings, "middle-click-opens-selection", NULL);
-    INDENTED_ADD (button, 0, 1, 3, 4);
-    button = katze_property_proxy (settings, "open-popups-in-tabs", NULL);
-    SPANNED_ADD (button, 1, 2, 3, 4);
-    #endif
     button = katze_property_proxy (settings, "open-tabs-next-to-current", NULL);
     WIDGET_ADD (button, 0, 1, 5, 6);
     button = katze_property_proxy (settings, "close-buttons-on-tabs", NULL);
@@ -659,15 +653,15 @@ midori_preferences_set_settings (MidoriPreferences* preferences,
     button = katze_property_proxy (settings, "accept-cookies", NULL);
     FILLED_ADD (button, 1, 2, 0, 1);
     button = katze_property_proxy (settings, "original-cookies-only", NULL);
-    SPANNED_ADD (button, 0, 2, 1, 2);
-    label = katze_property_label (settings, "maximum-cookie-age");
-    INDENTED_ADD (label, 0, 1, 2, 3);
+    SPANNED_ADD (button, 0, 1, 1, 2);
     hbox = gtk_hbox_new (FALSE, 4);
+    label = katze_property_label (settings, "maximum-cookie-age");
+    gtk_box_pack_start (GTK_BOX (hbox), label, FALSE, FALSE, 0);
     entry = katze_property_proxy (settings, "maximum-cookie-age", NULL);
     gtk_box_pack_start (GTK_BOX (hbox), entry, FALSE, FALSE, 0);
     gtk_box_pack_start (GTK_BOX (hbox), gtk_label_new (_("days")),
                         FALSE, FALSE, 0);
-    FILLED_ADD (hbox, 1, 2, 2, 3);
+    FILLED_ADD (hbox, 1, 2, 1, 2);
     FRAME_NEW (_("History"));
     TABLE_NEW (3, 2);
     button = katze_property_proxy (settings, "remember-last-visited-pages", NULL);

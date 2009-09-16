@@ -23,7 +23,7 @@
 
 #define feed_set_flags(feed, flags) \
     g_object_set_data (G_OBJECT ((feed)), "flags", \
-        GINT_TO_POINTER ((flags)))
+                       GINT_TO_POINTER ((flags)))
 
 #define feed_has_flags(feed, flags) \
     ((flags) & feed_get_flags ((feed)))
@@ -58,7 +58,7 @@ typedef struct
 
 enum
 {
-    FEED_READ,
+    FEED_READ = 1,
     FEED_REMOVE
 };
 
@@ -67,6 +67,11 @@ feed_app_add_browser_cb (MidoriApp*       app,
                          MidoriBrowser*   browser,
                          MidoriExtension* extension);
 
+static gboolean
+secondary_icon_released_cb (GtkAction*     action,
+                            GtkWidget*     widget,
+                            FeedPrivate*   priv);
+
 static void
 feed_deactivate_cb (MidoriExtension* extension,
                     FeedPrivate*     priv)
@@ -74,6 +79,13 @@ feed_deactivate_cb (MidoriExtension* extension,
     if (priv)
     {
         MidoriApp* app = midori_extension_get_app (extension);
+        GtkActionGroup* action_group;
+        GtkAction* action;
+
+        action_group = midori_browser_get_action_group (priv->browser);
+        action = gtk_action_group_get_action (action_group, "Location");
+        g_signal_handlers_disconnect_by_func (action,
+                secondary_icon_released_cb, priv);
 
         g_signal_handlers_disconnect_by_func (app,
                 feed_app_add_browser_cb, extension);
@@ -241,7 +253,10 @@ feed_transfer_cb (KatzeNetRequest* request,
             feed_save_items (netpriv->extension, parent);
         }
         else
-            feed_set_flags (netpriv->feed, 0);
+        {
+            feed_remove_flags (netpriv->feed, FEED_REMOVE);
+            feed_remove_flags (netpriv->feed, FEED_READ);
+        }
     }
 
     netpriv->parsers = NULL;
@@ -293,28 +308,38 @@ update_feeds (FeedPrivate* priv)
     return TRUE;
 }
 
-static void
+static gboolean
 secondary_icon_released_cb (GtkAction*     action,
                             GtkWidget*     widget,
                             FeedPrivate*   priv)
 {
-    const gchar* uri;
+    GtkWidget* view;
 
     g_assert (KATZE_IS_ARRAY (priv->feeds));
 
-    uri = midori_location_action_get_uri (MIDORI_LOCATION_ACTION (action));
+    if (gtk_window_get_focus (GTK_WINDOW (priv->browser)) == widget)
+        return FALSE;
 
-    if (uri && *uri)
+    if ((view = midori_browser_get_current_tab (priv->browser)))
     {
-        KatzeArray* feed;
+        const gchar* uri;
 
-        feed = feed_add_item (priv->feeds, uri);
-        if (feed)
+        uri = g_object_get_data (G_OBJECT (view), "news-feeds");
+        if (uri && *uri)
         {
-            feed_save_items (priv->extension, priv->feeds);
-            update_feed (priv, KATZE_ITEM (feed));
+            KatzeArray* feed;
+
+            if ((feed = feed_add_item (priv->feeds, uri)))
+            {
+                /* FIXME: Let the user know that a feed was added */
+                feed_save_items (priv->extension, priv->feeds);
+                update_feed (priv, KATZE_ITEM (feed));
+                return TRUE;
+            }
         }
     }
+
+    return FALSE;
 }
 
 static void
