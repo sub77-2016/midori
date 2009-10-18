@@ -4,8 +4,9 @@ midori (0.2.0-1) UNRELEASED; urgency=low
     (Closes: 551328, 551513)
   * update debian/copyright
   * bump libwebkit-dev build-dep to 1.1.15 for adblock (Closes: 546985)
+  * update my email address and remove DMUA field
 
- -- Ryan Niebur <ryan@debian.org>  Sun, 18 Oct 2009 14:57:13 -0700
+ -- Ryan Niebur <ryan@debian.org>  Sun, 18 Oct 2009 15:15:07 -0700
 
 midori (0.1.10-1) unstable; urgency=low
 

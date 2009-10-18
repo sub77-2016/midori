@@ -1,8 +1,7 @@
 Source: midori
 Section: web
 Priority: optional
-Maintainer: Ryan Niebur <ryanryan52@gmail.com>
-DM-Upload-Allowed: yes
+Maintainer: Ryan Niebur <ryan@debian.org>
 Build-Depends: debhelper (>= 7.0.50),
  quilt (>= 0.46-7),
  lsb-release,
