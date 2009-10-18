@@ -29,7 +29,6 @@ struct _MidoriAddons
 {
     GtkVBox parent_instance;
 
-    MidoriAddonKind kind;
     GtkWidget* web_widget;
     GtkWidget* toolbar;
     GtkWidget* treeview;
@@ -137,23 +136,13 @@ midori_addons_class_init (MidoriAddonsClass* class)
 static const gchar*
 midori_addons_get_label (MidoriViewable* viewable)
 {
-    if (MIDORI_ADDONS (viewable)->kind == MIDORI_ADDON_USER_SCRIPTS)
-        return _("Userscripts");
-    else if (MIDORI_ADDONS (viewable)->kind == MIDORI_ADDON_USER_STYLES)
-        return _("Userstyles");
-    else
-        return NULL;
+    return _("Userscripts");
 }
 
 static const gchar*
 midori_addons_get_stock_id (MidoriViewable* viewable)
 {
-    if (MIDORI_ADDONS (viewable)->kind == MIDORI_ADDON_USER_SCRIPTS)
-        return STOCK_SCRIPTS;
-    else if (MIDORI_ADDONS (viewable)->kind == MIDORI_ADDON_USER_STYLES)
-        return STOCK_STYLES;
-    else
-        return NULL;
+    return STOCK_SCRIPTS;
 }
 
 static void
@@ -175,7 +164,7 @@ midori_addons_set_property (GObject*      object,
     switch (prop_id)
     {
     case PROP_KIND:
-        addons->kind = g_value_get_enum (value);
+        /* Ignored */
         break;
     case PROP_WEB_WIDGET:
         katze_object_assign (addons->web_widget, g_value_dup_object (value));
@@ -197,7 +186,7 @@ midori_addons_get_property (GObject*    object,
     switch (prop_id)
     {
     case PROP_KIND:
-        g_value_set_enum (value, addons->kind);
+        g_value_set_enum (value, MIDORI_ADDON_USER_SCRIPTS);
         break;
     case PROP_WEB_WIDGET:
         g_value_set_object (value, addons->web_widget);
@@ -208,57 +197,31 @@ midori_addons_get_property (GObject*    object,
     }
 }
 
-static const gchar*
-_addons_get_folder (MidoriAddons* addons)
-{
-    switch (addons->kind)
-    {
-    case MIDORI_ADDON_USER_SCRIPTS:
-        return "scripts";
-    case MIDORI_ADDON_USER_STYLES:
-        return "styles";
-    default:
-        return NULL;
-    }
-}
-
-static const gchar*
-_addons_get_extension (MidoriAddons* addons)
-{
-    switch (addons->kind)
-    {
-    case MIDORI_ADDON_USER_SCRIPTS:
-        return ".js";
-    case MIDORI_ADDON_USER_STYLES:
-        return ".css";
-    default:
-        return NULL;
-    }
-}
-
 static GSList*
 _addons_get_directories (MidoriAddons* addons)
 {
+    const gchar* folders[] = { "scripts", "styles" };
     GSList *directories;
+    guint i;
     const char* const* datadirs;
-    const gchar* folder;
     gchar* path;
 
-    folder = _addons_get_folder (addons);
+    directories = NULL;
 
-    /* user data dir */
-    path = g_build_path (G_DIR_SEPARATOR_S, g_get_user_data_dir (),
-                         PACKAGE_NAME, folder, NULL);
-    directories = g_slist_prepend (NULL, path);
-
-    /* system data dirs */
-    datadirs = g_get_system_data_dirs ();
-    while (*datadirs)
+    for (i = 0; i < G_N_ELEMENTS (folders); i++)
     {
-        path = g_build_path (G_DIR_SEPARATOR_S, *datadirs,
-                             PACKAGE_NAME, folder, NULL);
+        path = g_build_path (G_DIR_SEPARATOR_S, g_get_user_data_dir (),
+                             PACKAGE_NAME, folders[i], NULL);
         directories = g_slist_prepend (directories, path);
-        datadirs++;
+
+        datadirs = g_get_system_data_dirs ();
+        while (*datadirs)
+        {
+            path = g_build_path (G_DIR_SEPARATOR_S, *datadirs,
+                                 PACKAGE_NAME, folders[i], NULL);
+            directories = g_slist_prepend (directories, path);
+            datadirs++;
+        }
     }
 
     return directories;
@@ -269,8 +232,6 @@ _addons_get_files (MidoriAddons* addons)
 {
     GSList* files;
     GDir* addon_dir;
-    const gchar* folder;
-    const gchar* extension;
     GSList* list;
     GSList* directories;
     const gchar* filename;
@@ -278,8 +239,6 @@ _addons_get_files (MidoriAddons* addons)
     gchar* fullname;
 
     files = NULL;
-    folder = _addons_get_folder (addons);
-    extension = _addons_get_extension (addons);
 
     directories = _addons_get_directories (addons);
     list = directories;
@@ -290,7 +249,8 @@ _addons_get_files (MidoriAddons* addons)
         {
             while ((filename = g_dir_read_name (addon_dir)))
             {
-                if (g_str_has_suffix (filename, extension))
+                if (g_str_has_suffix (filename, ".js")
+                    || g_str_has_suffix (filename, ".css"))
                 {
                     fullname = g_build_filename (dirname, filename, NULL);
                     files = g_slist_prepend (files, fullname);
@@ -324,8 +284,10 @@ midori_addons_button_add_clicked_cb (GtkToolItem*  toolitem,
         GTK_WINDOW (gtk_widget_get_toplevel (GTK_WIDGET (addons))),
         GTK_DIALOG_DESTROY_WITH_PARENT,
         GTK_MESSAGE_INFO, GTK_BUTTONS_CLOSE,
-        "Put scripts in the folder ~/.local/share/midori/%s",
-        _addons_get_folder (addons));
+        _("Copy userscripts to the folder %s and "
+        "copy userstyles to the folder %s."),
+        "~/.local/share/midori/scripts",
+        "~/.local/share/midori/styles");
     gtk_dialog_run (GTK_DIALOG (dialog));
     gtk_widget_destroy (dialog);
 }
@@ -819,7 +781,7 @@ midori_web_widget_context_ready_cb (GtkWidget*         web_widget,
                                     JSGlobalContextRef js_context,
                                     MidoriAddons*      addons)
 {
-    const gchar* uri;
+    gchar* uri;
     GSList* elements;
     struct AddonElement* element;
     gchar* fullname;
@@ -850,7 +812,7 @@ midori_web_widget_context_ready_cb (GtkWidget*         web_widget,
             }
 
         exception = NULL;
-        if (addons->kind == MIDORI_ADDON_USER_SCRIPTS &&
+        if (g_str_has_suffix (fullname, ".js") &&
             !_js_script_from_file (js_context, fullname, &exception))
         {
             message = g_strdup_printf ("console.error ('%s');", exception);
@@ -858,7 +820,7 @@ midori_web_widget_context_ready_cb (GtkWidget*         web_widget,
             g_free (message);
             g_free (exception);
         }
-        else if (addons->kind == MIDORI_ADDON_USER_STYLES &&
+        else if (g_str_has_suffix (fullname, ".css") &&
             !_js_style_from_file (js_context, fullname, &exception))
         {
             message = g_strdup_printf ("console.error ('%s');", exception);
@@ -869,6 +831,8 @@ midori_web_widget_context_ready_cb (GtkWidget*         web_widget,
 
         elements = g_slist_next (elements);
     }
+
+    g_free (uri);
 }
 
 /**
@@ -917,14 +881,15 @@ midori_addons_new (MidoriAddonKind kind,
         monitor = g_file_monitor_directory (directory,
                                             G_FILE_MONITOR_NONE,
                                             NULL, &error);
-        if (!monitor)
+        if (monitor)
+            g_signal_connect (monitor, "changed",
+                G_CALLBACK (midori_addons_directory_monitor_changed), addons);
+        else
         {
-            g_warning ("could not monitor %s: %s", g_file_get_parse_name (directory),
-                       error->message);
+            g_warning (_("Can't monitor folder '%s': %s"),
+                       g_file_get_parse_name (directory), error->message);
             g_error_free (error);
         }
-        g_signal_connect (monitor, "changed",
-            G_CALLBACK (midori_addons_directory_monitor_changed), addons);
         g_object_unref (directory);
     }
     g_slist_free (list);
@@ -1011,7 +976,6 @@ midori_addons_update_elements (MidoriAddons* addons)
     struct AddonElement* element;
 
     g_return_if_fail (MIDORI_IS_ADDONS (addons));
-    g_return_if_fail (addons->kind != MIDORI_ADDON_NONE);
 
     /* FIXME: would GHashTable be better? */
     disabled = g_tree_new ((GCompareFunc)strcmp);
@@ -1042,7 +1006,7 @@ midori_addons_update_elements (MidoriAddons* addons)
         excludes = NULL;
         broken = FALSE;
 
-        if (addons->kind == MIDORI_ADDON_USER_SCRIPTS)
+        if (g_str_has_suffix (fullname, ".js"))
         {
             name = NULL;
             if (!js_metadata_from_file (fullname, &includes, &excludes,
@@ -1055,7 +1019,7 @@ midori_addons_update_elements (MidoriAddons* addons)
                 displayname = name;
             }
         }
-        else if (addons->kind == MIDORI_ADDON_USER_STYLES)
+        else if (g_str_has_suffix (fullname, ".css"))
         {
             if (!css_metadata_from_file (fullname, &includes, &excludes))
                 broken = TRUE;

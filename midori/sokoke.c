@@ -185,41 +185,31 @@ sokoke_spawn_program (const gchar* command,
     return TRUE;
 }
 
-static gchar*
-sokoke_idn_to_punycode (gchar* uri)
+/**
+ * sokoke_hostname_from_uri:
+ * @uri: an URI string
+ * @path: location of a string pointer
+ *
+ * Returns the hostname of the specified URI,
+ * and stores the path in @path.
+ * @path is at least set to ""
+ *
+ * Return value: a newly allocated hostname
+ **/
+gchar*
+sokoke_hostname_from_uri (const gchar* uri,
+                          gchar**      path)
 {
-    #if HAVE_LIBIDN
-    gchar* proto;
     gchar* hostname;
-    gchar* path;
-    char *s;
-    uint32_t *q;
-    int rc;
-    gchar *result;
 
-    if ((proto = g_utf8_strchr (uri, -1, ':')))
-    {
-        gulong offset;
-        gchar* buffer;
-
-        /* 'file' URIs don't have a hostname */
-        if (!strcmp (proto, "file"))
-            return uri;
-
-        offset = g_utf8_pointer_to_offset (uri, proto);
-        buffer = g_malloc0 (offset + 1);
-        g_utf8_strncpy (buffer, uri, offset);
-        proto = buffer;
-    }
-
-    path = NULL;
+    *path = "";
     if ((hostname = g_utf8_strchr (uri, -1, '/')))
     {
         if (hostname[1] == '/')
             hostname += 2;
-        if ((path = g_utf8_strchr (hostname, -1, '/')))
+        if ((*path = g_utf8_strchr (hostname, -1, '/')))
         {
-            gulong offset = g_utf8_pointer_to_offset (hostname, path);
+            gulong offset = g_utf8_pointer_to_offset (hostname, *path);
             gchar* buffer = g_malloc0 (offset + 1);
             g_utf8_strncpy (buffer, hostname, offset);
             hostname = buffer;
@@ -229,35 +219,90 @@ sokoke_idn_to_punycode (gchar* uri)
     }
     else
         hostname = g_strdup (uri);
+    return hostname;
+}
 
-    if (!(q = stringprep_utf8_to_ucs4 (hostname, -1, NULL)))
+/**
+ * sokoke_hostname_to_ascii:
+ * @uri: an URI string
+ *
+ * The specified hostname is encoded if it is not ASCII.
+ *
+ * If no IDN support is available at compile time,
+ * the hostname will be returned unaltered.
+ *
+ * Return value: a newly allocated hostname
+ **/
+static gchar*
+sokoke_hostname_to_ascii (const gchar* hostname)
+{
+    #ifdef HAVE_LIBSOUP_2_27_90
+    return g_hostname_to_ascii (hostname);
+    #elif HAVE_LIBIDN
+    uint32_t* q;
+    char* encoded;
+    int rc;
+
+    if ((q = stringprep_utf8_to_ucs4 (hostname, -1, NULL)))
     {
-        g_free (proto);
-        g_free (hostname);
-        return uri;
+        rc = idna_to_ascii_4z (q, &encoded, IDNA_ALLOW_UNASSIGNED);
+        free (q);
+        if (rc == IDNA_SUCCESS)
+            return encoded;
+    }
+    #endif
+    return g_strdup (hostname);
+}
+
+/**
+ * sokoke_uri_to_ascii:
+ * @uri: an URI string
+ *
+ * The specified URI is parsed and the hostname
+ * part of it is encoded if it is not ASCII.
+ *
+ * If no IDN support is available at compile time,
+ * the URI will be returned unaltered.
+ *
+ * Return value: a newly allocated URI
+ **/
+gchar*
+sokoke_uri_to_ascii (const gchar* uri)
+{
+    gchar* proto;
+
+    if ((proto = g_utf8_strchr (uri, -1, ':')))
+    {
+        gulong offset;
+        gchar* buffer;
+
+        offset = g_utf8_pointer_to_offset (uri, proto);
+        buffer = g_malloc0 (offset + 1);
+        g_utf8_strncpy (buffer, uri, offset);
+        proto = buffer;
     }
 
-    rc = idna_to_ascii_4z (q, &s, IDNA_ALLOW_UNASSIGNED);
-    free (q);
-    if (rc != IDNA_SUCCESS)
-    {
-        g_free (proto);
-        g_free (hostname);
-        return uri;
-    }
+    gchar* path;
+    gchar* hostname = sokoke_hostname_from_uri (uri, &path);
+    gchar* encoded = sokoke_hostname_to_ascii (hostname);
 
-    if (proto)
+    if (encoded)
     {
-        result = g_strconcat (proto, "://", s, path ? path : "", NULL);
-        g_free (proto);
-        if (path)
-            g_free (hostname);
+        gchar* res = g_strconcat (proto ? proto : "", proto ? "://" : "",
+                                  encoded, path, NULL);
+        g_free (encoded);
+        return res;
     }
-    else
-        result = g_strdup (s);
+    g_free (hostname);
+    return g_strdup (uri);
+}
+
+static gchar*
+sokoke_idn_to_punycode (gchar* uri)
+{
+    #if HAVE_LIBIDN
+    gchar* result = sokoke_uri_to_ascii (uri);
     g_free (uri);
-    free (s);
-
     return result;
     #else
     return uri;
@@ -294,6 +339,16 @@ gchar* sokoke_search_uri (const gchar* uri,
     return search;
 }
 
+/**
+ * sokoke_magic_uri:
+ * @uri: a string typed by a user
+ * @search_engines: search engines
+ *
+ * Takes a string that was typed by a user,
+ * guesses what it is, and returns an URI.
+ *
+ * Return value: a newly allocated URI
+ **/
 gchar*
 sokoke_magic_uri (const gchar* uri,
                   KatzeArray*  search_engines)
@@ -319,8 +374,8 @@ sokoke_magic_uri (const gchar* uri,
     if (g_strstr_len (uri, 8, "://"))
         return sokoke_idn_to_punycode (g_strdup (uri));
 
-    /* Do we have a domain, ip address or localhost? */
-    if (g_ascii_isdigit (uri[0]))
+    /* Do we have an IP address? */
+    if (g_ascii_isdigit (uri[0]) && g_strstr_len (uri, 4, "."))
         return g_strconcat ("http://", uri, NULL);
     search = NULL;
     if (!strchr (uri, ' ') &&
@@ -356,6 +411,50 @@ sokoke_magic_uri (const gchar* uri,
         }
     g_strfreev (parts);
     return search;
+}
+
+
+/**
+ * sokoke_format_uri_for_display:
+ * @uri: an URI string
+ *
+ * Formats an URI for display, for instance by converting
+ * percent encoded characters and by decoding punycode.
+ *
+ * Return value: a newly allocated URI
+ **/
+gchar*
+sokoke_format_uri_for_display (const gchar* uri)
+{
+    if (uri && g_str_has_prefix (uri, "http://"))
+    {
+        gchar* unescaped = g_uri_unescape_string (uri, NULL);
+        #ifdef HAVE_LIBSOUP_2_27_90
+        gchar* path;
+        gchar* hostname = sokoke_hostname_from_uri (unescaped, &path);
+        gchar* decoded = g_hostname_to_unicode (hostname);
+
+        if (decoded)
+        {
+            gchar* result = g_strconcat ("http://", decoded, path, NULL);
+            g_free (unescaped);
+            g_free (decoded);
+            g_free (hostname);
+            return result;
+        }
+        g_free (hostname);
+        return unescaped;
+        #elif HAVE_LIBIDN
+        gchar* decoded;
+        if (!idna_to_unicode_8z8z (unescaped, &decoded, 0) == IDNA_SUCCESS)
+            return unescaped;
+        g_free (unescaped);
+        return decoded;
+        #else
+        return unescaped;
+        #endif
+    }
+    return g_strdup (uri);
 }
 
 void
@@ -866,7 +965,6 @@ sokoke_register_stock_items (void)
         { STOCK_HISTORY,        N_("_History"), 0, 0, GTK_STOCK_SORT_ASCENDING },
         { STOCK_HOMEPAGE,       N_("_Homepage"), 0, 0, GTK_STOCK_HOME },
         { STOCK_SCRIPTS,        N_("_Userscripts"), 0, 0, GTK_STOCK_EXECUTE },
-        { STOCK_STYLES,         N_("User_styles"), 0, 0, GTK_STOCK_SELECT_COLOR },
         { STOCK_TAB_NEW,        N_("New _Tab"), 0, 0, GTK_STOCK_ADD },
         { STOCK_TRANSFERS,      N_("_Transfers"), 0, 0, GTK_STOCK_SAVE },
         { STOCK_PLUGINS,        N_("Netscape p_lugins"), 0, 0, GTK_STOCK_CONVERT },
@@ -964,6 +1062,7 @@ sokoke_remove_path (const gchar* path,
 
 /**
  * sokoke_find_config_filename:
+ * @folder: a subfolder
  * @filename: a filename or relative path
  *
  * Looks for the specified filename in the system config
@@ -972,20 +1071,24 @@ sokoke_remove_path (const gchar* path,
  * Return value: a full path
  **/
 gchar*
-sokoke_find_config_filename (const gchar* filename)
+sokoke_find_config_filename (const gchar* folder,
+                             const gchar* filename)
 {
     const gchar* const* config_dirs = g_get_system_config_dirs ();
     guint i = 0;
     const gchar* config_dir;
 
+    if (!folder)
+        folder = "";
+
     while ((config_dir = config_dirs[i++]))
     {
-        gchar* path = g_build_filename (config_dir, PACKAGE_NAME, filename, NULL);
+        gchar* path = g_build_filename (config_dir, PACKAGE_NAME, folder, filename, NULL);
         if (g_file_test (path, G_FILE_TEST_EXISTS))
             return path;
         g_free (path);
     }
-    return g_build_filename (SYSCONFDIR, "xdg", PACKAGE_NAME, filename, NULL);
+    return g_build_filename (SYSCONFDIR, "xdg", PACKAGE_NAME, folder, filename, NULL);
 }
 
 /**

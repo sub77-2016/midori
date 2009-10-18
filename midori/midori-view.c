@@ -59,7 +59,7 @@ midori_view_item_meta_data_changed (KatzeItem*   item,
 
 struct _MidoriView
 {
-    GtkScrolledWindow parent_instance;
+    KatzeScrolled parent_instance;
 
     gchar* uri;
     gchar* title;
@@ -69,16 +69,21 @@ struct _MidoriView
     MidoriLoadStatus load_status;
     gboolean minimized;
     gchar* statusbar_text;
+    #if WEBKIT_CHECK_VERSION (1, 1, 15)
+    WebKitHitTestResult* hit_test;
+    #endif
     gchar* link_uri;
     gboolean has_selection;
     gchar* selected_text;
     MidoriWebSettings* settings;
     GtkWidget* web_view;
+    GtkWidget* thumb_view;
     KatzeArray* news_feeds;
 
     gboolean speed_dial_in_new_tabs;
     gchar* download_manager;
     gchar* news_aggregator;
+    gboolean ask_for_destination_folder;
     gboolean middle_click_opens_selection;
     gboolean open_tabs_in_the_background;
     gboolean close_buttons_on_tabs;
@@ -92,16 +97,18 @@ struct _MidoriView
     GtkWidget* tab_title;
     GtkWidget* tab_close;
     KatzeItem* item;
+    gint scrollh, scrollv;
+    gboolean back_forward_set;
 
     KatzeNet* net;
 };
 
 struct _MidoriViewClass
 {
-    GtkScrolledWindowClass parent_class;
+    KatzeScrolledClass parent_class;
 };
 
-G_DEFINE_TYPE (MidoriView, midori_view, GTK_TYPE_SCROLLED_WINDOW)
+G_DEFINE_TYPE (MidoriView, midori_view, KATZE_TYPE_SCROLLED);
 
 GType
 midori_load_status_get_type (void)
@@ -205,7 +212,6 @@ midori_view_speed_dial_get_thumb (GtkWidget*   web_view,
 static void
 midori_view_speed_dial_save (GtkWidget*   web_view,
                              const gchar* message);
-
 
 static void
 midori_view_class_init (MidoriViewClass* class)
@@ -696,9 +702,26 @@ midori_view_update_load_status (MidoriView*      view,
     if (view->tab_icon)
         katze_throbber_set_animated (KATZE_THROBBER (view->tab_icon),
             view->load_status != MIDORI_LOAD_FINISHED);
+}
 
-    if (view->web_view && view->load_status == MIDORI_LOAD_COMMITTED)
-        _midori_web_view_load_icon (view);
+static gboolean
+midori_view_web_view_navigation_decision_cb (WebKitWebView*             web_view,
+                                             WebKitWebFrame*            web_frame,
+                                             WebKitNetworkRequest*      request,
+                                             WebKitWebNavigationAction* action,
+                                             WebKitWebPolicyDecision*   decision,
+                                             MidoriView*                view)
+{
+    const gchar* uri = webkit_network_request_get_uri (request);
+    if (g_str_has_prefix (uri, "mailto:"))
+    {
+        webkit_web_policy_decision_ignore (decision);
+        sokoke_show_uri (gtk_widget_get_screen (GTK_WIDGET (web_view)),
+                         uri, GDK_CURRENT_TIME, NULL);
+        return TRUE;
+    }
+    /* TODO: Handle more external protocols */
+    return FALSE;
 }
 
 static void
@@ -726,9 +749,52 @@ webkit_web_view_load_committed_cb (WebKitWebView*  web_view,
 
     uri = webkit_web_frame_get_uri (web_frame);
     g_return_if_fail (uri != NULL);
-    katze_assign (view->uri, g_strdup (uri));
+    katze_assign (view->uri, sokoke_format_uri_for_display (uri));
     if (view->item)
     {
+        #if 0
+        /* Load back forward history from meta data. WebKit does not seem to
+          respect the order of items, so the feature is unusable. */
+        if (!view->back_forward_set)
+        {
+            WebKitWebBackForwardList* list;
+            gchar* key;
+            guint i;
+            const gchar* data;
+            WebKitWebHistoryItem* item;
+
+            list = webkit_web_view_get_back_forward_list (web_view);
+
+            key = g_strdup ("back4");
+            for (i = 4; i > 0; i--)
+            {
+                key[4] = 48 + i;
+                if ((data = katze_item_get_meta_string (view->item, key)))
+                {
+                    item = webkit_web_history_item_new_with_data (data, NULL);
+                    webkit_web_back_forward_list_add_item (list, item);
+                    g_object_unref (item);
+                }
+            }
+
+            #if 0
+            key[0] = 'f';
+            key[1] = 'o';
+            key[2] = 'r';
+            key[3] = 'e';
+            for (i = 4; i > 0; i--)
+            {
+                key[4] = 48 + i;
+                item = webkit_web_history_item_new_with_data (data, NULL);
+                webkit_web_back_forward_list_add_item (list, item);
+                g_object_unref (item);
+            }
+            #endif
+            g_free (key);
+            view->back_forward_set = TRUE;
+        }
+        #endif
+
         katze_item_set_uri (view->item, uri);
         katze_item_set_added (view->item, time (NULL));
     }
@@ -840,11 +906,40 @@ webkit_web_frame_load_done_cb (WebKitWebFrame* web_frame,
 #endif
 
 static void
+midori_view_apply_scroll_position (MidoriView* view)
+{
+    if (view->scrollh > -2)
+    {
+        if (view->scrollh > 0)
+        {
+            GtkAdjustment* adjustment = katze_object_get_object (view, "hadjustment");
+            gtk_adjustment_set_value (adjustment, view->scrollh);
+            g_object_unref (adjustment);
+        }
+        view->scrollh = -3;
+    }
+    if (view->scrollv > -2)
+    {
+        if (view->scrollv > 0)
+        {
+            GtkAdjustment* adjustment = katze_object_get_object (view, "vadjustment");
+            gtk_adjustment_set_value (adjustment, view->scrollv);
+            g_object_unref (adjustment);
+        }
+        view->scrollv = -3;
+    }
+}
+
+static void
 webkit_web_view_load_finished_cb (WebKitWebView*  web_view,
                                   WebKitWebFrame* web_frame,
                                   MidoriView*     view)
 {
     g_object_freeze_notify (G_OBJECT (view));
+
+    /* TODO: Find a better condition than a finished load.
+      Apparently WEBKIT_LOAD_FIRST_VISUALLY_NON_EMPTY_LAYOUT is too early. */
+    midori_view_apply_scroll_position (view);
 
     view->progress = 1.0;
     g_object_notify (G_OBJECT (view), "progress");
@@ -857,11 +952,13 @@ webkit_web_view_load_finished_cb (WebKitWebView*  web_view,
            URI1|title1,URI2|title2
            FIXME: Ensure separators contained in the string can't break it */
         gchar* value = sokoke_js_script_eval (js_context,
-        "function feeds (l) { var f = new Array (); for (i in l) "
-        "{ var t = l[i].type; "
+        "function links (l) { var f = new Array (); for (i in l) "
+        "{ var t = l[i].type; var r = l[i].rel; "
         "if (t && (t.indexOf ('rss') != -1 || t.indexOf ('atom') != -1)) "
-        "f.push (l[i].href + '|' + l[i].title); } return f; }"
-        "feeds (document.getElementsByTagName ('link'))", NULL);
+        "f.push (l[i].href + '|' + l[i].title);"
+        "else if (r && r.indexOf ('icon') != -1) f.push (l[i].href); } "
+        "return f; }"
+        "links (document.getElementsByTagName ('link'))", NULL);
         gchar** items = g_strsplit (value, ",", 0);
         guint i = 0;
         gchar* default_uri = NULL;
@@ -871,14 +968,21 @@ webkit_web_view_load_finished_cb (WebKitWebView*  web_view,
         while (items[i] != NULL)
         {
             gchar** parts = g_strsplit (items[i], "|", 2);
-            KatzeItem* item = g_object_new (KATZE_TYPE_ITEM,
-                "uri", parts ? *parts : "",
-                "name", parts && *parts ? parts[1] : NULL,
-                NULL);
-            katze_array_add_item (view->news_feeds, item);
-            g_object_unref (item);
-            if (!default_uri)
-                default_uri = g_strdup (parts ? *parts : NULL);
+            if (parts == NULL)
+                ;
+            else if (*parts && parts[1])
+            {
+                KatzeItem* item = g_object_new (KATZE_TYPE_ITEM,
+                    "uri", parts[0], "name", parts[1], NULL);
+                katze_array_add_item (view->news_feeds, item);
+                g_object_unref (item);
+                if (!default_uri)
+                    default_uri = g_strdup (parts[0]);
+            }
+            else
+                g_object_set_data_full (G_OBJECT (view->net), view->uri,
+                                        g_strdup (*parts), (GDestroyNotify)g_free);
+
             g_strfreev (parts);
             i++;
         }
@@ -889,6 +993,8 @@ webkit_web_view_load_finished_cb (WebKitWebView*  web_view,
         g_object_notify (G_OBJECT (view), "load-status");
     }
 
+    _midori_web_view_load_icon (view);
+
     g_object_thaw_notify (G_OBJECT (view));
 }
 
@@ -898,6 +1004,50 @@ webkit_web_view_notify_uri_cb (WebKitWebView* web_view,
                                GParamSpec*    pspec,
                                MidoriView*    view)
 {
+    #if 0
+    if (view->item)
+    {
+        /* Save back forward history as meta data. This is disabled
+          because we can't reliably restore these atm. */
+        WebKitWebView* web_view;
+        WebKitWebBackForwardList* list;
+        GList* back;
+        GList* forward;
+
+        web_view = WEBKIT_WEB_VIEW (view->web_view);
+        list = webkit_web_view_get_back_forward_list (web_view);
+        back = webkit_web_back_forward_list_get_back_list_with_limit (list, 5);
+        forward = webkit_web_back_forward_list_get_forward_list_with_limit (list, 5);
+        guint i;
+        WebKitWebHistoryItem* item;
+        gchar* key = g_strdup ("back0");
+
+        i = 0;
+        while ((item = g_list_nth_data (back, i++)))
+        {
+            katze_item_set_meta_string (view->item, key,
+                webkit_web_history_item_get_uri (item));
+            key[4] = 48 + i;
+        }
+
+        #if 0
+        key[0] = 'f';
+        key[1] = 'o';
+        key[2] = 'r';
+        key[3] = 'e';
+        key[4] = 48;
+        i = 0;
+        while ((item = g_list_nth_data (forward, i++)))
+        {
+            katze_item_set_meta_string (view->item, key,
+                webkit_web_history_item_get_uri (item));
+            key[4] = 48 + i;
+        }
+        #endif
+        g_free (key);
+    }
+    #endif
+
     g_object_get (web_view, "uri", &view->uri, NULL);
     g_object_notify (G_OBJECT (view), "uri");
 }
@@ -930,6 +1080,15 @@ webkit_web_view_statusbar_text_changed_cb (WebKitWebView* web_view,
     g_object_set (G_OBJECT (view), "statusbar-text", text, NULL);
 }
 
+static gboolean
+midori_view_web_view_leave_notify_event_cb (WebKitWebView*    web_view,
+                                            GdkEventCrossing* event,
+                                            MidoriView*       view)
+{
+    g_object_set (G_OBJECT (view), "statusbar-text", NULL, NULL);
+    return FALSE;
+}
+
 static void
 webkit_web_view_hovering_over_link_cb (WebKitWebView* web_view,
                                        const gchar*   tooltip,
@@ -937,7 +1096,14 @@ webkit_web_view_hovering_over_link_cb (WebKitWebView* web_view,
                                        MidoriView*    view)
 {
     katze_assign (view->link_uri, g_strdup (link_uri));
-    g_object_set (G_OBJECT (view), "statusbar-text", link_uri, NULL);
+    if (link_uri && g_str_has_prefix (link_uri, "mailto:"))
+    {
+        gchar* text = g_strdup_printf (_("Send a message to %s"), &link_uri[7]);
+        g_object_set (G_OBJECT (view), "statusbar-text", text, NULL);
+        g_free (text);
+    }
+    else
+        g_object_set (G_OBJECT (view), "statusbar-text", link_uri, NULL);
 }
 
 #define MIDORI_KEYS_MODIFIER_MASK (GDK_SHIFT_MASK | GDK_CONTROL_MASK \
@@ -1009,16 +1175,28 @@ gtk_widget_button_press_event_cb (WebKitWebView*  web_view,
         }
         else if (view->middle_click_opens_selection)
         {
-            guint i = 0;
-            /* FIXME: This isn't quite correct, we need mouse context */
-            if (webkit_web_view_can_paste_clipboard (WEBKIT_WEB_VIEW (view->web_view)))
+            gboolean is_editable;
+            #if WEBKIT_CHECK_VERSION (1, 1, 15)
+            WebKitHitTestResult* result;
+            WebKitHitTestResultContext context;
+
+            result = webkit_web_view_get_hit_test_result (web_view, event);
+            context = katze_object_get_int (result, "context");
+            is_editable = context & WEBKIT_HIT_TEST_RESULT_CONTEXT_EDITABLE;
+            g_object_unref (result);
+            #else
+            is_editable = webkit_web_view_can_paste_clipboard (WEBKIT_WEB_VIEW (view->web_view));
+            #endif
+            if (is_editable)
                 return FALSE;
+
             clipboard = gtk_clipboard_get_for_display (
                 gtk_widget_get_display (GTK_WIDGET (view)),
                 GDK_SELECTION_PRIMARY);
             uri = gtk_clipboard_wait_for_text (clipboard);
             if (uri && strchr (uri, '.'))
             {
+                guint i = 0;
                 while (uri[i++] != '\0')
                     if (uri[i] == '\n' || uri[i] == '\r')
                         uri[i] = ' ';
@@ -1115,6 +1293,133 @@ gtk_widget_scroll_event_cb (WebKitWebView*  web_view,
         return FALSE;
 }
 
+#if WEBKIT_CHECK_VERSION (1, 1, 15)
+static void
+midori_web_view_menu_open_activate_cb (GtkWidget*  widget,
+                                       MidoriView* view)
+{
+    midori_view_set_uri (view, view->link_uri);
+}
+
+static void
+midori_web_view_menu_new_window_activate_cb (GtkWidget*  widget,
+                                             MidoriView* view)
+{
+    g_signal_emit (view, signals[NEW_WINDOW], 0, view->link_uri);
+}
+
+static void
+midori_web_view_menu_link_copy_activate_cb (GtkWidget*  widget,
+                                            MidoriView* view)
+{
+    GdkDisplay* display = gtk_widget_get_display (widget);
+    GtkClipboard* clipboard = gtk_clipboard_get_for_display (display,
+        GDK_SELECTION_CLIPBOARD);
+    gtk_clipboard_set_text (clipboard, view->link_uri, -1);
+}
+
+static void
+midori_web_view_menu_save_activate_cb (GtkWidget*  widget,
+                                       MidoriView* view)
+{
+    WebKitNetworkRequest* request = webkit_network_request_new (view->link_uri);
+    WebKitDownload* download = webkit_download_new (request);
+    gboolean handled;
+    g_object_unref (request);
+    if (view->ask_for_destination_folder)
+        g_object_set_data (G_OBJECT (download), "save-as-download", (void*)0xdeadbeef);
+    g_signal_emit (view, signals[DOWNLOAD_REQUESTED], 0, download, &handled);
+    if (!view->ask_for_destination_folder)
+        webkit_download_start (download);
+}
+
+static void
+midori_web_view_menu_image_new_tab_activate_cb (GtkWidget*  widget,
+                                                MidoriView* view)
+{
+    gchar* uri = katze_object_get_string (view->hit_test, "image-uri");
+    g_signal_emit (view, signals[NEW_TAB], 0, uri,
+                   view->open_tabs_in_the_background);
+    g_free (uri);
+}
+
+static void
+midori_web_view_menu_image_new_window_activate_cb (GtkWidget*  widget,
+                                                    MidoriView* view)
+{
+    gchar* uri = katze_object_get_string (view->hit_test, "image-uri");
+    g_signal_emit (view, signals[NEW_WINDOW], 0, uri);
+    g_free (uri);
+}
+
+static void
+midori_web_view_menu_image_copy_activate_cb (GtkWidget*  widget,
+                                             MidoriView* view)
+{
+    GdkDisplay* display = gtk_widget_get_display (widget);
+    GtkClipboard* clipboard = gtk_clipboard_get_for_display (display,
+        GDK_SELECTION_CLIPBOARD);
+    gchar* uri = katze_object_get_string (view->hit_test, "image-uri");
+    gtk_clipboard_set_text (clipboard, uri, -1);
+    g_free (uri);
+}
+
+static void
+midori_web_view_menu_image_save_activate_cb (GtkWidget*  widget,
+                                             MidoriView* view)
+{
+    gchar* uri = katze_object_get_string (view->hit_test, "image-uri");
+    WebKitNetworkRequest* request = webkit_network_request_new (uri);
+    WebKitDownload* download = webkit_download_new (request);
+    gboolean handled;
+    g_object_unref (request);
+    if (view->ask_for_destination_folder)
+        g_object_set_data (G_OBJECT (download), "save-as-download", (void*)0xdeadbeef);
+    g_signal_emit (view, signals[DOWNLOAD_REQUESTED], 0, download, &handled);
+    if (!view->ask_for_destination_folder)
+        webkit_download_start (download);
+    g_free (uri);
+}
+
+static void
+midori_web_view_menu_video_copy_activate_cb (GtkWidget*  widget,
+                                             MidoriView* view)
+{
+    GdkDisplay* display = gtk_widget_get_display (widget);
+    GtkClipboard* clipboard = gtk_clipboard_get_for_display (display,
+        GDK_SELECTION_CLIPBOARD);
+    gchar* uri = katze_object_get_string (view->hit_test, "media-uri");
+    gtk_clipboard_set_text (clipboard, uri, -1);
+    g_free (uri);
+}
+
+static void
+midori_web_view_menu_video_save_activate_cb (GtkWidget*  widget,
+                                             MidoriView* view)
+{
+    gchar* uri = katze_object_get_string (view->hit_test, "media-uri");
+    WebKitNetworkRequest* request = webkit_network_request_new (uri);
+    WebKitDownload* download = webkit_download_new (request);
+    gboolean handled;
+    g_object_unref (request);
+    if (view->ask_for_destination_folder)
+        g_object_set_data (G_OBJECT (download), "save-as-download", (void*)0xdeadbeef);
+    g_signal_emit (view, signals[DOWNLOAD_REQUESTED], 0, download, &handled);
+    if (!view->ask_for_destination_folder)
+        webkit_download_start (download);
+    g_free (uri);
+}
+
+static void
+midori_web_view_menu_video_download_activate_cb (GtkWidget*  widget,
+                                                 MidoriView* view)
+{
+    gchar* uri = katze_object_get_string (view->hit_test, "media-uri");
+    sokoke_spawn_program (view->download_manager, uri, TRUE);
+    g_free (uri);
+}
+#endif
+
 static void
 midori_web_view_menu_new_tab_activate_cb (GtkWidget*  widget,
                                           MidoriView* view)
@@ -1125,10 +1430,20 @@ midori_web_view_menu_new_tab_activate_cb (GtkWidget*  widget,
     else
     {
         gchar* data = (gchar*)g_object_get_data (G_OBJECT (widget), "uri");
-        gchar* uri = sokoke_magic_uri (data, NULL);
-        g_signal_emit (view, signals[NEW_TAB], 0, uri,
-                       view->open_tabs_in_the_background);
-        g_free (uri);
+        if (strchr (data, '@'))
+        {
+            gchar* uri = g_strconcat ("mailto:", data, NULL);
+            sokoke_show_uri (gtk_widget_get_screen (widget),
+                             uri, GDK_CURRENT_TIME, NULL);
+            g_free (uri);
+        }
+        else
+        {
+            gchar* uri = sokoke_magic_uri (data, NULL);
+            g_signal_emit (view, signals[NEW_TAB], 0, uri,
+                           view->open_tabs_in_the_background);
+            g_free (uri);
+        }
     }
 }
 
@@ -1153,6 +1468,18 @@ midori_web_view_menu_search_web_activate_cb (GtkWidget*  widget,
     g_free (uri);
 }
 
+#if WEBKIT_CHECK_VERSION (1, 1, 15)
+static void
+midori_web_view_menu_copy_activate_cb (GtkWidget*  widget,
+                                       MidoriView* view)
+{
+    GdkDisplay* display = gtk_widget_get_display (widget);
+    GtkClipboard* clipboard = gtk_clipboard_get_for_display (display,
+        GDK_SELECTION_CLIPBOARD);
+    gtk_clipboard_set_text (clipboard, view->selected_text, -1);
+}
+#endif
+
 #if !WEBKIT_CHECK_VERSION (1, 1, 3)
 static void
 midori_web_view_menu_save_as_activate_cb (GtkWidget*  widget,
@@ -1176,6 +1503,42 @@ midori_web_view_menu_add_bookmark_activate_cb (GtkWidget*  widget,
     g_signal_emit (view, signals[ADD_BOOKMARK], 0, view->link_uri);
 }
 
+static GtkWidget*
+midori_view_insert_menu_item (GtkMenuShell* menu,
+                             gint          position,
+                             const gchar*  label,
+                             const gchar*  stock_id,
+                             GCallback     callback,
+                             GtkWidget*    widget)
+{
+    GtkWidget* menuitem;
+
+    if (label)
+    {
+        menuitem = gtk_image_menu_item_new_with_mnemonic (label);
+        if (stock_id)
+        {
+            GdkScreen* screen = gtk_widget_get_screen (widget);
+            GtkIconTheme* icon_theme = gtk_icon_theme_get_for_screen (screen);
+            if (gtk_icon_theme_has_icon (icon_theme, stock_id))
+            {
+                GtkWidget* icon = gtk_image_new_from_stock (stock_id,
+                    GTK_ICON_SIZE_MENU);
+                gtk_image_menu_item_set_image (GTK_IMAGE_MENU_ITEM (menuitem),
+                    icon);
+            }
+        }
+    }
+    else
+        menuitem = gtk_image_menu_item_new_from_stock (stock_id, NULL);
+    gtk_menu_shell_insert (GTK_MENU_SHELL (menu), menuitem, position);
+    if (callback)
+        g_signal_connect (menuitem, "activate", callback, widget);
+    else
+        gtk_widget_set_sensitive (menuitem, FALSE);
+    return menuitem;
+}
+
 static void
 webkit_web_view_populate_popup_cb (WebKitWebView* web_view,
                                    GtkWidget*     menu,
@@ -1183,51 +1546,167 @@ webkit_web_view_populate_popup_cb (WebKitWebView* web_view,
 {
     MidoriBrowser* browser = midori_browser_get_for_widget (GTK_WIDGET (view));
     GtkActionGroup* actions = midori_browser_get_action_group (browser);
+    GtkMenuShell* menu_shell = GTK_MENU_SHELL (menu);
+    GtkWidget* widget = GTK_WIDGET (view);
     GtkWidget* menuitem;
     GtkWidget* icon;
+    #if !WEBKIT_CHECK_VERSION (1, 1, 15)
     gchar* stock_id;
-    GdkScreen* screen;
-    GtkIconTheme* icon_theme;
+    #endif
     GList* items;
     gboolean has_selection;
+    gboolean is_editable;
+    gboolean is_document;
     GtkWidget* label;
+    guint i;
 
+    #if WEBKIT_CHECK_VERSION (1, 1, 15)
+    gint x, y;
+    GdkEventButton event;
+    WebKitHitTestResultContext context;
+    gboolean is_image;
+    gboolean is_media;
+
+    gdk_window_get_pointer (GTK_WIDGET (web_view)->window, &x, &y, NULL);
+    event.x = x;
+    event.y = y;
+    katze_object_assign (view->hit_test,
+        webkit_web_view_get_hit_test_result (web_view, &event));
+    context = katze_object_get_int (view->hit_test, "context");
+    /* Ensure view->link_uri is correct. */
+    katze_assign (view->link_uri,
+        katze_object_get_string (view->hit_test, "link-uri"));
+    has_selection = context & WEBKIT_HIT_TEST_RESULT_CONTEXT_SELECTION;
+    /* Ensure view->selected_text */
+    midori_view_has_selection (view);
+    is_editable = context & WEBKIT_HIT_TEST_RESULT_CONTEXT_EDITABLE;
+    is_image = context & WEBKIT_HIT_TEST_RESULT_CONTEXT_IMAGE;
+    is_media = context & WEBKIT_HIT_TEST_RESULT_CONTEXT_MEDIA;
+    is_document = !view->link_uri && !has_selection && !is_image && !is_media;
+    #else
+    /* There is no guarantee view->link_uri is correct in case
+        gtk-touchscreen-mode is enabled, nothing we can do. */
     has_selection = midori_view_has_selection (view);
+    is_document = !view->link_uri && !has_selection;
 
     /* Unfortunately inspecting the menu is the only way to
        determine that the mouse is over a text area or selection. */
     items = gtk_container_get_children (GTK_CONTAINER (menu));
     menuitem = (GtkWidget*)g_list_nth_data (items, 0);
-    g_list_free (items);
     if (GTK_IS_IMAGE_MENU_ITEM (menuitem))
     {
         icon = gtk_image_menu_item_get_image (GTK_IMAGE_MENU_ITEM (menuitem));
         gtk_image_get_stock (GTK_IMAGE (icon), &stock_id, NULL);
-        if (!strcmp (stock_id, GTK_STOCK_CUT))
+        if (!strcmp (stock_id, GTK_STOCK_FIND))
         {
-        #if WEBKIT_CHECK_VERSION (1, 1, 14)
-            if (!strcmp (stock_id, GTK_STOCK_UNDO))
-                return;
-            menuitem = gtk_separator_menu_item_new ();
-            gtk_menu_shell_prepend (GTK_MENU_SHELL (menu), menuitem);
-            gtk_widget_show (menuitem);
-            menuitem = sokoke_action_create_popup_menu_item (
-                gtk_action_group_get_action (actions, "Redo"));
-            gtk_widget_set_sensitive (menuitem,
-                webkit_web_view_can_redo (web_view));
-            gtk_menu_shell_prepend (GTK_MENU_SHELL (menu), menuitem);
-            menuitem = sokoke_action_create_popup_menu_item (
-                gtk_action_group_get_action (actions, "Undo"));
-            gtk_widget_set_sensitive (menuitem,
-                webkit_web_view_can_undo (web_view));
-            gtk_menu_shell_prepend (GTK_MENU_SHELL (menu), menuitem);
-        #endif
-            return;
+            gtk_widget_hide (menuitem);
+            gtk_widget_set_no_show_all (menuitem, TRUE);
+            menuitem = (GtkWidget*)g_list_nth_data (items, 1);
+            gtk_widget_hide (menuitem);
+            menuitem = (GtkWidget*)g_list_nth_data (items, 2);
+            icon = gtk_image_menu_item_get_image (GTK_IMAGE_MENU_ITEM (menuitem));
+            gtk_image_get_stock (GTK_IMAGE (icon), &stock_id, NULL);
         }
-        if (strcmp (stock_id, GTK_STOCK_FIND))
-            has_selection = FALSE;
+        is_editable = !strcmp (stock_id, GTK_STOCK_CUT);
+        if (is_document && !strcmp (stock_id, GTK_STOCK_OPEN))
+            is_document = FALSE;
+    }
+    else
+        is_editable = FALSE;
+    g_list_free (items);
+    #endif
+
+    if (is_editable)
+    {
+        #if WEBKIT_CHECK_VERSION (1, 1, 14)
+        menuitem = gtk_separator_menu_item_new ();
+        gtk_menu_shell_prepend (menu_shell, menuitem);
+        gtk_widget_show (menuitem);
+        menuitem = sokoke_action_create_popup_menu_item (
+            gtk_action_group_get_action (actions, "Redo"));
+        gtk_widget_set_sensitive (menuitem,
+            webkit_web_view_can_redo (web_view));
+        gtk_menu_shell_prepend (menu_shell, menuitem);
+        menuitem = sokoke_action_create_popup_menu_item (
+            gtk_action_group_get_action (actions, "Undo"));
+        gtk_widget_set_sensitive (menuitem,
+            webkit_web_view_can_undo (web_view));
+        gtk_menu_shell_prepend (menu_shell, menuitem);
+        #endif
+        return;
     }
 
+    #if WEBKIT_CHECK_VERSION (1, 1, 15)
+    /* FIXME: We can't re-implement Open in Frame or Inspect page,
+      so we can't replace the default document menu */
+    if (!is_document)
+    {
+        items = gtk_container_get_children (GTK_CONTAINER (menu));
+        i = 0;
+        while ((menuitem = g_list_nth_data (items, i++)))
+            gtk_widget_destroy (menuitem);
+        g_list_free (items);
+    }
+    if (view->link_uri)
+    {
+        midori_view_insert_menu_item (menu_shell, -1,
+            _("Open _Link"), NULL,
+            G_CALLBACK (midori_web_view_menu_open_activate_cb), widget);
+        midori_view_insert_menu_item (menu_shell, -1,
+            _("Open Link in New _Tab"), STOCK_TAB_NEW,
+            G_CALLBACK (midori_web_view_menu_new_tab_activate_cb), widget);
+        midori_view_insert_menu_item (menu_shell, -1,
+            _("Open Link in New _Window"), STOCK_WINDOW_NEW,
+            G_CALLBACK (midori_web_view_menu_new_window_activate_cb), widget);
+        midori_view_insert_menu_item (menu_shell, -1,
+            _("_Copy Link destination"), NULL,
+            G_CALLBACK (midori_web_view_menu_link_copy_activate_cb), widget);
+        midori_view_insert_menu_item (menu_shell, -1,
+            view->ask_for_destination_folder ? _("_Save Link destination")
+            : _("_Download Link destination"), NULL,
+            G_CALLBACK (midori_web_view_menu_save_activate_cb), widget);
+        if (view->download_manager && *view->download_manager)
+            midori_view_insert_menu_item (menu_shell, -1,
+            _("Download with Download _Manager"), STOCK_TRANSFER,
+            G_CALLBACK (midori_web_view_menu_download_activate_cb), widget);
+        midori_view_insert_menu_item (menu_shell, -1,
+            NULL, STOCK_BOOKMARK_ADD,
+            G_CALLBACK (midori_web_view_menu_add_bookmark_activate_cb), widget);
+    }
+
+    if (is_image)
+    {
+        if (view->link_uri)
+            gtk_menu_shell_append (menu_shell, gtk_separator_menu_item_new ());
+        midori_view_insert_menu_item (menu_shell, -1,
+            _("Open _Image in New Tab"), STOCK_TAB_NEW,
+            G_CALLBACK (midori_web_view_menu_image_new_tab_activate_cb), widget);
+        midori_view_insert_menu_item (menu_shell, -1,
+            _("Open Image in New Wi_ndow"), STOCK_WINDOW_NEW,
+            G_CALLBACK (midori_web_view_menu_image_new_window_activate_cb), widget);
+        midori_view_insert_menu_item (menu_shell, -1,
+            _("Copy Image _Address"), NULL,
+            G_CALLBACK (midori_web_view_menu_image_copy_activate_cb), widget);
+        midori_view_insert_menu_item (menu_shell, -1,
+            view->ask_for_destination_folder ? _("Save I_mage")
+            : _("Download I_mage"), GTK_STOCK_SAVE,
+            G_CALLBACK (midori_web_view_menu_image_save_activate_cb), widget);
+    }
+
+    if (is_media)
+    {
+        midori_view_insert_menu_item (menu_shell, -1,
+            _("Copy Video _Address"), NULL,
+            G_CALLBACK (midori_web_view_menu_video_copy_activate_cb), widget);
+        midori_view_insert_menu_item (menu_shell, -1,
+            FALSE ? _("Save _Video") : _("Download _Video"), GTK_STOCK_SAVE,
+            G_CALLBACK (midori_web_view_menu_video_save_activate_cb), widget);
+        if (view->download_manager && *view->download_manager)
+            midori_view_insert_menu_item (menu_shell, -1,
+            _("Download with Download _Manager"), STOCK_TRANSFER,
+            G_CALLBACK (midori_web_view_menu_video_download_activate_cb), widget);
+    }
+    #else
     if (view->link_uri)
     {
         items = gtk_container_get_children (GTK_CONTAINER (menu));
@@ -1235,19 +1714,9 @@ webkit_web_view_populate_popup_cb (WebKitWebView* web_view,
         /* hack to localize menu item */
         label = gtk_bin_get_child (GTK_BIN (menuitem));
         gtk_label_set_label (GTK_LABEL (label), _("Open _Link"));
-        menuitem = gtk_image_menu_item_new_with_mnemonic (
-            _("Open Link in New _Tab"));
-        screen = gtk_widget_get_screen (GTK_WIDGET (view));
-        icon_theme = gtk_icon_theme_get_for_screen (screen);
-        if (gtk_icon_theme_has_icon (icon_theme, STOCK_TAB_NEW))
-        {
-            icon = gtk_image_new_from_stock (STOCK_TAB_NEW, GTK_ICON_SIZE_MENU);
-            gtk_image_menu_item_set_image (GTK_IMAGE_MENU_ITEM (menuitem), icon);
-        }
-        gtk_menu_shell_insert (GTK_MENU_SHELL (menu), menuitem, 1);
-        g_signal_connect (menuitem, "activate",
-            G_CALLBACK (midori_web_view_menu_new_tab_activate_cb), view);
-        gtk_widget_show (menuitem);
+        midori_view_insert_menu_item (menu_shell, 1,
+            _("Open Link in New _Tab"), STOCK_TAB_NEW,
+            G_CALLBACK (midori_web_view_menu_new_tab_activate_cb), widget);
         g_list_free (items);
         items = gtk_container_get_children (GTK_CONTAINER (menu));
         menuitem = (GtkWidget*)g_list_nth_data (items, 2);
@@ -1261,39 +1730,26 @@ webkit_web_view_populate_popup_cb (WebKitWebView* web_view,
         label = gtk_bin_get_child (GTK_BIN (menuitem));
         gtk_label_set_label (GTK_LABEL (label), _("_Download Link destination"));
         #else
-        /* hack to disable non-functional Download File
-           FIXME: Make sure this really is the right menu item */
+        /* hack to disable non-functional Download File */
         gtk_widget_hide (menuitem);
-        menuitem = gtk_image_menu_item_new_with_mnemonic (
-            _("_Save Link destination"));
-        gtk_menu_shell_insert (GTK_MENU_SHELL (menu), menuitem, 3);
-        g_signal_connect (menuitem, "activate",
-            G_CALLBACK (midori_web_view_menu_save_as_activate_cb), view);
-        gtk_widget_show (menuitem);
+        gtk_widget_set_no_show_all (menuitem);
+        midori_view_insert_menu_item (menu_shell, 3,
+            _("_Save Link destination"), NULL,
+            G_CALLBACK (midori_web_view_menu_save_as_activate_cb), widget);
         #endif
         if (view->download_manager && *view->download_manager)
-        {
-            menuitem = gtk_image_menu_item_new_with_mnemonic (
-                _("Download with Download _Manager"));
-            icon = gtk_image_new_from_stock (GTK_STOCK_SAVE_AS,
-                                             GTK_ICON_SIZE_MENU);
-            gtk_image_menu_item_set_image (GTK_IMAGE_MENU_ITEM (menuitem), icon);
-            gtk_menu_shell_insert (GTK_MENU_SHELL (menu), menuitem, 4);
-            g_signal_connect (menuitem, "activate",
-                G_CALLBACK (midori_web_view_menu_download_activate_cb), view);
-            gtk_widget_show (menuitem);
-        }
-        menuitem = gtk_image_menu_item_new_from_stock (STOCK_BOOKMARK_ADD, NULL);
-        gtk_menu_shell_insert (GTK_MENU_SHELL (menu), menuitem, 5);
-        g_signal_connect (menuitem, "activate",
-            G_CALLBACK (midori_web_view_menu_add_bookmark_activate_cb), view);
-        gtk_widget_show (menuitem);
+            midori_view_insert_menu_item (menu_shell, 4,
+            _("Download with Download _Manager"), STOCK_TRANSFER,
+            G_CALLBACK (midori_web_view_menu_download_activate_cb), widget);
+        midori_view_insert_menu_item (menu_shell, 5,
+            NULL, STOCK_BOOKMARK_ADD,
+            G_CALLBACK (midori_web_view_menu_add_bookmark_activate_cb), widget);
     }
+    #endif
 
     if (!view->link_uri && has_selection)
     {
         GtkWidget* window;
-        guint i;
 
         window = gtk_widget_get_toplevel (GTK_WIDGET (web_view));
         i = 0;
@@ -1305,8 +1761,7 @@ webkit_web_view_populate_popup_cb (WebKitWebView* web_view,
 
             menuitem = gtk_image_menu_item_new_with_mnemonic (_("Search _with"));
             gtk_menu_item_set_submenu (GTK_MENU_ITEM (menuitem), sub_menu);
-            gtk_menu_shell_insert (GTK_MENU_SHELL (menu), menuitem, 1);
-            gtk_widget_show (menuitem);
+            gtk_menu_shell_insert (menu_shell, menuitem, 1);
 
             search_engines = katze_object_get_object (window, "search-engines");
             while ((item = katze_array_get_nth_item (search_engines, i++)))
@@ -1327,10 +1782,18 @@ webkit_web_view_populate_popup_cb (WebKitWebView* web_view,
                                    (gchar*)katze_item_get_uri (item));
                 g_signal_connect (menuitem, "activate",
                     G_CALLBACK (midori_web_view_menu_search_web_activate_cb), view);
-                gtk_widget_show (menuitem);
             }
             g_object_unref (search_engines);
         }
+        #if WEBKIT_CHECK_VERSION (1, 1, 15)
+        midori_view_insert_menu_item (menu_shell, 0,
+            _("_Search the Web"), GTK_STOCK_FIND,
+            G_CALLBACK (midori_web_view_menu_search_web_activate_cb), widget);
+        gtk_menu_shell_append (menu_shell, gtk_separator_menu_item_new ());
+        midori_view_insert_menu_item (menu_shell, -1,
+            NULL, GTK_STOCK_COPY,
+            G_CALLBACK (midori_web_view_menu_copy_activate_cb), widget);
+        #else
         items = gtk_container_get_children (GTK_CONTAINER (menu));
         menuitem = (GtkWidget*)g_list_nth_data (items, 0);
         /* hack to localize menu item */
@@ -1340,27 +1803,54 @@ webkit_web_view_populate_popup_cb (WebKitWebView* web_view,
         g_signal_connect (menuitem, "activate",
             G_CALLBACK (midori_web_view_menu_search_web_activate_cb), view);
         g_list_free (items);
+        #endif
 
-        if (strchr (view->selected_text, '.')
-            && !strchr (view->selected_text, ' '))
+        g_strstrip (view->selected_text);
+        if (view->selected_text && !strchr (view->selected_text, ' ')
+            && strchr (view->selected_text, '.'))
         {
-            menuitem = gtk_image_menu_item_new_with_mnemonic (
-                _("Open Address in New _Tab"));
-            icon = gtk_image_new_from_stock (GTK_STOCK_JUMP_TO,
-                                             GTK_ICON_SIZE_MENU);
-            gtk_image_menu_item_set_image (GTK_IMAGE_MENU_ITEM (menuitem), icon);
-            gtk_menu_shell_insert (GTK_MENU_SHELL (menu), menuitem, -1);
+            if (strchr (view->selected_text, '@'))
+            {
+                gchar* text = g_strdup_printf (_("Send a message to %s"), view->selected_text);
+                menuitem = midori_view_insert_menu_item (menu_shell, -1,
+                    text, GTK_STOCK_JUMP_TO,
+                    G_CALLBACK (midori_web_view_menu_new_tab_activate_cb), widget);
+                g_free (text);
+            }
+            else
+                menuitem = midori_view_insert_menu_item (menu_shell, -1,
+                    _("Open Address in New _Tab"), GTK_STOCK_JUMP_TO,
+                    G_CALLBACK (midori_web_view_menu_new_tab_activate_cb), widget);
             g_object_set_data (G_OBJECT (menuitem), "uri", view->selected_text);
-            g_signal_connect (menuitem, "activate",
-                G_CALLBACK (midori_web_view_menu_new_tab_activate_cb), view);
-            gtk_widget_show (menuitem);
         }
         /* FIXME: view selection source */
     }
 
-    if (!view->link_uri && !has_selection)
+    if (is_document)
     {
+        /* FIXME: We can't re-implement Open in Frame or Inspect page
+        #if WEBKIT_CHECK_VERSION (1, 1, 15) */
+        #if 0
+        menuitem = sokoke_action_create_popup_menu_item (
+            gtk_action_group_get_action (actions, "Back"));
+        gtk_menu_shell_append (menu_shell, menuitem);
+        menuitem = sokoke_action_create_popup_menu_item (
+            gtk_action_group_get_action (actions, "Forward"));
+        gtk_menu_shell_append (menu_shell, menuitem);
+        menuitem = sokoke_action_create_popup_menu_item (
+            gtk_action_group_get_action (actions, "Stop"));
+        gtk_menu_shell_append (menu_shell, menuitem);
+        menuitem = sokoke_action_create_popup_menu_item (
+            gtk_action_group_get_action (actions, "Reload"));
+        gtk_menu_shell_append (menu_shell, menuitem);
+        #else
         items = gtk_container_get_children (GTK_CONTAINER (menu));
+        #if HAVE_HILDON
+        gtk_widget_hide (g_list_nth_data (items, 2));
+        gtk_widget_set_no_show_all (g_list_nth_data (items, 2), TRUE);
+        gtk_widget_hide (g_list_nth_data (items, 3));
+        gtk_widget_set_no_show_all (g_list_nth_data (items, 3), TRUE);
+        #endif
         menuitem = (GtkWidget*)g_list_nth_data (items, 3);
         /* hack to localize menu item */
         if (GTK_IS_BIN (menuitem))
@@ -1373,24 +1863,47 @@ webkit_web_view_populate_popup_cb (WebKitWebView* web_view,
             }
         }
         g_list_free (items);
+        #endif
+
         menuitem = sokoke_action_create_popup_menu_item (
                 gtk_action_group_get_action (actions, "UndoTabClose"));
-        gtk_menu_shell_append (GTK_MENU_SHELL (menu), menuitem);
+        gtk_menu_shell_append (menu_shell, menuitem);
+        gtk_menu_shell_append (menu_shell, gtk_separator_menu_item_new ());
 
-        menuitem = gtk_separator_menu_item_new ();
-        gtk_menu_shell_append (GTK_MENU_SHELL (menu), menuitem);
-        gtk_widget_show (menuitem);
+        #if WEBKIT_CHECK_VERSION (1, 1, 15)
+        /* if (webkit_web_view_get_main_frame (web_view) != frame_under_mouse)
+        {
+            midori_view_insert_menu_item (menu_shell, -1,
+                _("Open _Frame in New Tab"), NULL,
+                G_CALLBACK (midori_web_view_menu_frame_new_tab_activate_cb), widget);
+            midori_view_insert_menu_item (menu_shell, -1,
+                _("Open _Frame in New Window"), NULL,
+                G_CALLBACK (midori_web_view_menu_frame_new_window_activate_cb), widget);
+        } */
+
+        /* FIXME: There is currently no API to inspect an URI
+        midori_view_insert_menu_item (menu_shell, -1,
+            _("Inspect page"), NULL,
+            G_CALLBACK (midori_web_view_menu_inspect_page_activate_cb), widget); */
+        #endif
+
+        if (!g_object_get_data (G_OBJECT (browser), "midori-toolbars-visible"))
+        {
+            menuitem = sokoke_action_create_popup_menu_item (
+                gtk_action_group_get_action (actions, "Menubar"));
+            gtk_menu_shell_append (menu_shell, menuitem);
+        }
 
         menuitem = sokoke_action_create_popup_menu_item (
                 gtk_action_group_get_action (actions, "ZoomIn"));
-        gtk_menu_shell_append (GTK_MENU_SHELL (menu), menuitem);
+        gtk_menu_shell_append (menu_shell, menuitem);
         menuitem = sokoke_action_create_popup_menu_item (
                 gtk_action_group_get_action (actions, "ZoomOut"));
-        gtk_menu_shell_append (GTK_MENU_SHELL (menu), menuitem);
+        gtk_menu_shell_append (menu_shell, menuitem);
 
         menuitem = sokoke_action_create_popup_menu_item (
                 gtk_action_group_get_action (actions, "Encoding"));
-        gtk_menu_shell_append (GTK_MENU_SHELL (menu), menuitem);
+        gtk_menu_shell_append (menu_shell, menuitem);
         if (GTK_WIDGET_IS_SENSITIVE (menuitem))
         {
             GtkWidget* sub_menu;
@@ -1403,7 +1916,6 @@ webkit_web_view_populate_popup_cb (WebKitWebView* web_view,
               { "EncodingWestern" },
               { "EncodingCustom" },
             };
-            guint i;
 
             sub_menu = gtk_menu_new ();
             gtk_menu_item_set_submenu (GTK_MENU_ITEM (menuitem), sub_menu);
@@ -1416,33 +1928,65 @@ webkit_web_view_populate_popup_cb (WebKitWebView* web_view,
             }
         }
 
-        menuitem = gtk_separator_menu_item_new ();
-        gtk_menu_shell_append (GTK_MENU_SHELL (menu), menuitem);
-        gtk_widget_show (menuitem);
-
+        #if !HAVE_HILDON
+        gtk_menu_shell_append (menu_shell, gtk_separator_menu_item_new ());
         menuitem = sokoke_action_create_popup_menu_item (
                 gtk_action_group_get_action (actions, "BookmarkAdd"));
-        gtk_menu_shell_append (GTK_MENU_SHELL (menu), menuitem);
+        gtk_menu_shell_append (menu_shell, menuitem);
 
         if (view->speed_dial_in_new_tabs && !midori_view_is_blank (view))
         {
             menuitem = sokoke_action_create_popup_menu_item (
                 gtk_action_group_get_action (actions, "AddSpeedDial"));
-            gtk_menu_shell_append (GTK_MENU_SHELL (menu), menuitem);
+            gtk_menu_shell_append (menu_shell, menuitem);
         }
+        menuitem = sokoke_action_create_popup_menu_item (
+                gtk_action_group_get_action (actions, "AddDesktopShortcut"));
+        gtk_menu_shell_append (menu_shell, menuitem);
+        #endif
 
         menuitem = sokoke_action_create_popup_menu_item (
                 gtk_action_group_get_action (actions, "SaveAs"));
-        gtk_menu_shell_append (GTK_MENU_SHELL (menu), menuitem);
+        gtk_menu_shell_append (menu_shell, menuitem);
         /* Currently views that don't support source, don't support
            saving either. If that changes, we need to think of something. */
         if (!midori_view_can_view_source (view))
             gtk_widget_set_sensitive (menuitem, FALSE);
         menuitem = sokoke_action_create_popup_menu_item (
                 gtk_action_group_get_action (actions, "SourceView"));
-        gtk_menu_shell_append (GTK_MENU_SHELL (menu), menuitem);
+        gtk_menu_shell_append (menu_shell, menuitem);
     }
+
+    gtk_widget_show_all (menu);
 }
+
+#if HAVE_HILDON
+static void
+midori_view_web_view_tap_and_hold_cb (GtkWidget*  web_view,
+                                      MidoriView* view)
+{
+    gint x, y;
+    GdkEvent event;
+    gboolean result;
+
+    /* Emulate a pointer motion above the tap position
+      and a right click at the according position. */
+    gdk_window_get_pointer (web_view->window, &x, &y, NULL);
+    event.any.type = GDK_MOTION_NOTIFY;
+    event.any.window = web_view->window;
+    event.motion.x = x;
+    event.motion.y = y;
+    g_signal_emit_by_name (web_view, "motion-notify-event", &event, &result);
+
+    event.any.type = GDK_BUTTON_PRESS;
+    event.any.window = web_view->window;
+    event.button.axes = NULL;
+    event.button.x = x;
+    event.button.y = y;
+    event.button.button = 3;
+    g_signal_emit_by_name (web_view, "button-press-event", &event, &result);
+}
+#endif
 
 static gboolean
 webkit_web_view_web_view_ready_cb (GtkWidget*  web_view,
@@ -1661,6 +2205,48 @@ webkit_web_view_window_object_cleared_cb (GtkWidget*      web_view,
 }
 
 static void
+midori_view_hadjustment_notify_value_cb (GtkAdjustment* hadjustment,
+                                         GParamSpec*    pspec,
+                                         MidoriView*    view)
+{
+    gint value = (gint)gtk_adjustment_get_value (hadjustment);
+    if (view->item)
+        katze_item_set_meta_integer (view->item, "scrollh", value);
+}
+
+static void
+midori_view_notify_hadjustment_cb (MidoriView* view,
+                                   GParamSpec* pspec,
+                                   gpointer    data)
+{
+    GtkAdjustment* hadjustment = katze_object_get_object (view, "hadjustment");
+    g_signal_connect (hadjustment, "notify::value",
+        G_CALLBACK (midori_view_hadjustment_notify_value_cb), view);
+    g_object_unref (hadjustment);
+}
+
+static void
+midori_view_vadjustment_notify_value_cb (GtkAdjustment* vadjustment,
+                                         GParamSpec*    pspec,
+                                         MidoriView*    view)
+{
+    gint value = (gint)gtk_adjustment_get_value (vadjustment);
+    if (view->item)
+        katze_item_set_meta_integer (view->item, "scrollv", value);
+}
+
+static void
+midori_view_notify_vadjustment_cb (MidoriView* view,
+                                   GParamSpec* pspec,
+                                   gpointer    data)
+{
+    GtkAdjustment* vadjustment = katze_object_get_object (view, "vadjustment");
+    g_signal_connect (vadjustment, "notify::value",
+        G_CALLBACK (midori_view_vadjustment_notify_value_cb), view);
+    g_object_unref (vadjustment);
+}
+
+static void
 midori_view_init (MidoriView* view)
 {
     view->uri = NULL;
@@ -1672,18 +2258,27 @@ midori_view_init (MidoriView* view)
     view->load_status = MIDORI_LOAD_FINISHED;
     view->minimized = FALSE;
     view->statusbar_text = NULL;
+    #if WEBKIT_CHECK_VERSION (1, 1, 15)
+    view->hit_test = NULL;
+    #endif
     view->link_uri = NULL;
     view->selected_text = NULL;
     view->news_feeds = katze_array_new (KATZE_TYPE_ITEM);
 
     view->item = NULL;
+    view->scrollh = view->scrollv = -2;
+    view->back_forward_set = FALSE;
 
     view->download_manager = NULL;
     view->news_aggregator = NULL;
     view->web_view = NULL;
 
-    /* Adjustments are not created automatically */
+    /* Adjustments are not created initially, but overwritten later */
     g_object_set (view, "hadjustment", NULL, "vadjustment", NULL, NULL);
+    g_signal_connect (view, "notify::hadjustment",
+        G_CALLBACK (midori_view_notify_hadjustment_cb), view);
+    g_signal_connect (view, "notify::vadjustment",
+        G_CALLBACK (midori_view_notify_vadjustment_cb), view);
 }
 
 static void
@@ -1699,6 +2294,9 @@ midori_view_finalize (GObject* object)
     if (view->item)
         g_signal_handlers_disconnect_by_func (view->item,
             midori_view_item_meta_data_changed, view);
+
+    if (view->thumb_view)
+        gtk_widget_destroy (view->thumb_view);
 
     katze_assign (view->uri, NULL);
     katze_assign (view->title, NULL);
@@ -1840,23 +2438,26 @@ midori_view_new (KatzeNet* net)
 static void
 _midori_view_update_settings (MidoriView* view)
 {
-    gboolean zoom_text_and_images;
+    gboolean zoom_text_and_images, kinetic_scrolling;
 
     g_object_get (view->settings,
         "speed-dial-in-new-tabs", &view->speed_dial_in_new_tabs,
         "download-manager", &view->download_manager,
         "news-aggregator", &view->news_aggregator,
         "zoom-text-and-images", &zoom_text_and_images,
+        "kinetic-scrolling", &kinetic_scrolling,
         "close-buttons-on-tabs", &view->close_buttons_on_tabs,
         "open-new-pages-in", &view->open_new_pages_in,
+        "ask-for-destination-folder", &view->ask_for_destination_folder,
         "middle-click-opens-selection", &view->middle_click_opens_selection,
         "open-tabs-in-the-background", &view->open_tabs_in_the_background,
         "find-while-typing", &view->find_while_typing,
         NULL);
 
     if (view->web_view)
-        g_object_set (view->web_view, "full-content-zoom",
-                      zoom_text_and_images, NULL);
+        g_object_set (view->web_view,
+                      "full-content-zoom", zoom_text_and_images, NULL);
+    g_object_set (view, "kinetic-scrolling", kinetic_scrolling, NULL);
 }
 
 static void
@@ -1889,6 +2490,11 @@ midori_view_settings_notify_cb (MidoriWebSettings* settings,
             g_object_set (view->web_view, "full-content-zoom",
                           g_value_get_boolean (&value), NULL);
     }
+    else if (name == g_intern_string ("kinetic-scrolling"))
+    {
+        g_object_set (view, "kinetic-scrolling",
+                      g_value_get_boolean (&value), NULL);
+    }
     else if (name == g_intern_string ("close-buttons-on-tabs"))
     {
         view->close_buttons_on_tabs = g_value_get_boolean (&value);
@@ -1898,6 +2504,10 @@ midori_view_settings_notify_cb (MidoriWebSettings* settings,
     else if (name == g_intern_string ("open-new-pages-in"))
     {
         view->open_new_pages_in = g_value_get_enum (&value);
+    }
+    else if (name == g_intern_string ("ask-for-destination-folder"))
+    {
+        view->ask_for_destination_folder = g_value_get_boolean (&value);
     }
     else if (name == g_intern_string ("middle-click-opens-selection"))
     {
@@ -2056,7 +2666,13 @@ midori_view_construct_web_view (MidoriView* view)
     webkit_web_view_open (WEBKIT_WEB_VIEW (view->web_view), "");
     web_frame = webkit_web_view_get_main_frame (WEBKIT_WEB_VIEW (view->web_view));
 
+    #if HAVE_HILDON
+    gtk_widget_tap_and_hold_setup (view->web_view, NULL, NULL, 0);
+    #endif
+
     g_object_connect (view->web_view,
+                      "signal::navigation-policy-decision-requested",
+                      midori_view_web_view_navigation_decision_cb, view,
                       "signal::load-started",
                       webkit_web_view_load_started_cb, view,
                       "signal::load-committed",
@@ -2076,6 +2692,8 @@ midori_view_construct_web_view (MidoriView* view)
                       #endif
                       "signal::status-bar-text-changed",
                       webkit_web_view_statusbar_text_changed_cb, view,
+                      "signal::leave-notify-event",
+                      midori_view_web_view_leave_notify_event_cb, view,
                       "signal::hovering-over-link",
                       webkit_web_view_hovering_over_link_cb, view,
                       "signal::button-press-event",
@@ -2086,6 +2704,10 @@ midori_view_construct_web_view (MidoriView* view)
                       gtk_widget_scroll_event_cb, view,
                       "signal::populate-popup",
                       webkit_web_view_populate_popup_cb, view,
+                      #if HAVE_HILDON
+                      "signal::tap-and-hold",
+                      midori_view_web_view_tap_and_hold_cb, view,
+                      #endif
                       "signal::console-message",
                       webkit_web_view_console_message_cb, view,
                       "signal::window-object-cleared",
@@ -2278,7 +2900,7 @@ midori_view_set_uri (MidoriView*  view,
         }
         else
         {
-            katze_assign (view->uri, g_strdup (uri));
+            katze_assign (view->uri, sokoke_format_uri_for_display (uri));
             g_object_notify (G_OBJECT (view), "uri");
             if (view->item)
                 katze_item_set_uri (view->item, uri);
@@ -2918,6 +3540,16 @@ midori_view_item_meta_data_changed (KatzeItem*   item,
     if (g_str_equal (key, "minimized"))
         g_object_set (view, "minimized",
             katze_item_get_meta_string (item, key) != NULL, NULL);
+    else if (g_str_has_prefix (key, "scroll"))
+    {
+        gint value = katze_item_get_meta_integer (item, key);
+        if (view->scrollh == -2 && key[6] == 'h')
+            view->scrollh = value > -1 ? value : 0;
+        else if (view->scrollv == -2 && key[6] == 'v')
+            view->scrollv = value > -1 ? value : 0;
+        else
+            return;
+    }
 }
 
 /**
@@ -2994,7 +3626,7 @@ midori_view_can_zoom_in (MidoriView* view)
 {
     g_return_val_if_fail (MIDORI_IS_VIEW (view), FALSE);
 
-    return view->web_view != NULL;
+    return view->web_view != NULL && !g_str_has_prefix (view->mime_type, "image/");
 }
 
 gboolean
@@ -3002,7 +3634,7 @@ midori_view_can_zoom_out (MidoriView* view)
 {
     g_return_val_if_fail (MIDORI_IS_VIEW (view), FALSE);
 
-    return view->web_view != NULL;
+    return view->web_view != NULL && !g_str_has_prefix (view->mime_type, "image/");
 }
 
 gboolean
@@ -3211,6 +3843,9 @@ midori_view_print (MidoriView* view)
     #if WEBKIT_CHECK_VERSION (1, 1, 5)
     operation = gtk_print_operation_new ();
     gtk_print_operation_set_custom_tab_label (operation, _("Features"));
+#if GTK_CHECK_VERSION (2, 18, 0)
+    gtk_print_operation_set_embed_page_setup (operation, TRUE);
+#endif
     g_signal_connect (operation, "create-custom-widget",
         G_CALLBACK (midori_view_print_create_custom_widget_cb), view);
     g_signal_connect (operation, "custom-widget-apply",
@@ -3456,7 +4091,14 @@ thumb_view_load_status_cb (MidoriView* thumb_view,
     g_free (encoded);
     g_free (file_content);
 
+    g_signal_handlers_disconnect_by_func (
+       thumb_view, thumb_view_load_status_cb, view);
+
+    /* Destroying the view here may trigger a WebKitGTK+ bug */
+    #if !WEBKIT_CHECK_VERSION (1, 1, 14)
     gtk_widget_destroy (GTK_WIDGET (thumb_view));
+    view->thumb_view = NULL;
+    #endif
 }
 
 /**
@@ -3478,13 +4120,10 @@ midori_view_speed_dial_inject_thumb (MidoriView* view,
     GtkWidget* notebook;
     GtkWidget* label;
 
-    thumb_view = midori_view_new (view->net);
-    settings = g_object_new (MIDORI_TYPE_WEB_SETTINGS, "enable-scripts", FALSE,
-        "enable-plugins", FALSE, "auto-load-images", TRUE, NULL);
-    midori_view_set_settings (MIDORI_VIEW (thumb_view), settings);
     browser = gtk_widget_get_toplevel (GTK_WIDGET (view));
     if (!GTK_IS_WINDOW (browser))
         return;
+
     /* What we are doing here is a bit of a hack. In order to render a
        thumbnail we need a new view and load the url in it. But it has
        to be visible and packed in a container. So we secretly pack it
@@ -3492,12 +4131,22 @@ midori_view_speed_dial_inject_thumb (MidoriView* view,
     notebook = katze_object_get_object (browser, "notebook");
     if (!notebook)
         return;
-    gtk_container_add (GTK_CONTAINER (notebook), thumb_view);
-    /* We use an empty label. It's not invisible but at least hard to spot. */
-    label = gtk_event_box_new ();
-    gtk_notebook_set_tab_label (GTK_NOTEBOOK (notebook), thumb_view, label);
-    g_object_unref (notebook);
-    gtk_widget_show (thumb_view);
+
+    if (!view->thumb_view)
+    {
+        view->thumb_view = midori_view_new (view->net);
+        gtk_container_add (GTK_CONTAINER (notebook), view->thumb_view);
+        /* We use an empty label. It's not invisible but at least hard to spot. */
+        label = gtk_event_box_new ();
+        gtk_notebook_set_tab_label (GTK_NOTEBOOK (notebook), view->thumb_view, label);
+        g_object_unref (notebook);
+        gtk_widget_show (view->thumb_view);
+    }
+    thumb_view = view->thumb_view;
+    settings = g_object_new (MIDORI_TYPE_WEB_SETTINGS, "enable-scripts", FALSE,
+        "enable-plugins", FALSE, "auto-load-images", TRUE, NULL);
+    midori_view_set_settings (MIDORI_VIEW (thumb_view), settings);
+
     g_object_set_data (G_OBJECT (thumb_view), "dom-id", dom_id);
     g_signal_connect (thumb_view, "notify::load-status",
         G_CALLBACK (thumb_view_load_status_cb), view);

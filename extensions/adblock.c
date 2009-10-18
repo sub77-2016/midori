@@ -20,9 +20,18 @@
     #include <unistd.h>
 #endif
 
-#if WEBKIT_CHECK_VERSION (1, 1, 14)
+#define HAVE_WEBKIT_RESOURCE_REQUEST WEBKIT_CHECK_VERSION (1, 1, 14)
 
-static GHashTable* pattern = NULL;
+#define ADBLOCK_FILTER_VALID(__filter) \
+    (__filter && (g_str_has_prefix (__filter, "http") \
+               || g_str_has_prefix (__filter, "file")))
+
+static GHashTable* pattern;
+static gchar* blockcss = NULL;
+static gchar* blockscript = NULL;
+
+static void
+adblock_parse_file (gchar* path);
 
 static gchar *
 adblock_fixup_regexp (gchar* src)
@@ -35,6 +44,10 @@ adblock_fixup_regexp (gchar* src)
 
     /* FIXME: Avoid always allocating twice the string */
     s = dst = g_malloc (strlen (src) * 2);
+
+    /* |http:// means ^http:// */
+    if (src[0] == '|')
+        src[0] = '^';
 
     while (*src)
     {
@@ -61,28 +74,87 @@ adblock_fixup_regexp (gchar* src)
 }
 
 static void
+adblock_download_notify_status_cb (WebKitDownload* download,
+                                   GParamSpec*     pspec,
+                                   gchar*          path)
+{
+    if (!g_file_test (path, G_FILE_TEST_EXISTS))
+       return;
+    adblock_parse_file (path);
+    g_free (path);
+    /* g_object_unref (download); */
+}
+
+static void
+adblock_reload_rules (MidoriExtension* extension)
+{
+    gchar** filters;
+    gchar* folder;
+    guint i = 0;
+    filters = midori_extension_get_string_list (extension, "filters", NULL);
+    folder = g_build_filename (g_get_user_cache_dir (), PACKAGE_NAME,
+                               "adblock", NULL);
+    g_mkdir_with_parents (folder, 0700);
+
+    if (!filters)
+        return;
+
+    pattern = g_hash_table_new_full (g_str_hash, g_str_equal,
+                   (GDestroyNotify)g_free,
+                   (GDestroyNotify)g_regex_unref);
+    katze_assign (blockcss, NULL);
+
+    while (filters[i++] != NULL)
+    {
+        gchar* filename = g_compute_checksum_for_string (G_CHECKSUM_MD5,
+                                                         filters[i - 1], -1);
+        gchar* path = g_build_filename (folder, filename, NULL);
+        if (!g_file_test (path, G_FILE_TEST_EXISTS))
+        {
+            WebKitNetworkRequest* request;
+            WebKitDownload* download;
+            gchar* destination = g_filename_to_uri (path, NULL, NULL);
+            request = webkit_network_request_new (filters[i -1]);
+            download = webkit_download_new (request);
+            g_object_unref (request);
+            webkit_download_set_destination_uri (download, destination);
+            g_free (destination);
+            g_signal_connect (download, "notify::status",
+                G_CALLBACK (adblock_download_notify_status_cb), path);
+            webkit_download_start (download);
+        }
+        else
+        {
+            adblock_parse_file (path);
+            g_free (path);
+        }
+        g_free (filename);
+    }
+    g_strfreev (filters);
+    g_free (folder);
+}
+
+static void
 adblock_browser_populate_tool_menu_cb (MidoriBrowser*   browser,
                                        GtkWidget*       menu,
                                        MidoriExtension* extension);
-
 static void
-adblock_app_add_browser_cb (MidoriApp*       app,
-                            MidoriBrowser*   browser,
-                            MidoriExtension* extension);
-
-static void
-adblock_deactivate_cb (MidoriExtension* extension,
-                       MidoriBrowser*   browser)
+adblock_preferences_render_tick_cb (GtkTreeViewColumn* column,
+                                    GtkCellRenderer*   renderer,
+                                    GtkTreeModel*      model,
+                                    GtkTreeIter*       iter,
+                                    MidoriExtension*   extension)
 {
-    MidoriApp* app = midori_extension_get_app (extension);
+    gchar* filter;
 
-    g_signal_handlers_disconnect_by_func (
-        browser, adblock_browser_populate_tool_menu_cb, extension);
-    g_signal_handlers_disconnect_by_func (
-        extension, adblock_deactivate_cb, browser);
-    g_signal_handlers_disconnect_by_func (
-        app, adblock_app_add_browser_cb, extension);
-    /* FIXME: Disconnect session callbacks */
+    gtk_tree_model_get (model, iter, 0, &filter, -1);
+
+    g_object_set (renderer,
+        "activatable", ADBLOCK_FILTER_VALID (filter),
+        "active", ADBLOCK_FILTER_VALID (filter) && filter[4] != '-',
+        NULL);
+
+    g_free (filter);
 }
 
 static void
@@ -98,6 +170,51 @@ adblock_preferences_renderer_text_edited_cb (GtkCellRenderer* renderer,
 }
 
 static void
+adblock_preferences_renderer_toggle_toggled_cb (GtkTreeViewColumn* column,
+                                                const gchar*       path,
+                                                GtkTreeModel*      model)
+{
+    GtkTreeIter iter;
+
+    if (gtk_tree_model_get_iter_from_string (model, &iter, path))
+    {
+        gchar* filter;
+
+        gtk_tree_model_get (model, &iter, 0, &filter, -1);
+
+        if (ADBLOCK_FILTER_VALID (filter))
+        {
+            filter[4] = filter[4] != '-' ? '-' : ':';
+
+            gtk_list_store_set (GTK_LIST_STORE (model), &iter, 0, filter, -1);
+
+            g_free (filter);
+        }
+    }
+}
+
+static void
+adblock_preferences_render_text_cb (GtkTreeViewColumn* column,
+                                    GtkCellRenderer*   renderer,
+                                    GtkTreeModel*      model,
+                                    GtkTreeIter*       iter,
+                                    MidoriExtension*   extension)
+{
+    gchar* filter;
+
+    gtk_tree_model_get (model, iter, 0, &filter, -1);
+
+    if (ADBLOCK_FILTER_VALID (filter))
+        filter[4] = ':';
+
+    g_object_set (renderer,
+        "text", filter,
+        NULL);
+
+    g_free (filter);
+}
+
+static void
 adblock_preferences_model_row_changed_cb (GtkTreeModel*    model,
                                           GtkTreePath*     path,
                                           GtkTreeIter*     iter,
@@ -106,17 +223,27 @@ adblock_preferences_model_row_changed_cb (GtkTreeModel*    model,
     gsize length = gtk_tree_model_iter_n_children (model, NULL);
     gchar** filters = g_new (gchar*, length + 1);
     guint i = 0;
+    gboolean need_reload = FALSE;
 
     if (gtk_tree_model_iter_children (model, iter, NULL))
         do
         {
             gchar* filter;
             gtk_tree_model_get (model, iter, 0, &filter, -1);
-            filters[i++] = filter;
+            if (filter && *filter)
+            {
+                filters[i++] = filter;
+                need_reload = TRUE;
+            }
+            else
+                g_free (filter);
         }
         while (gtk_tree_model_iter_next (model, iter));
-    filters[length] = NULL;
-    midori_extension_set_string_list (extension, "filters", filters, length);
+    filters[i] = NULL;
+    midori_extension_set_string_list (extension, "filters", filters, i);
+    g_free (filters);
+    if (need_reload)
+        adblock_reload_rules (extension);
 }
 
 static void
@@ -132,8 +259,10 @@ static void
 adblock_preferences_add_clicked_cb (GtkWidget*    button,
                                     GtkTreeModel* model)
 {
+    GtkEntry* entry = g_object_get_data (G_OBJECT (button), "entry");
     gtk_list_store_insert_with_values (GTK_LIST_STORE (model),
-        NULL, 0, 0, "", -1);
+        NULL, 0, 0, gtk_entry_get_text (entry), -1);
+    gtk_entry_set_text (entry, "");
 }
 
 static void
@@ -145,6 +274,15 @@ adblock_preferences_remove_clicked_cb (GtkWidget*   button,
     if (katze_tree_view_get_selected_iter (treeview, &model, &iter))
         gtk_list_store_remove (GTK_LIST_STORE (model), &iter);
 }
+
+#if GTK_CHECK_VERSION (2, 18, 0)
+static gboolean
+adblock_activate_link_cb (GtkWidget*   label,
+                          const gchar* uri)
+{
+    return sokoke_show_uri (gtk_widget_get_screen (label), uri, GDK_CURRENT_TIME, NULL);
+}
+#endif
 
 static GtkWidget*
 adblock_get_preferences_dialog (MidoriExtension* extension)
@@ -160,11 +298,13 @@ adblock_get_preferences_dialog (MidoriExtension* extension)
     GtkWidget* treeview;
     GtkTreeViewColumn* column;
     GtkCellRenderer* renderer_text;
-    GtkCellRenderer* renderer_pixbuf;
+    GtkCellRenderer* renderer_toggle;
     GtkWidget* scrolled;
     gchar** filters;
     GtkWidget* vbox;
     GtkWidget* button;
+    gchar* description;
+    GtkWidget* entry;
     #if HAVE_OSX
     GtkWidget* icon;
     #endif
@@ -198,6 +338,28 @@ adblock_get_preferences_dialog (MidoriExtension* extension)
     hbox = gtk_hbox_new (FALSE, 0);
     gtk_box_pack_start (GTK_BOX (GTK_DIALOG (dialog)->vbox), hbox,
                                  TRUE, TRUE, 12);
+    vbox = gtk_vbox_new (FALSE, 0);
+    gtk_box_pack_start (GTK_BOX (hbox), vbox, TRUE, TRUE, 4);
+    button = gtk_label_new (NULL);
+    description = g_strdup_printf (_(
+        "Type the address of a preconfigured filter list in the text entry "
+        "and click \"Add\" to add it to the list. "
+        "You can find more lists at %s."),
+        #if GTK_CHECK_VERSION (2, 18, 0)
+        "<a href=\"http://easylist.adblockplus.org/\">easylist.adblockplus.org</a>");
+        #else
+        "<u>http://easylist.adblockplus.org/</u>");
+        #endif
+    #if GTK_CHECK_VERSION (2, 18, 0)
+    g_signal_connect (button, "activate-link",
+        G_CALLBACK (adblock_activate_link_cb), NULL);
+    #endif
+    gtk_label_set_markup (GTK_LABEL (button), description);
+    g_free (description);
+    gtk_label_set_line_wrap (GTK_LABEL (button), TRUE);
+    gtk_box_pack_start (GTK_BOX (vbox), button, FALSE, FALSE, 4);
+    entry = gtk_entry_new ();
+    gtk_box_pack_start (GTK_BOX (vbox), entry, FALSE, FALSE, 4);
     liststore = gtk_list_store_new (1, G_TYPE_STRING);
     g_object_connect (liststore,
         "signal::row-inserted",
@@ -210,15 +372,23 @@ adblock_get_preferences_dialog (MidoriExtension* extension)
     treeview = gtk_tree_view_new_with_model (GTK_TREE_MODEL (liststore));
     gtk_tree_view_set_headers_visible (GTK_TREE_VIEW (treeview), FALSE);
     column = gtk_tree_view_column_new ();
-    renderer_pixbuf = gtk_cell_renderer_pixbuf_new ();
-    gtk_tree_view_column_pack_start (column, renderer_pixbuf, FALSE);
+    renderer_toggle = gtk_cell_renderer_toggle_new ();
+    gtk_cell_layout_pack_start (GTK_CELL_LAYOUT (column), renderer_toggle, FALSE);
+    gtk_cell_layout_set_cell_data_func (GTK_CELL_LAYOUT (column), renderer_toggle,
+        (GtkCellLayoutDataFunc)adblock_preferences_render_tick_cb,
+        extension, NULL);
+    g_signal_connect (renderer_toggle, "toggled",
+        G_CALLBACK (adblock_preferences_renderer_toggle_toggled_cb), liststore);
+    gtk_tree_view_append_column (GTK_TREE_VIEW (treeview), column);
+    column = gtk_tree_view_column_new ();
     renderer_text = gtk_cell_renderer_text_new ();
     gtk_tree_view_column_pack_start (column, renderer_text, TRUE);
-    gtk_cell_layout_set_attributes (GTK_CELL_LAYOUT (column), renderer_text,
-        "text", 0, NULL);
     g_object_set (renderer_text, "editable", TRUE, NULL);
     g_signal_connect (renderer_text, "edited",
         G_CALLBACK (adblock_preferences_renderer_text_edited_cb), liststore);
+    gtk_cell_layout_set_cell_data_func (GTK_CELL_LAYOUT (column), renderer_text,
+        (GtkCellLayoutDataFunc)adblock_preferences_render_text_cb,
+        extension, NULL);
     gtk_tree_view_append_column (GTK_TREE_VIEW (treeview), column);
     scrolled = gtk_scrolled_window_new (NULL, NULL);
     gtk_scrolled_window_set_policy (GTK_SCROLLED_WINDOW (scrolled),
@@ -226,7 +396,7 @@ adblock_get_preferences_dialog (MidoriExtension* extension)
     gtk_container_add (GTK_CONTAINER (scrolled), treeview);
     gtk_scrolled_window_set_shadow_type (GTK_SCROLLED_WINDOW (scrolled),
                                          GTK_SHADOW_IN);
-    gtk_box_pack_start (GTK_BOX (hbox), scrolled, TRUE, TRUE, 5);
+    gtk_box_pack_start (GTK_BOX (vbox), scrolled, TRUE, TRUE, 5);
 
     filters = midori_extension_get_string_list (extension, "filters", NULL);
     if (filters != NULL)
@@ -242,6 +412,7 @@ adblock_get_preferences_dialog (MidoriExtension* extension)
     vbox = gtk_vbox_new (FALSE, 4);
     gtk_box_pack_start (GTK_BOX (hbox), vbox, FALSE, FALSE, 4);
     button = gtk_button_new_from_stock (GTK_STOCK_ADD);
+    g_object_set_data (G_OBJECT (button), "entry", entry);
     g_signal_connect (button, "clicked",
         G_CALLBACK (adblock_preferences_add_clicked_cb), liststore);
     gtk_box_pack_start (GTK_BOX (vbox), button, FALSE, FALSE, 0);
@@ -324,6 +495,7 @@ adblock_is_matched (const gchar*  patt,
     return g_regex_match_full (regex, uri, -1, 0, 0, NULL, NULL);
 }
 
+#if HAVE_WEBKIT_RESOURCE_REQUEST
 static void
 adblock_resource_request_starting_cb (WebKitWebView*         web_view,
                                       WebKitWebFrame*        web_frame,
@@ -333,21 +505,78 @@ adblock_resource_request_starting_cb (WebKitWebView*         web_view,
                                       MidoriView*            view)
 {
     const gchar* uri = webkit_network_request_get_uri (request);
+    if (!strncmp (uri, "data", 4))
+        return;
     if (g_hash_table_find (pattern, (GHRFunc) adblock_is_matched, (char*)uri))
     {
         webkit_network_request_set_uri (request, "about:blank");
         /* TODO: Need to figure out how to indicate what was blocked */
     }
 }
+#else
+static void
+adblock_session_request_queued_cb (SoupSession* session,
+                                   SoupMessage* msg)
+{
+    SoupURI* soup_uri = soup_message_get_uri (msg);
+    gchar* uri = soup_uri ? soup_uri_to_string (soup_uri, FALSE) : g_strdup ("");
+    if (g_hash_table_find (pattern, (GHRFunc) adblock_is_matched, uri))
+    {
+        soup_uri = soup_uri_new ("http://.invalid");
+        soup_message_set_uri (msg, soup_uri);
+        soup_uri_free (soup_uri);
+    }
+    g_free (uri);
+}
+#endif
 
+static gchar*
+adblock_build_js (gchar* style)
+{
+    return g_strdup_printf (
+        "window.addEventListener ('DOMContentLoaded',"
+        "function () {"
+        "var mystyle = document.createElement(\"style\");"
+        "mystyle.setAttribute(\"type\", \"text/css\");"
+        "mystyle.appendChild(document.createTextNode('%s'));"
+        "var head = document.getElementsByTagName(\"head\")[0];"
+        "if (head) head.appendChild(mystyle);"
+        "else document.documentElement.insertBefore(mystyle, document.documentElement.firstChild);"
+        "}, true);",
+        style);
+}
+
+static void
+adblock_window_object_cleared_cb (GtkWidget*      web_view,
+                                  WebKitWebFrame* web_frame,
+                                  JSContextRef    js_context,
+                                  JSObjectRef     js_window)
+{
+    webkit_web_view_execute_script (WEBKIT_WEB_VIEW (web_view), blockscript);
+}
 
 static void
 adblock_add_tab_cb (MidoriBrowser* browser,
                     MidoriView*    view)
 {
     GtkWidget* web_view = gtk_bin_get_child (GTK_BIN (view));
+    g_signal_connect (web_view, "window-object-cleared",
+        G_CALLBACK (adblock_window_object_cleared_cb), 0);
+    #if HAVE_WEBKIT_RESOURCE_REQUEST
     g_signal_connect (web_view, "resource-request-starting",
         G_CALLBACK (adblock_resource_request_starting_cb), view);
+    #endif
+}
+
+static void
+adblock_deactivate_cb (MidoriExtension* extension,
+                       MidoriBrowser*   browser);
+
+static void
+adblock_add_tab_foreach_cb (MidoriView*      view,
+                            MidoriBrowser*   browser)
+{
+    adblock_add_tab_cb (browser, view);
 }
 
 static void
@@ -355,13 +584,25 @@ adblock_app_add_browser_cb (MidoriApp*       app,
                             MidoriBrowser*   browser,
                             MidoriExtension* extension)
 {
-    if (pattern)
-        g_signal_connect (browser, "add-tab",
-            G_CALLBACK (adblock_add_tab_cb), 0);
+    midori_browser_foreach (browser,
+          (GtkCallback)adblock_add_tab_foreach_cb, browser);
+    g_signal_connect (browser, "add-tab", G_CALLBACK (adblock_add_tab_cb), 0);
     g_signal_connect (browser, "populate-tool-menu",
         G_CALLBACK (adblock_browser_populate_tool_menu_cb), extension);
     g_signal_connect (extension, "deactivate",
         G_CALLBACK (adblock_deactivate_cb), browser);
+}
+
+static void
+adblock_frame_add (gchar* line)
+{
+    gchar* new_blockcss;
+
+    (void)*line++;
+    (void)*line++;
+    new_blockcss = g_strdup_printf ("%s %s { display: none !important; }",
+                                    blockcss, line);
+    katze_assign (blockcss, new_blockcss);
 }
 
 static gchar*
@@ -369,40 +610,47 @@ adblock_parse_line (gchar* line)
 {
     if (!line)
         return NULL;
-
+    g_strchomp (line);
     /* Ignore comments and new lines */
     if (line[0] == '!')
         return NULL;
     /* FIXME: No support for whitelisting */
     if (line[0] == '@' && line[1] == '@')
         return NULL;
-    /* FIXME: Differentiate # comments from element hiding */
-    /* FIXME: No support for element hiding */
+    /* FIXME: What is this? */
+    if (line[0] == '|' && line[1] == '|')
+        return NULL;
+    /* ditto */
+    if (strstr (line,"$"))
+        return NULL;
+    /* Got block hider */
+    if (line[0] == '#' && line[1] == '#' && (line[2] == '.'||line[2] == '#'||line[2] == 'a'))
+    {
+        adblock_frame_add (line);
+        return NULL;
+    }
+    /* FIXME: Do we have smth else starting with ##? */
     if (line[0] == '#' && line[1] == '#')
+        return NULL;
+    /* FIXME: No support for per domain element hiding */
+    if (strstr (line,"##"))
         return NULL;
     /* FIXME: No support for [include] and [exclude] tags */
     if (line[0] == '[')
         return NULL;
-    g_strchomp (line);
     return adblock_fixup_regexp (line);
 }
 
-static GHashTable*
+static void
 adblock_parse_file (gchar* path)
 {
     FILE* file;
-
     if ((file = g_fopen (path, "r")))
     {
-        GHashTable* patt = g_hash_table_new_full (g_str_hash, g_str_equal,
-                               (GDestroyNotify)g_free,
-                               (GDestroyNotify)g_regex_unref);
-
-        gboolean have_pattern = FALSE;
-        gchar line[255];
+        gchar line[500];
         GRegex* regex;
 
-        while (fgets (line, 255, file))
+        while (fgets (line, 500, file))
         {
             GError* error = NULL;
             gchar* parsed;
@@ -420,28 +668,47 @@ adblock_parse_file (gchar* path)
                 g_free (parsed);
             }
             else
-            {
-                have_pattern = TRUE;
-                g_hash_table_insert (patt, parsed, regex);
-            }
+                g_hash_table_insert (pattern, parsed, regex);
         }
+        katze_assign (blockscript, adblock_build_js (blockcss));
         fclose (file);
-
-        if (have_pattern)
-            return patt;
     }
-    /* FIXME: This should presumably be freed, but there's a possible crash
-       g_free (path); */
-    return NULL;
 }
 
 static void
-adblock_download_notify_status_cb (WebKitDownload* download,
-                                   GParamSpec*     pspec,
-                                   gchar*          path)
+adblock_deactivate_tabs (MidoriView*      view,
+                         MidoriBrowser*   browser)
 {
-    pattern = adblock_parse_file (path);
-    /* g_object_unref (download); */
+    GtkWidget* web_view = gtk_bin_get_child (GTK_BIN (view));
+    g_signal_handlers_disconnect_by_func (
+       browser, adblock_add_tab_cb, 0);
+    g_signal_handlers_disconnect_by_func (
+       web_view, adblock_window_object_cleared_cb, 0);
+    #if HAVE_WEBKIT_RESOURCE_REQUEST
+    g_signal_handlers_disconnect_by_func (
+       web_view, adblock_resource_request_starting_cb, view);
+    #else
+    g_signal_handlers_disconnect_by_func (
+       webkit_get_default_session (), adblock_session_request_queued_cb, NULL);
+    #endif
+}
+
+static void
+adblock_deactivate_cb (MidoriExtension* extension,
+                       MidoriBrowser*   browser)
+{
+    MidoriApp* app = midori_extension_get_app (extension);
+
+    g_signal_handlers_disconnect_by_func (
+        browser, adblock_browser_populate_tool_menu_cb, extension);
+    g_signal_handlers_disconnect_by_func (
+        extension, adblock_deactivate_cb, browser);
+    g_signal_handlers_disconnect_by_func (
+        app, adblock_app_add_browser_cb, extension);
+    midori_browser_foreach (browser, (GtkCallback)adblock_deactivate_tabs, browser);
+
+    katze_assign (blockcss, NULL);
+    g_hash_table_destroy (pattern);
 }
 
 static void
@@ -451,9 +718,14 @@ adblock_activate_cb (MidoriExtension* extension,
     KatzeArray* browsers;
     MidoriBrowser* browser;
     guint i;
-    gchar* folder;
-    gchar** filters;
-    SoupSession* session;
+    #if !HAVE_WEBKIT_RESOURCE_REQUEST
+    SoupSession* session = webkit_get_default_session ();
+
+    g_signal_connect (session, "request-queued",
+                      G_CALLBACK (adblock_session_request_queued_cb), NULL);
+    #endif
+
+    adblock_reload_rules (extension);
 
     browsers = katze_object_get_object (app, "browsers");
     i = 0;
@@ -461,43 +733,8 @@ adblock_activate_cb (MidoriExtension* extension,
         adblock_app_add_browser_cb (app, browser, extension);
     g_signal_connect (app, "add-browser",
         G_CALLBACK (adblock_app_add_browser_cb), extension);
+
     g_object_unref (browsers);
-
-    session = webkit_get_default_session ();
-    folder = g_build_filename (g_get_user_cache_dir (), PACKAGE_NAME,
-                               "adblock", NULL);
-    g_mkdir_with_parents (folder, 0700);
-    filters = midori_extension_get_string_list (extension, "filters", NULL);
-    if (filters != NULL)
-    {
-        i = 0;
-        while (filters[i++] != NULL)
-        {
-            gchar* filename = g_compute_checksum_for_string (G_CHECKSUM_MD5,
-                                                             filters[i - 1], -1);
-            gchar* path = g_build_filename (folder, filename, NULL);
-            if (!g_file_test (path, G_FILE_TEST_EXISTS))
-            {
-                WebKitNetworkRequest* request;
-                WebKitDownload* download;
-                gchar* destination = g_filename_to_uri (path, NULL, NULL);
-
-                request = webkit_network_request_new (filters[i -1]);
-                download = webkit_download_new (request);
-                g_object_unref (request);
-                webkit_download_set_destination_uri (download, destination);
-                g_free (destination);
-                g_signal_connect (download, "notify::status",
-                    G_CALLBACK (adblock_download_notify_status_cb), path);
-                webkit_download_start (download);
-            }
-            else
-                pattern = adblock_parse_file (path);
-            g_free (filename);
-        }
-    }
-    g_strfreev (filters);
-    g_free (folder);
 }
 
 #if G_ENABLE_DEBUG
@@ -525,6 +762,10 @@ test_adblock_pattern (void)
     gint temp;
     gchar* filename;
 
+    pattern = g_hash_table_new_full (g_str_hash, g_str_equal,
+              (GDestroyNotify)g_free,
+              (GDestroyNotify)g_regex_unref);
+
     temp = g_file_open_tmp ("midori_adblock_match_test_XXXXXX", &filename, NULL);
 
     g_file_set_contents (filename,
@@ -533,7 +774,7 @@ test_adblock_pattern (void)
         "http://ads.bla.blub/*\n"
         "http://ads.blub.boing/*",
         -1, NULL);
-    pattern = adblock_parse_file (filename);
+    adblock_parse_file (filename);
 
     g_assert (g_hash_table_find (pattern, (GHRFunc) adblock_is_matched,
               "http://ads.foo.bar/teddy"));
@@ -548,9 +789,43 @@ test_adblock_pattern (void)
     g_assert (!g_hash_table_find (pattern, (GHRFunc) adblock_is_matched,
               "http://ads.foo.boing/beer"));
 
-    g_hash_table_destroy (pattern);
     close (temp);
     g_unlink (filename);
+
+    g_hash_table_destroy (pattern);
+}
+
+static void
+test_adblock_count (void)
+{
+    pattern = g_hash_table_new_full (g_str_hash, g_str_equal,
+              (GDestroyNotify)g_free,
+              (GDestroyNotify)g_regex_unref);
+
+        gchar* urls[6] = {
+            "https://bugs.webkit.org/buglist.cgi?query_format=advanced&short_desc_type=allwordssubstr&short_desc=&long_desc_type=substring&long_desc=&bug_file_loc_type=allwordssubstr&bug_file_loc=&keywords_type=allwords&keywords=&bug_status=UNCONFIRMED&bug_status=NEW&bug_status=ASSIGNED&bug_status=REOPENED&emailassigned_to1=1&emailtype1=substring&email1=&emailassigned_to2=1&emailreporter2=1&emailcc2=1&emailtype2=substring&email2=&bugidtype=include&bug_id=&votes=&chfieldfrom=&chfieldto=Now&chfieldvalue=&query_based_on=gtkport&field0-0-0=keywords&type0-0-0=anywordssubstr&value0-0-0=Gtk%20Cairo%20soup&field0-0-1=short_desc&type0-0-1=anywordssubstr&value0-0-1=Gtk%20Cairo%20soup%20autoconf%20automake%20autotool&field0-0-2=component&type0-0-2=equals&value0-0-2=WebKit%20Gtk",
+            "http://www.engadget.com/2009/09/24/google-hits-android-rom-modder-with-a-cease-and-desist-letter/",
+            "http://karibik-invest.com/es/bienes_raices/search.php?sqT=19&sqN=&sqMp=&sqL=0&qR=1&sqMb=&searchMode=1&action=B%FAsqueda",
+            "http://google.com",
+            "http://ya.ru",
+            "http://google.com"
+        };
+        /* FIXME */
+        gchar* filename = "/home/avb/.cache/midori/adblock/bb6cd38a4579b3605946b1228fa65297";
+        gdouble elapsed = 0.0;
+        gchar* str;
+        int i;
+        adblock_parse_file (filename);
+        for (i = 0; i < 6; i++)
+        {
+            str = urls[i];
+            g_test_timer_start ();
+            g_hash_table_find (pattern, (GHRFunc) adblock_is_matched,str);
+            elapsed += g_test_timer_elapsed ();
+        }
+        g_print ("Search took %f seconds\n", elapsed);
+
+    g_hash_table_destroy (pattern);
 }
 
 void
@@ -558,9 +833,8 @@ extension_test (void)
 {
     g_test_add_func ("/extensions/adblock/parse", test_adblock_parse);
     g_test_add_func ("/extensions/adblock/pattern", test_adblock_pattern);
+    g_test_add_func ("/extensions/adblock/count", test_adblock_count);
 }
-#endif
-
 #endif
 
 MidoriExtension*
@@ -569,17 +843,13 @@ extension_init (void)
     MidoriExtension* extension = g_object_new (MIDORI_TYPE_EXTENSION,
         "name", _("Advertisement blocker"),
         "description", _("Block advertisements according to a filter list"),
-        #if WEBKIT_CHECK_VERSION (1, 1, 14)
         "version", "0.1",
-        #endif
         "authors", "Christian Dywan <christian@twotoasts.de>",
         NULL);
-    #if WEBKIT_CHECK_VERSION (1, 1, 14)
     midori_extension_install_string_list (extension, "filters", NULL, G_MAXSIZE);
 
     g_signal_connect (extension, "activate",
         G_CALLBACK (adblock_activate_cb), NULL);
-    #endif
 
     return extension;
 }
