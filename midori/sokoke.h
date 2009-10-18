@@ -42,8 +42,18 @@ gchar* sokoke_search_uri                (const gchar*    uri,
                                          const gchar*    keywords);
 
 gchar*
+sokoke_hostname_from_uri                (const gchar*    uri,
+                                         gchar**         path);
+
+gchar*
+sokoke_uri_to_ascii                     (const gchar*    uri);
+
+gchar*
 sokoke_magic_uri                        (const gchar*    uri,
                                          KatzeArray*     search_engines);
+
+gchar*
+sokoke_format_uri_for_display           (const gchar*    uri);
 
 typedef enum {
     SOKOKE_MENU_POSITION_CURSOR = 0,
@@ -152,7 +162,8 @@ sokoke_remove_path                      (const gchar*    path,
                                          gboolean        ignore_errors);
 
 gchar*
-sokoke_find_config_filename             (const gchar*    filename);
+sokoke_find_config_filename             (const gchar*    folder,
+                                         const gchar*    filename);
 
 gchar*
 sokoke_find_data_filename               (const gchar*    filename);

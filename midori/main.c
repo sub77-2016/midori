@@ -94,7 +94,7 @@ settings_new_from_file (const gchar* filename,
     {
         if (error->code == G_FILE_ERROR_NOENT)
         {
-            gchar* config_file = sokoke_find_config_filename ("config");
+            gchar* config_file = sokoke_find_config_filename (NULL, "config");
             g_key_file_load_from_file (key_file, config_file,
                                        G_KEY_FILE_KEEP_COMMENTS, NULL);
         }
@@ -960,11 +960,6 @@ midori_app_add_browser_cb (MidoriApp*     app,
     gtk_widget_show (addon);
     midori_panel_append_page (MIDORI_PANEL (panel), MIDORI_VIEWABLE (addon));
 
-    /* Userstyles */
-    addon = midori_addons_new (MIDORI_ADDON_USER_STYLES, GTK_WIDGET (browser));
-    gtk_widget_show (addon);
-    midori_panel_append_page (MIDORI_PANEL (panel), MIDORI_VIEWABLE (addon));
-
     /* Plugins */
     addon = g_object_new (MIDORI_TYPE_PLUGINS, "app", app, NULL);
     gtk_widget_show (addon);
@@ -1155,6 +1150,17 @@ static void
 button_reset_session_clicked_cb (GtkWidget*  button,
                                  KatzeArray* session)
 {
+    gchar* config_file;
+    GError* error;
+
+    config_file = build_config_filename ("session.old.xbel");
+    error = NULL;
+    if (!midori_array_to_file (session, config_file, "xbel", &error))
+    {
+        g_warning (_("The session couldn't be saved. %s"), error->message);
+        g_error_free (error);
+    }
+    g_free (config_file);
     katze_array_clear (session);
     gtk_widget_set_sensitive (button, FALSE);
 }
@@ -1179,7 +1185,16 @@ midori_create_diagnostic_dialog (MidoriWebSettings* settings,
     MidoriApp* app = katze_item_get_parent (KATZE_ITEM (_session));
 
     dialog = gtk_message_dialog_new (
-        NULL, 0, GTK_MESSAGE_WARNING, GTK_BUTTONS_OK,
+        NULL, 0, GTK_MESSAGE_WARNING,
+        #if HAVE_HILDON
+        #if HILDON_CHECK_VERSION (2, 2, 0)
+        GTK_BUTTONS_NONE,
+        #else
+        GTK_BUTTONS_OK,
+        #endif
+        #else
+        GTK_BUTTONS_OK,
+        #endif
         _("Midori seems to have crashed the last time it was opened. "
           "If this happened repeatedly, try one of the following options "
           "to solve the problem."));
@@ -1213,6 +1228,19 @@ midori_create_diagnostic_dialog (MidoriWebSettings* settings,
     gtk_box_pack_start (GTK_BOX (box), button, FALSE, FALSE, 4);
     gtk_widget_show_all (box);
     gtk_container_add (GTK_CONTAINER (GTK_DIALOG (dialog)->vbox), box);
+    #if HAVE_HILDON
+    #if HILDON_CHECK_VERSION (2, 2, 0)
+    box = gtk_hbox_new (FALSE, 4);
+    gtk_box_pack_start (GTK_BOX (GTK_DIALOG (dialog)->vbox), box, TRUE, FALSE, 4);
+    button = hildon_gtk_button_new (HILDON_SIZE_FINGER_HEIGHT | HILDON_SIZE_HALFSCREEN_WIDTH);
+    gtk_button_set_label (GTK_BUTTON (button), GTK_STOCK_OK);
+    gtk_button_set_use_stock (GTK_BUTTON (button), TRUE);
+    g_signal_connect_swapped (button, "clicked",
+        G_CALLBACK (gtk_widget_destroy), dialog);
+    gtk_box_pack_start (GTK_BOX (box), button, TRUE, FALSE, 4);
+    gtk_widget_show_all (box);
+    #endif
+    #endif
     if (1)
     {
         /* GtkLabel can't wrap the text properly. Until some day
@@ -1344,6 +1372,32 @@ midori_load_extensions (gpointer data)
     return FALSE;
 }
 
+static void
+midori_browser_action_last_session_activate_cb (GtkAction*     action,
+                                                MidoriBrowser* browser)
+{
+    KatzeArray* old_session = katze_array_new (KATZE_TYPE_ITEM);
+    gchar* config_file = build_config_filename ("session.old.xbel");
+    GError* error = NULL;
+    if (midori_array_from_file (old_session, config_file, "xbel", &error))
+    {
+        guint i = 0;
+        KatzeItem* item;
+        while ((item = katze_array_get_nth_item (old_session, i++)))
+            midori_browser_add_item (browser, item);
+    }
+    else
+    {
+        g_warning (_("The session couldn't be loaded: %s\n"), error->message);
+        /* FIXME: Show a graphical dialog */
+        g_error_free (error);
+    }
+    g_free (config_file);
+    gtk_action_set_sensitive (action, FALSE);
+    g_signal_handlers_disconnect_by_func (action,
+        midori_browser_action_last_session_activate_cb, browser);
+}
+
 static gboolean
 midori_load_session (gpointer data)
 {
@@ -1358,10 +1412,19 @@ midori_load_session (gpointer data)
     gchar** command = g_object_get_data (G_OBJECT (app), "execute-command");
 
     browser = midori_app_create_browser (app);
+    config_file = build_config_filename ("session.old.xbel");
+    if (g_file_test (config_file, G_FILE_TEST_EXISTS))
+    {
+        GtkActionGroup* action_group = midori_browser_get_action_group (browser);
+        GtkAction* action = gtk_action_group_get_action (action_group, "LastSession");
+        g_signal_connect (action, "activate",
+            G_CALLBACK (midori_browser_action_last_session_activate_cb), browser);
+        gtk_action_set_sensitive (action, TRUE);
+    }
     midori_app_add_browser (app, browser);
     gtk_widget_show (GTK_WIDGET (browser));
 
-    config_file = build_config_filename ("accels");
+    katze_assign (config_file, build_config_filename ("accels"));
     if (is_writable (config_file))
         g_signal_connect_after (gtk_accel_map_get (), "changed",
             G_CALLBACK (accel_map_changed_cb), NULL);
@@ -1571,8 +1634,8 @@ main (int    argc,
 
     #if ENABLE_NLS
     setlocale (LC_ALL, "");
-    if (g_getenv ("NLSPATH"))
-        bindtextdomain (GETTEXT_PACKAGE, g_getenv ("NLSPATH"));
+    if (g_getenv ("MIDORI_NLSPATH"))
+        bindtextdomain (GETTEXT_PACKAGE, g_getenv ("MIDORI_NLSPATH"));
     else
     #ifdef G_OS_WIN32
     {
@@ -1731,6 +1794,14 @@ main (int    argc,
         {
             /* TODO: Open a tab per URI, seperated by pipes */
             /* FIXME: Handle relative files or magic URI here */
+            /* Encode any IDN addresses because libUnique doesn't like them */
+            i = 0;
+            while (uris[i] != NULL)
+            {
+                gchar* new_uri = sokoke_uri_to_ascii (uris[i]);
+                katze_assign (uris[i], new_uri);
+                i++;
+            }
             result = midori_app_instance_send_uris (app, uris);
         }
         else
@@ -1777,7 +1848,7 @@ main (int    argc,
         search_engines = search_engines_new_from_file (config_file, NULL);
         #else
         katze_assign (config_file,
-            sokoke_find_config_filename ("search"));
+            sokoke_find_config_filename (NULL, "search"));
         search_engines = search_engines_new_from_file (config_file, NULL);
         #endif
     }
@@ -1798,7 +1869,7 @@ main (int    argc,
         if (error->code == G_FILE_ERROR_NOENT)
         {
             katze_assign (config_file,
-                sokoke_find_config_filename ("bookmarks.xbel"));
+                sokoke_find_config_filename (NULL, "bookmarks.xbel"));
             midori_array_from_file (bookmarks, config_file, "xbel", NULL);
         }
         else

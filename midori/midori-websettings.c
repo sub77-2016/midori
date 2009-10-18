@@ -75,6 +75,7 @@ struct _MidoriWebSettings
 
     gboolean zoom_text_and_images;
     gboolean find_while_typing;
+    gboolean kinetic_scrolling;
     MidoriAcceptCookies accept_cookies;
     gboolean original_cookies_only;
     gint maximum_cookie_age;
@@ -151,6 +152,7 @@ enum
 
     PROP_ZOOM_TEXT_AND_IMAGES,
     PROP_FIND_WHILE_TYPING,
+    PROP_KINETIC_SCROLLING,
     PROP_ACCEPT_COOKIES,
     PROP_ORIGINAL_COOKIES_ONLY,
     PROP_MAXIMUM_COOKIE_AGE,
@@ -286,6 +288,7 @@ midori_identity_get_type (void)
         static const GEnumValue values[] = {
          { MIDORI_IDENT_MIDORI, "MIDORI_IDENT_MIDORI", N_("Midori") },
          { MIDORI_IDENT_SAFARI, "MIDORI_IDENT_SAFARI", N_("Safari") },
+         { MIDORI_IDENT_IPHONE, "MIDORI_IDENT_IPHONE", N_("iPhone") },
          { MIDORI_IDENT_FIREFOX, "MIDORI_IDENT_FIREFOX", N_("Firefox") },
          { MIDORI_IDENT_EXPLORER, "MIDORI_IDENT_EXPLORER", N_("Internet Explorer") },
          { MIDORI_IDENT_CUSTOM, "MIDORI_IDENT_CUSTOM", N_("Custom...") },
@@ -519,7 +522,7 @@ midori_web_settings_class_init (MidoriWebSettingsClass* class)
                                      "toolbar-items",
                                      _("Toolbar Items"),
                                      _("The items to show on the toolbar"),
-                                     "Back,Forward,ReloadStop,Location,Panel,Search,Trash",
+                                     "TabNew,Back,Forward,ReloadStop,Location,Panel,Search,Trash",
                                      flags));
 
     g_object_class_install_property (gobject_class,
@@ -634,6 +637,8 @@ midori_web_settings_class_init (MidoriWebSettingsClass* class)
      *
      * Whether to ask for the destination folder when downloading a file.
      *
+     * Note: Only since 0.2.0 is this value actually used.
+     *
      * Since: 0.1.7
      */
     g_object_class_install_property (gobject_class,
@@ -643,7 +648,7 @@ midori_web_settings_class_init (MidoriWebSettingsClass* class)
                                      _("Ask for the destination folder"),
         _("Whether to ask for the destination folder when downloading a file"),
                                      FALSE,
-    #if WEBKIT_CHECK_VERSION (1, 1, 3)
+    #if WEBKIT_CHECK_VERSION (1, 1, 15)
                                      G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
     #else
                                      G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
@@ -828,6 +833,22 @@ midori_web_settings_class_init (MidoriWebSettingsClass* class)
                                      _("Find inline while typing"),
                                      _("Whether to automatically find inline while typing"),
                                      FALSE,
+                                     flags));
+
+    /**
+    * MidoriWebSettings:kinetic-scrolling:
+    *
+    * Whether scrolling should kinetically move according to speed.
+    *
+    * Since: 0.2.0
+    */
+    g_object_class_install_property (gobject_class,
+                                     PROP_KINETIC_SCROLLING,
+                                     g_param_spec_boolean (
+                                     "kinetic-scrolling",
+                                     _("Kinetic scrolling"),
+                                     _("Whether scrolling should kinetically move according to speed"),
+                                     TRUE,
                                      flags));
 
     g_object_class_install_property (gobject_class,
@@ -1022,6 +1043,7 @@ midori_web_settings_init (MidoriWebSettings* web_settings)
     web_settings->open_popups_in_tabs = TRUE;
     web_settings->remember_last_form_inputs = TRUE;
     web_settings->remember_last_downloaded_files = TRUE;
+    web_settings->kinetic_scrolling = TRUE;
     web_settings->auto_detect_proxy = TRUE;
 
     g_signal_connect (web_settings, "notify::default-encoding",
@@ -1109,19 +1131,23 @@ generate_ident_string (MidoriIdentity identify_as)
         #define WEBKIT_USER_AGENT_MAJOR_VERSION 532
         #define WEBKIT_USER_AGENT_MINOR_VERSION 1
     #endif
-
-    const gchar* webcore = "WebKit/" G_STRINGIFY (WEBKIT_USER_AGENT_MAJOR_VERSION)
-        "." G_STRINGIFY (WEBKIT_USER_AGENT_MINOR_VERSION) "+";
+    const int webcore_major = WEBKIT_USER_AGENT_MAJOR_VERSION;
+    const int webcore_minor = WEBKIT_USER_AGENT_MINOR_VERSION;
 
     switch (identify_as)
     {
     case MIDORI_IDENT_MIDORI:
-        return g_strdup_printf ("%s (%s; %s; U; %s) %s",
-                                appname, platform, os, lang, webcore);
+        return g_strdup_printf ("%s (%s; %s; U; %s) WebKit/%d.%d+",
+            appname, platform, os, lang, webcore_major, webcore_minor);
     case MIDORI_IDENT_SAFARI:
         return g_strdup_printf ("Mozilla/5.0 (%s; U; %s; %s) "
-            "AppleWebKit/532+ (KHTML, like Gecko) Safari/%s %s",
-                                platform, os, lang, webcore, appname);
+            "AppleWebKit/%d+ (KHTML, like Gecko) Safari/%d.%d+ %s",
+            platform, os, lang, webcore_major, webcore_major, webcore_minor, appname);
+    case MIDORI_IDENT_IPHONE:
+        return g_strdup_printf ("Mozilla/5.0 (iPhone; U; %s; %s) "
+            "AppleWebKit/532+ (KHTML, like Gecko) Version/3.0 Mobile/1A538b "
+            "Safari/419.3 %s",
+                                os, lang, appname);
     case MIDORI_IDENT_FIREFOX:
         return g_strdup_printf ("Mozilla/5.0 (%s; U; %s; %s; rv:1.8.1) "
             "Gecko/20061010 Firefox/2.0 %s",
@@ -1295,6 +1321,9 @@ midori_web_settings_set_property (GObject*      object,
         break;
     case PROP_FIND_WHILE_TYPING:
         web_settings->find_while_typing = g_value_get_boolean (value);
+        break;
+    case PROP_KINETIC_SCROLLING:
+        web_settings->kinetic_scrolling = g_value_get_boolean (value);
         break;
     case PROP_ACCEPT_COOKIES:
         web_settings->accept_cookies = g_value_get_enum (value);
@@ -1498,6 +1527,9 @@ midori_web_settings_get_property (GObject*    object,
         break;
     case PROP_FIND_WHILE_TYPING:
         g_value_set_boolean (value, web_settings->find_while_typing);
+        break;
+    case PROP_KINETIC_SCROLLING:
+        g_value_set_boolean (value, web_settings->kinetic_scrolling);
         break;
     case PROP_ACCEPT_COOKIES:
         g_value_set_enum (value, web_settings->accept_cookies);

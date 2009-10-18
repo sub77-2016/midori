@@ -24,8 +24,8 @@ from TaskGen import extension
 import misc
 
 major = 0
-minor = 1
-micro = 10
+minor = 2
+micro = 0
 
 APPNAME = 'midori'
 VERSION = str (major) + '.' + str (minor) + '.' + str (micro)
@@ -181,15 +181,6 @@ def configure (conf):
         unique = 'no '
     conf.define ('HAVE_UNIQUE', [0,1][unique == 'yes'])
 
-    if option_enabled ('libidn'):
-        check_pkg ('libidn', '1.0', False)
-        libidn = ['N/A','yes'][conf.env['HAVE_LIBIDN'] == 1]
-        if libidn != 'yes':
-            option_checkfatal ('libidn', 'international domain names')
-    else:
-        libidn = 'no '
-    conf.define ('HAVE_LIBIDN', [0,1][libidn == 'yes'])
-
     if option_enabled ('sqlite'):
         check_pkg ('sqlite3', '3.0', False, var='SQLITE')
         sqlite = ['N/A','yes'][conf.env['HAVE_SQLITE'] == 1]
@@ -210,8 +201,21 @@ def configure (conf):
     check_pkg ('webkit-1.0', '1.1.1', args=args)
     check_pkg ('libsoup-2.4', '2.25.2')
     conf.define ('HAVE_LIBSOUP_2_25_2', 1)
-    check_pkg ('libsoup-2.4', '2.27.91', False, var='LIBSOUP_2_27_91')
+    check_pkg ('libsoup-2.4', '2.27.90', False, var='LIBSOUP_2_27_90')
     check_pkg ('libxml-2.0', '2.6')
+
+    if conf.env['HAVE_LIBSOUP_2_27_90']:
+       idn = 'yes'
+       conf.define ('HAVE_LIBIDN', 0)
+    else:
+        if option_enabled ('libidn'):
+            check_pkg ('libidn', '1.0', False)
+            idn = ['N/A','yes'][conf.env['HAVE_LIBIDN'] == 1]
+            if idn != 'yes':
+                option_checkfatal ('libidn', 'international domain names')
+        else:
+            idn = 'no '
+        conf.define ('HAVE_LIBIDN', [0,1][idn == 'yes'])
 
     if option_enabled ('hildon'):
         if check_pkg ('hildon-1', mandatory=False, var='HILDON'):
@@ -267,16 +271,15 @@ def configure (conf):
         elif debug_level == 'full':
             # -Wdeclaration-after-statement
             # -Wmissing-declarations -Wmissing-prototypes
-            # -Wwrite-strings
+            # -Wwrite-strings -Wunsafe-loop-optimizations -Wmissing-include-dirs
             conf.env.append_value ('CCFLAGS',
                 '-Wall -Wextra -O1 -g '
                 '-Waggregate-return -Wno-unused-parameter '
                 '-Wno-missing-field-initializers '
-                '-Wunsafe-loop-optimizations '
                 '-Wredundant-decls -Wmissing-noreturn '
                 '-Wshadow -Wpointer-arith -Wcast-align '
                 '-Winline -Wformat-security '
-                '-Winit-self -Wmissing-include-dirs -Wundef '
+                '-Winit-self -Wundef '
                 '-Wmissing-format-attribute -Wnested-externs '
                 '-DG_ENABLE_DEBUG'.split ())
     elif debug_level != 'none':
@@ -288,7 +291,7 @@ def configure (conf):
         Icon optimizations:  %(icons)s (rsvg-convert)
         Persistent history:  %(sqlite)s (sqlite3)
 
-        IDN support:         %(libidn)s (libidn)
+        IDN support:         %(idn)s (libidn or libsoup 2.27.90)
         User documentation:  %(user_docs)s (docutils)
         API documentation:   %(api_docs)s (gtk-doc)
         ''' % locals ()
@@ -450,6 +453,18 @@ def build (bld):
     bld.install_files ('${MDATADIR}/' + APPNAME + '/res', 'data/speeddial-head.html')
     bld.install_files ('${MDATADIR}/' + APPNAME + '/res', 'data/speeddial.json')
     bld.install_files ('${MDATADIR}/' + APPNAME + '/res', 'data/mootools.js')
+    bld.install_files ('${MDATADIR}/' + APPNAME, 'data/autosuggestcontrol.js')
+    bld.install_files ('${MDATADIR}/' + APPNAME, 'data/autosuggestcontrol.css')
+
+    # FIXME: Determine the library naming for other platforms
+    if Options.platform == 'linux':
+        extensions = os.listdir ('data/extensions')
+        for extension in extensions:
+            folder = 'lib' + extension + '.so'
+            source = 'data/extensions/' + extension +  '/config'
+            if os.path.exists (source):
+                bld.install_files ('${SYSCONFDIR}/' + APPNAME + \
+                                   '/extensions/' + folder, source)
 
     if Options.commands['check']:
         bld.add_subdirs ('tests')
@@ -511,7 +526,7 @@ def shutdown ():
             pass
         try:
             ext = 'MIDORI_EXTENSION_PATH=' + relfolder + os.sep + 'extensions'
-            nls = 'NLSPATH=' + relfolder + os.sep + 'po'
+            nls = 'MIDORI_NLSPATH=' + relfolder + os.sep + 'po'
             lang = os.environ['LANG']
             try:
                 for lang in os.listdir (folder + os.sep + 'po'):
