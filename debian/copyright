@@ -72,6 +72,16 @@ Copyright:   Copyright (C) 2007-2009 Christian Dywan <christian@twotoasts.de>
  Copyright (C) 2009 Jérôme Geulfucci <jeromeg@xfce.org>
 License: LGPL-2.1+
 
+Files: extensions/dnsprefetch.c, extensions/formhistory.c
+Copyright: Copyright (C) 2009 Alexander Butenko <a.butenka@gmail.com>
+License: LGPL-2.1+
+
+Files: katze/katze-scrolled.c, katze/katze-scrolled.h
+Copyright: Copyright (C) 2007 Henrik Hedberg <hhedberg@innologies.fi>
+ Copyright (C) 2009 Nadav Wiener <nadavwr@yahoo.com>
+ Copyright (C) 2009 Christian Dywan <christian@twotoasts.de>
+License: LGPL-2.1+
+
 Files: midori/midori-extension.c
 Copyright: Copyright (C) 2008-2009 Christian Dywan <christian@twotoasts.de>
  Copyright (C) 2009 Dale Whittaker <dayul@users.sf.net>
