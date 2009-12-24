@@ -1,0 +1,12 @@
+Makefile
+
+.waf-*
+.lock-wscript
+_build_
+
+po/.intltool-merge-cache
+po/POTFILES
+po/stamp-it
+po/*.gmo
+
+midori.desktop

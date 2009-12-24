@@ -29,12 +29,8 @@
 
 #if HAVE_UNISTD_H
     #include <unistd.h>
-    #define is_writable(_cfg_filename) \
-        !g_access (_cfg_filename, W_OK) || \
-        !g_file_test (_cfg_filename, G_FILE_TEST_EXISTS)
-#else
-    #define is_writable(_cfg_filename) 1
 #endif
+
 #include <errno.h>
 #include <stdlib.h>
 #include <string.h>
@@ -50,8 +46,14 @@
     #include <locale.h>
 #endif
 
+#ifdef HAVE_SIGNAL_H
+    #include <signal.h>
+#endif
+
 #if HAVE_HILDON
-    #include <libosso.h>
+    #define BOOKMARK_FILE "/home/user/.bookmarks/MyBookmarks.xml"
+#else
+    #define BOOKMARK_FILE "bookmarks.xbel"
 #endif
 
 #define MIDORI_HISTORY_ERROR g_quark_from_string("MIDORI_HISTORY_ERROR")
@@ -66,8 +68,11 @@ typedef enum
 static gchar*
 build_config_filename (const gchar* filename)
 {
-    const gchar* path = sokoke_set_config_dir (NULL);
-    g_mkdir_with_parents (path, 0700);
+    const gchar* path;
+
+    if (g_path_is_absolute (filename))
+        return g_strdup (filename);
+    path = sokoke_set_config_dir (NULL);
     return g_build_filename (path, filename, NULL);
 }
 
@@ -199,47 +204,52 @@ settings_save_to_file (MidoriWebSettings* settings,
         type = G_PARAM_SPEC_TYPE (pspec);
         property = g_param_spec_get_name (pspec);
         if (!(pspec->flags & G_PARAM_WRITABLE))
-        {
-            gchar* prop_comment = g_strdup_printf ("# %s", property);
-            g_key_file_set_string (key_file, "settings", prop_comment, "");
-            g_free (prop_comment);
             continue;
-        }
         if (type == G_TYPE_PARAM_STRING)
         {
             gchar* string;
+            const gchar* def_string = G_PARAM_SPEC_STRING (pspec)->default_value;
             g_object_get (settings, property, &string, NULL);
-            g_key_file_set_string (key_file, "settings", property,
-                                   string ? string : "");
+            if (!string)
+                string = g_strdup ("");
+            if (!def_string)
+                def_string = "";
+            if (strcmp (string, def_string))
+                g_key_file_set_string (key_file, "settings", property, string);
             g_free (string);
         }
         else if (type == G_TYPE_PARAM_INT)
         {
             gint integer;
             g_object_get (settings, property, &integer, NULL);
-            g_key_file_set_integer (key_file, "settings", property, integer);
+            if (integer != G_PARAM_SPEC_INT (pspec)->default_value)
+                g_key_file_set_integer (key_file, "settings", property, integer);
         }
         else if (type == G_TYPE_PARAM_FLOAT)
         {
             gfloat number;
             g_object_get (settings, property, &number, NULL);
-            g_key_file_set_double (key_file, "settings", property, number);
+            if (number != G_PARAM_SPEC_FLOAT (pspec)->default_value)
+                g_key_file_set_double (key_file, "settings", property, number);
         }
         else if (type == G_TYPE_PARAM_BOOLEAN)
         {
             gboolean truth;
             g_object_get (settings, property, &truth, NULL);
-            g_key_file_set_boolean (key_file, "settings", property, truth);
+            if (truth != G_PARAM_SPEC_BOOLEAN (pspec)->default_value)
+                g_key_file_set_boolean (key_file, "settings", property, truth);
         }
         else if (type == G_TYPE_PARAM_ENUM)
         {
             GEnumClass* enum_class = G_ENUM_CLASS (
                 g_type_class_ref (pspec->value_type));
             gint integer;
+            GEnumValue* enum_value;
             g_object_get (settings, property, &integer, NULL);
-            GEnumValue* enum_value = g_enum_get_value (enum_class, integer);
-            g_key_file_set_string (key_file, "settings", property,
-                                   enum_value->value_name);
+            enum_value = g_enum_get_value (enum_class, integer);
+            if (integer != G_PARAM_SPEC_ENUM (pspec)->default_value)
+                g_key_file_set_string (key_file, "settings", property,
+                                       enum_value->value_name);
         }
         else
             g_warning (_("Invalid configuration value '%s'"), property);
@@ -445,7 +455,7 @@ midori_history_remove_item_cb (KatzeArray* history,
 
     sqlcmd = sqlite3_mprintf (
         "DELETE FROM history WHERE uri = '%q' AND"
-        " title = '%q' AND date = %" G_GINT64_FORMAT,
+        " title = '%q' AND date = %llu",
         katze_item_get_uri (item),
         katze_item_get_name (item),
         katze_item_get_added (item));
@@ -491,7 +501,7 @@ midori_history_notify_item_cb (KatzeItem*  item,
     GError* error = NULL;
 
     sqlcmd = sqlite3_mprintf ("UPDATE history SET title='%q' WHERE "
-                              "uri='%q' AND date=%" G_GUINT64_FORMAT,
+                              "uri='%q' AND date=%llu",
                               katze_item_get_name (item),
                               katze_item_get_uri (item),
                               katze_item_get_added (item));
@@ -539,8 +549,8 @@ midori_history_add_item_cb (KatzeArray* array,
         }
     }
     sqlcmd = sqlite3_mprintf ("INSERT INTO history VALUES"
-                              "('%q', '%q', %" G_GUINT64_FORMAT ","
-                              " %" G_GUINT64_FORMAT ")",
+                              "('%q', '%q', %llu,"
+                              " %llu)",
                               katze_item_get_uri (item),
                               katze_item_get_name (item),
                               katze_item_get_added (item),
@@ -810,7 +820,7 @@ midori_bookmarks_notify_item_cb (KatzeArray* folder,
     gchar* config_file;
     GError* error;
 
-    config_file = build_config_filename ("bookmarks.xbel");
+    config_file = build_config_filename (BOOKMARK_FILE);
     error = NULL;
     if (!midori_array_to_file (bookmarks, config_file, "xbel", &error))
     {
@@ -822,7 +832,7 @@ midori_bookmarks_notify_item_cb (KatzeArray* folder,
 
 static void
 midori_bookmarks_add_item_cb (KatzeArray* folder,
-                              GObject*    item,
+                              KatzeItem*  item,
                               KatzeArray* bookmarks);
 
 static void
@@ -831,24 +841,17 @@ midori_bookmarks_remove_item_cb (KatzeArray* folder,
                                  KatzeArray* bookmarks);
 
 static void
-midori_bookmarks_add_item_cb (KatzeArray* folder,
-                              GObject*    item,
-                              KatzeArray* bookmarks)
+midori_bookmarks_connect_item (KatzeArray* folder,
+                               KatzeItem*  item,
+                               KatzeArray* bookmarks)
 {
-    gchar* config_file;
-    GError* error;
-
-    config_file = build_config_filename ("bookmarks.xbel");
-    error = NULL;
-    if (!midori_array_to_file (bookmarks, config_file, "xbel", &error))
+    if (KATZE_IS_ARRAY (item))
     {
-        g_warning (_("The bookmarks couldn't be saved. %s"), error->message);
-        g_error_free (error);
-    }
-    g_free (config_file);
+        KatzeItem* child;
+        guint i = 0;
+        while ((child = katze_array_get_nth_item ((KatzeArray*)item, i++)))
+            midori_bookmarks_connect_item ((KatzeArray*)item, child, bookmarks);
 
-    if (folder == bookmarks && KATZE_IS_ARRAY (item))
-    {
         g_signal_connect_after (item, "add-item",
             G_CALLBACK (midori_bookmarks_add_item_cb), bookmarks);
         g_signal_connect_after (item, "remove-item",
@@ -860,6 +863,26 @@ midori_bookmarks_add_item_cb (KatzeArray* folder,
 }
 
 static void
+midori_bookmarks_add_item_cb (KatzeArray* folder,
+                              KatzeItem*  item,
+                              KatzeArray* bookmarks)
+{
+    gchar* config_file;
+    GError* error;
+
+    config_file = build_config_filename (BOOKMARK_FILE);
+    error = NULL;
+    if (!midori_array_to_file (bookmarks, config_file, "xbel", &error))
+    {
+        g_warning (_("The bookmarks couldn't be saved. %s"), error->message);
+        g_error_free (error);
+    }
+    g_free (config_file);
+
+    midori_bookmarks_connect_item (folder, item, bookmarks);
+}
+
+static void
 midori_bookmarks_remove_item_cb (KatzeArray* folder,
                                  GObject*    item,
                                  KatzeArray* bookmarks)
@@ -867,7 +890,7 @@ midori_bookmarks_remove_item_cb (KatzeArray* folder,
     gchar* config_file;
     GError* error;
 
-    config_file = build_config_filename ("bookmarks.xbel");
+    config_file = build_config_filename (BOOKMARK_FILE);
     error = NULL;
     if (!midori_array_to_file (bookmarks, config_file, "xbel", &error))
     {
@@ -877,8 +900,15 @@ midori_bookmarks_remove_item_cb (KatzeArray* folder,
     g_free (config_file);
 
     if (KATZE_IS_ARRAY (item))
+    {
         g_signal_handlers_disconnect_by_func (item,
             midori_bookmarks_add_item_cb, bookmarks);
+        g_signal_handlers_disconnect_by_func (item,
+            midori_bookmarks_remove_item_cb, bookmarks);
+    }
+
+    g_signal_handlers_disconnect_by_func (item,
+        midori_bookmarks_notify_item_cb, bookmarks);
 }
 
 static void
@@ -966,8 +996,9 @@ midori_app_add_browser_cb (MidoriApp*     app,
     midori_panel_append_page (MIDORI_PANEL (panel), MIDORI_VIEWABLE (addon));
 
     /* Extensions */
-    addon = g_object_new (MIDORI_TYPE_EXTENSIONS, "app", app, NULL);
+    addon = g_object_new (MIDORI_TYPE_EXTENSIONS, NULL);
     gtk_widget_show (addon);
+    g_object_set (addon, "app", app, NULL);
     midori_panel_append_page (MIDORI_PANEL (panel), MIDORI_VIEWABLE (addon));
 
     g_object_unref (panel);
@@ -1308,7 +1339,6 @@ midori_load_extensions (gpointer data)
         {
             const gchar* filename;
             gchar* config_file = build_config_filename ("config");
-            gboolean is_writable = is_writable (config_file);
 
             while ((filename = g_dir_read_name (extension_dir)))
             {
@@ -1352,13 +1382,10 @@ midori_load_extensions (gpointer data)
                         if (!g_strcmp0 (filename, name))
                             g_signal_emit_by_name (extension, "activate", app);
                 }
-                if (is_writable)
-                {
-                    g_signal_connect_after (extension, "activate",
-                        G_CALLBACK (extension_activate_cb), app);
-                    g_signal_connect_after (extension, "deactivate",
-                        G_CALLBACK (extension_activate_cb), app);
-                }
+                g_signal_connect_after (extension, "activate",
+                    G_CALLBACK (extension_activate_cb), app);
+                g_signal_connect_after (extension, "deactivate",
+                    G_CALLBACK (extension_activate_cb), app);
                 g_object_unref (extension);
             }
             g_dir_close (extension_dir);
@@ -1419,15 +1446,14 @@ midori_load_session (gpointer data)
         GtkAction* action = gtk_action_group_get_action (action_group, "LastSession");
         g_signal_connect (action, "activate",
             G_CALLBACK (midori_browser_action_last_session_activate_cb), browser);
-        gtk_action_set_sensitive (action, TRUE);
+        gtk_action_set_visible (action, TRUE);
     }
     midori_app_add_browser (app, browser);
     gtk_widget_show (GTK_WIDGET (browser));
 
     katze_assign (config_file, build_config_filename ("accels"));
-    if (is_writable (config_file))
-        g_signal_connect_after (gtk_accel_map_get (), "changed",
-            G_CALLBACK (accel_map_changed_cb), NULL);
+    g_signal_connect_after (gtk_accel_map_get (), "changed",
+        G_CALLBACK (accel_map_changed_cb), NULL);
 
     if (katze_array_is_empty (_session))
     {
@@ -1465,17 +1491,14 @@ midori_load_session (gpointer data)
     g_object_unref (_session);
 
     katze_assign (config_file, build_config_filename ("session.xbel"));
-    if (is_writable (config_file))
-    {
-        g_signal_connect_after (browser, "notify::uri",
-            G_CALLBACK (midori_browser_session_cb), session);
-        g_signal_connect_after (browser, "add-tab",
-            G_CALLBACK (midori_browser_session_cb), session);
-        g_signal_connect_after (browser, "remove-tab",
-            G_CALLBACK (midori_browser_session_cb), session);
-        g_object_weak_ref (G_OBJECT (session),
-            (GWeakNotify)(midori_browser_weak_notify_cb), browser);
-    }
+    g_signal_connect_after (browser, "notify::uri",
+        G_CALLBACK (midori_browser_session_cb), session);
+    g_signal_connect_after (browser, "add-tab",
+        G_CALLBACK (midori_browser_session_cb), session);
+    g_signal_connect_after (browser, "remove-tab",
+        G_CALLBACK (midori_browser_session_cb), session);
+    g_object_weak_ref (G_OBJECT (session),
+        (GWeakNotify)(midori_browser_weak_notify_cb), browser);
 
     if (command)
         midori_app_send_command (app, command);
@@ -1569,11 +1592,21 @@ midori_remove_config_file (gint         clear_prefs,
     if ((clear_prefs & flag) == flag)
     {
         gchar* config_file = build_config_filename (filename);
-        if (is_writable (config_file))
-            g_unlink (config_file);
+        g_unlink (config_file);
         g_free (config_file);
     }
 }
+
+#ifdef HAVE_SIGNAL_H
+static void
+signal_handler (int signal_id)
+{
+    signal (signal_id, 0);
+    midori_app_quit_cb (NULL);
+    if (kill (getpid (), signal_id))
+      exit (1);
+}
+#endif
 
 int
 main (int    argc,
@@ -1593,8 +1626,10 @@ main (int    argc,
     {
        { "app", 'a', 0, G_OPTION_ARG_STRING, &webapp,
        N_("Run ADDRESS as a web application"), N_("ADDRESS") },
+       #if !HAVE_HILDON
        { "config", 'c', 0, G_OPTION_ARG_FILENAME, &config,
        N_("Use FOLDER as configuration folder"), N_("FOLDER") },
+       #endif
        { "run", 'r', 0, G_OPTION_ARG_NONE, &run,
        N_("Run the specified filename as javascript"), NULL },
        #if WEBKIT_CHECK_VERSION (1, 1, 6)
@@ -1627,9 +1662,6 @@ main (int    argc,
     sqlite3* db;
     gint max_history_age;
     #endif
-    #if HAVE_HILDON
-    osso_context_t* osso_context;
-    #endif
     gint clear_prefs = MIDORI_CLEAR_NONE;
 
     #if ENABLE_NLS
@@ -1648,6 +1680,21 @@ main (int    argc,
     #endif
     bind_textdomain_codeset (GETTEXT_PACKAGE, "UTF-8");
     textdomain (GETTEXT_PACKAGE);
+    #endif
+
+    #ifdef HAVE_SIGNAL_H
+    #ifdef SIGHUP
+    signal (SIGHUP, &signal_handler);
+    #endif
+    #ifdef SIGINT
+    signal (SIGINT, &signal_handler);
+    #endif
+    #ifdef SIGTERM
+    signal (SIGTERM, &signal_handler);
+    #endif
+    #ifdef SIGQUIT
+    signal (SIGQUIT, &signal_handler);
+    #endif
     #endif
 
     /* Parse cli options */
@@ -1736,14 +1783,26 @@ main (int    argc,
                       NULL);
         g_object_unref (settings);
         g_object_set (browser, "settings", settings, NULL);
+        sokoke_set_config_dir ("/");
         g_signal_connect (browser, "notify::load-status",
             G_CALLBACK (midori_web_app_browser_notify_load_status_cb), NULL);
         midori_browser_add_uri (browser, webapp);
         g_object_set_data (G_OBJECT (browser), "locked", (void*)1);
+        g_signal_connect (browser, "quit",
+            G_CALLBACK (gtk_main_quit), NULL);
         g_signal_connect (browser, "destroy",
             G_CALLBACK (gtk_main_quit), NULL);
         gtk_widget_show (GTK_WIDGET (browser));
         midori_browser_activate_action (browser, "Location");
+        if (execute)
+        {
+            i = 0;
+            while (uris[i] != NULL)
+            {
+                midori_browser_activate_action (browser, uris[i]);
+                i++;
+            }
+        }
         gtk_main ();
         return 0;
     }
@@ -1751,16 +1810,6 @@ main (int    argc,
     /* Standalone javascript support */
     if (run)
         return midori_run_script (uris ? *uris : NULL);
-
-    #if HAVE_HILDON
-    osso_context = osso_initialize (PACKAGE_NAME, PACKAGE_VERSION, FALSE, NULL);
-
-    if (!osso_context)
-    {
-        g_critical ("Error initializing OSSO D-Bus context - Midori");
-        return 1;
-    }
-    #endif
 
     if (config && !g_path_is_absolute (config))
     {
@@ -1819,12 +1868,16 @@ main (int    argc,
         return 1;
     }
 
+    katze_mkdir_with_parents (sokoke_set_config_dir (NULL), 0700);
+
     /* Load configuration files */
     error_messages = g_string_new (NULL);
     config_file = build_config_filename ("config");
     error = NULL;
     settings = settings_new_from_file (config_file, &extensions);
     katze_assign (config_file, build_config_filename ("accels"));
+    if (!g_file_test (config_file, G_FILE_TEST_EXISTS))
+        katze_assign (config_file, sokoke_find_config_filename (NULL, "accels"));
     gtk_accel_map_load (config_file);
     katze_assign (config_file, build_config_filename ("search"));
     error = NULL;
@@ -1862,7 +1915,7 @@ main (int    argc,
     }
     bookmarks = katze_array_new (KATZE_TYPE_ARRAY);
     #if HAVE_LIBXML
-    katze_assign (config_file, build_config_filename ("bookmarks.xbel"));
+    katze_assign (config_file, build_config_filename (BOOKMARK_FILE));
     error = NULL;
     if (!midori_array_from_file (bookmarks, config_file, "xbel", &error))
     {
@@ -1974,7 +2027,9 @@ main (int    argc,
         {
             item = katze_item_new ();
             /* Construct an absolute path if the file is relative */
-            if (g_file_test (uri, G_FILE_TEST_EXISTS | G_FILE_TEST_IS_REGULAR))
+            if (g_path_is_absolute (uri))
+                uri_ready = g_strconcat ("file://", uri, NULL);
+            else if (g_file_test (uri, G_FILE_TEST_EXISTS | G_FILE_TEST_IS_REGULAR))
             {
                 gchar* current_dir = g_get_current_dir ();
                 uri_ready = g_strconcat ("file://", current_dir,
@@ -1994,12 +2049,11 @@ main (int    argc,
     }
 
     katze_assign (config_file, build_config_filename ("config"));
-    if (is_writable (config_file))
-        g_signal_connect_after (settings, "notify",
-            G_CALLBACK (settings_notify_cb), app);
+    g_signal_connect_after (settings, "notify",
+        G_CALLBACK (settings_notify_cb), app);
 
     katze_assign (config_file, build_config_filename ("search"));
-    if (is_writable (config_file))
+    if (1)
     {
         g_signal_connect_after (search_engines, "add-item",
             G_CALLBACK (midori_search_engines_modify_cb), search_engines);
@@ -2013,47 +2067,27 @@ main (int    argc,
                     G_CALLBACK (midori_search_engines_modify_cb), search_engines);
         }
     }
-    katze_assign (config_file, build_config_filename ("bookmarks.xbel"));
-    if (is_writable (config_file))
+    katze_assign (config_file, build_config_filename (BOOKMARK_FILE));
+    /* Don't save bookmarks if they are not our own */
+    if (!g_path_is_absolute (BOOKMARK_FILE))
     {
+        midori_bookmarks_connect_item (NULL, (KatzeItem*)bookmarks, bookmarks);
         g_signal_connect_after (bookmarks, "add-item",
             G_CALLBACK (midori_bookmarks_add_item_cb), bookmarks);
         g_signal_connect_after (bookmarks, "remove-item",
             G_CALLBACK (midori_bookmarks_remove_item_cb), bookmarks);
-        if (!katze_array_is_empty (bookmarks))
-        {
-            i = 0;
-            while ((item = katze_array_get_nth_item (bookmarks, i++)))
-            {
-                if (KATZE_IS_ARRAY (item))
-                {
-                    g_signal_connect_after (item, "add-item",
-                        G_CALLBACK (midori_bookmarks_add_item_cb), bookmarks);
-                    g_signal_connect_after (item, "remove-item",
-                        G_CALLBACK (midori_bookmarks_remove_item_cb), bookmarks);
-                }
-                g_signal_connect_after (item, "notify",
-                    G_CALLBACK (midori_bookmarks_notify_item_cb), bookmarks);
-            }
-        }
     }
     katze_assign (config_file, build_config_filename ("tabtrash.xbel"));
-    if (is_writable (config_file))
-    {
-        g_signal_connect_after (trash, "add-item",
-            G_CALLBACK (midori_trash_add_item_cb), NULL);
-        g_signal_connect_after (trash, "remove-item",
-            G_CALLBACK (midori_trash_remove_item_cb), NULL);
-    }
+    g_signal_connect_after (trash, "add-item",
+        G_CALLBACK (midori_trash_add_item_cb), NULL);
+    g_signal_connect_after (trash, "remove-item",
+        G_CALLBACK (midori_trash_remove_item_cb), NULL);
     #if HAVE_SQLITE
     katze_assign (config_file, build_config_filename ("history.db"));
-    if (is_writable (config_file))
-    {
-        g_signal_connect_after (history, "add-item",
-            G_CALLBACK (midori_history_add_item_cb), db);
-        g_signal_connect_after (history, "clear",
-            G_CALLBACK (midori_history_clear_cb), db);
-    }
+    g_signal_connect_after (history, "add-item",
+        G_CALLBACK (midori_history_add_item_cb), db);
+    g_signal_connect_after (history, "clear",
+        G_CALLBACK (midori_history_clear_cb), db);
     #endif
 
     katze_item_set_parent (KATZE_ITEM (_session), app);
@@ -2095,10 +2129,6 @@ main (int    argc,
 
     gtk_main ();
 
-    #if HAVE_HILDON
-    osso_deinitialize (osso_context);
-    #endif
-
     settings = katze_object_get_object (app, "settings");
     #if HAVE_SQLITE
     g_object_get (settings, "maximum-history-age", &max_history_age, NULL);
@@ -2128,14 +2158,20 @@ main (int    argc,
             g_free (cache);
         }
         midori_remove_config_file (clear_prefs, MIDORI_CLEAR_TRASH, "tabtrash.xbel");
+        if ((clear_prefs & MIDORI_CLEAR_WEB_CACHE) == MIDORI_CLEAR_WEB_CACHE)
+        {
+            gchar* cache = g_build_filename (g_get_user_cache_dir (),
+                                             PACKAGE_NAME, "web", NULL);
+            sokoke_remove_path (cache, TRUE);
+            g_free (cache);
+        }
     }
 
     if (katze_object_get_boolean (settings, "load-on-startup")
         != MIDORI_STARTUP_LAST_OPEN_PAGES)
     {
         katze_assign (config_file, build_config_filename ("session.xbel"));
-        if (is_writable (config_file))
-            g_unlink (config_file);
+        g_unlink (config_file);
     }
 
     g_object_unref (settings);

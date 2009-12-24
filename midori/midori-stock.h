@@ -30,7 +30,7 @@
 #define STOCK_STYLE              "gnome-settings-theme"
 #define STOCK_TRANSFER           "package"
 #define STOCK_TRANSFERS          "package"
-#define STOCK_PLUGINS            GTK_STOCK_CONVERT
+#define STOCK_PLUGINS            "gnome-mime-application-x-shockwave-flash"
 
 #define STOCK_BOOKMARK_ADD       "stock_add-bookmark"
 #define STOCK_HOMEPAGE           GTK_STOCK_HOME
@@ -42,5 +42,14 @@
 #define STOCK_TAB_NEW            "stock_new-tab"
 #define STOCK_USER_TRASH         "gnome-stock-trash"
 #define STOCK_WINDOW_NEW         "stock_new-window"
+
+#if defined (HAVE_HILDON) && HAVE_HILDON
+    #undef STOCK_BOOKMARKS
+    #define STOCK_BOOKMARKS "general_mybookmarks_folder"
+    #undef STOCK_NEWS_FEED
+    #define STOCK_NEWS_FEED "general_rss"
+    #undef STOCK_WEB_BROWSER
+    #define STOCK_WEB_BROWSER "general_web"
+#endif
 
 #endif /* !__MIDORI_STOCK_H__ */

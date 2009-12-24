@@ -25,7 +25,7 @@ import misc
 
 major = 0
 minor = 2
-micro = 0
+micro = 2
 
 APPNAME = 'midori'
 VERSION = str (major) + '.' + str (minor) + '.' + str (micro)
@@ -56,12 +56,12 @@ def is_mingw (env):
     return False
 
 # Compile Win32 res files to (resource) object files
-@extension ('.rc')
 def rc_file(self, node):
     rctask = self.create_task ('winrc')
     rctask.set_inputs (node)
     rctask.set_outputs (node.change_ext ('.rc.o'))
     self.compiled_tasks.append (rctask)
+rc_file = extension ('.rc')(rc_file)
 Task.simple_task_type ('winrc', '${WINRC} -o${TGT} ${SRC}', color='BLUE',
     before='cc cxx', shell=False)
 
@@ -190,6 +190,15 @@ def configure (conf):
         sqlite = 'no '
     conf.define ('HAVE_SQLITE', [0,1][sqlite == 'yes'])
 
+    if option_enabled ('libnotify'):
+        check_pkg ('libnotify', mandatory=False)
+        libnotify = ['N/A','yes'][conf.env['HAVE_LIBNOTIFY'] == 1]
+        if libnotify != 'yes':
+            option_checkfatal ('libnotify', 'notifications')
+    else:
+        libnotify = 'no '
+    conf.define ('HAVE_LIBNOTIFY', [0,1][libnotify == 'yes'])
+
     conf.check (lib='m', mandatory=True)
     check_pkg ('gmodule-2.0', '2.8.0', False)
     check_pkg ('gthread-2.0', '2.8.0', False)
@@ -197,6 +206,8 @@ def configure (conf):
     args = ''
     if Options.platform == 'win32':
         args = '--define-variable=target=win32'
+    elif sys.platform != 'darwin':
+        check_pkg ('x11')
     check_pkg ('gtk+-2.0', '2.10.0', var='GTK', args=args)
     check_pkg ('webkit-1.0', '1.1.1', args=args)
     check_pkg ('libsoup-2.4', '2.25.2')
@@ -220,6 +231,8 @@ def configure (conf):
     if option_enabled ('hildon'):
         if check_pkg ('hildon-1', mandatory=False, var='HILDON'):
             check_pkg ('libosso', var='HILDON')
+            check_pkg ('hildon-1', '2.2', var='HILDON_2_2')
+            check_pkg ('hildon-fm-2', var='HILDON_FM')
         hildon = ['N/A','yes'][conf.env['HAVE_HILDON'] == 1]
         if hildon != 'yes':
             option_checkfatal ('hildon', 'Maemo integration')
@@ -246,6 +259,8 @@ def configure (conf):
     conf.define ('HAVE_OSX', int(sys.platform == 'darwin'))
     if Options.platform == 'win32':
         conf.env.append_value ('LINKFLAGS', '-mwindows')
+    else:
+        conf.check (header_name='signal.h')
 
     conf.define ('PACKAGE_VERSION', VERSION)
     conf.define ('PACKAGE_NAME', APPNAME)
@@ -290,6 +305,7 @@ def configure (conf):
         Localization:        %(nls)s (intltool)
         Icon optimizations:  %(icons)s (rsvg-convert)
         Persistent history:  %(sqlite)s (sqlite3)
+        Notifications:       %(libnotify)s (libnotify)
 
         IDN support:         %(idn)s (libidn or libsoup 2.27.90)
         User documentation:  %(user_docs)s (docutils)
@@ -300,7 +316,7 @@ def configure (conf):
         Utils.pprint ('RED', 'Please use an older or newer version.')
 
 def set_options (opt):
-    def is_maemo (): return os.path.exists ('/etc/osso-af-init/osso-gtk.defs')
+    def is_maemo (): return os.path.exists ('/etc/osso-af-init/')
 
     def add_enable_option (option, desc, group=None, disable=False):
         if group == None:
@@ -338,8 +354,13 @@ def set_options (opt):
     add_enable_option ('unique', 'single instance support', group)
     add_enable_option ('libidn', 'international domain name support', group)
     add_enable_option ('sqlite', 'history database support', group)
+    add_enable_option ('libnotify', 'notification support', group)
     add_enable_option ('addons', 'building of extensions', group)
     add_enable_option ('hildon', 'Maemo integration', group, disable=not is_maemo ())
+
+    # Provided for compatibility
+    opt.add_option ('--build', help='Ignored')
+    opt.add_option ('--disable-maintainer-mode', help='Ignored')
 
 def build (bld):
     def image_to_win32ico (task):
@@ -378,7 +399,7 @@ def build (bld):
 
     if bld.env['docs']:
         bld.install_files ('${DOCDIR}/' + APPNAME + '/', \
-            'AUTHORS ChangeLog COPYING EXPAT README TRANSLATE')
+            'AUTHORS COPYING ChangeLog EXPAT README')
 
     # Install default configuration
     bld.install_files ('${SYSCONFDIR}/xdg/' + APPNAME + '/', 'data/search')
@@ -449,22 +470,25 @@ def build (bld):
             bld.install_files ('${MDATADIR}/' + APPNAME + '/res', blddir + '/data/logo-shade.png')
         else:
             Utils.pprint ('BLUE', "logo-shade could not be rasterized.")
+
     bld.install_files ('${MDATADIR}/' + APPNAME + '/res', 'data/error.html')
     bld.install_files ('${MDATADIR}/' + APPNAME + '/res', 'data/speeddial-head.html')
     bld.install_files ('${MDATADIR}/' + APPNAME + '/res', 'data/speeddial.json')
     bld.install_files ('${MDATADIR}/' + APPNAME + '/res', 'data/mootools.js')
-    bld.install_files ('${MDATADIR}/' + APPNAME, 'data/autosuggestcontrol.js')
-    bld.install_files ('${MDATADIR}/' + APPNAME, 'data/autosuggestcontrol.css')
 
-    # FIXME: Determine the library naming for other platforms
-    if Options.platform == 'linux':
-        extensions = os.listdir ('data/extensions')
-        for extension in extensions:
-            folder = 'lib' + extension + '.so'
-            source = 'data/extensions/' + extension +  '/config'
-            if os.path.exists (source):
-                bld.install_files ('${SYSCONFDIR}/' + APPNAME + \
-                                   '/extensions/' + folder, source)
+    if bld.env['addons']:
+        bld.install_files ('${MDATADIR}/' + APPNAME + '/res', 'data/autosuggestcontrol.js')
+        bld.install_files ('${MDATADIR}/' + APPNAME + '/res', 'data/autosuggestcontrol.css')
+
+        # FIXME: Determine the library naming for other platforms
+        if Options.platform == 'linux':
+            extensions = os.listdir ('data/extensions')
+            for extension in extensions:
+                folder = 'lib' + extension + '.so'
+                source = 'data/extensions/' + extension +  '/config'
+                if os.path.exists (source):
+                    bld.install_files ('${SYSCONFDIR}/' + APPNAME + \
+                                       '/extensions/' + folder, source)
 
     if Options.commands['check']:
         bld.add_subdirs ('tests')

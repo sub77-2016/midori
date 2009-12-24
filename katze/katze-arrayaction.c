@@ -20,12 +20,17 @@
 #include <glib/gi18n.h>
 #include <gtk/gtk.h>
 
+#if HAVE_CONFIG_H
+    #include "config.h"
+#endif
+
 struct _KatzeArrayAction
 {
     GtkAction parent_instance;
 
     KatzeArray* array;
     KatzeNet* net;
+    gboolean reversed;
 };
 
 struct _KatzeArrayActionClass
@@ -39,7 +44,8 @@ enum
 {
     PROP_0,
 
-    PROP_ARRAY
+    PROP_ARRAY,
+    PROP_REVERSED
 };
 
 enum
@@ -154,6 +160,22 @@ katze_array_action_class_init (KatzeArrayActionClass* class)
                                      "The array the action represents",
                                      KATZE_TYPE_ARRAY,
                                      G_PARAM_READWRITE));
+
+    /**
+     * KatzeArrayAction:reversed:
+     *
+     * Whether the array should be walked backwards when building menus.
+     *
+     * Since: 0.2.2
+     **/
+    g_object_class_install_property (gobject_class,
+                                     PROP_REVERSED,
+                                     g_param_spec_boolean (
+                                     "reversed",
+                                     "Reversed",
+        "Whether the array should be walked backwards when building menus",
+                                     FALSE,
+                                     G_PARAM_READWRITE));
 }
 
 static void
@@ -161,6 +183,7 @@ katze_array_action_init (KatzeArrayAction* array_action)
 {
     array_action->array = NULL;
     array_action->net = katze_net_new ();
+    array_action->reversed = FALSE;
 }
 
 static void
@@ -187,6 +210,9 @@ katze_array_action_set_property (GObject*      object,
     case PROP_ARRAY:
         katze_array_action_set_array (array_action, g_value_get_object (value));
         break;
+    case PROP_REVERSED:
+        array_action->reversed = g_value_get_boolean (value);
+        break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
         break;
@@ -205,6 +231,9 @@ katze_array_action_get_property (GObject*    object,
     {
     case PROP_ARRAY:
         g_value_set_object (value, array_action->array);
+        break;
+    case PROP_REVERSED:
+        g_value_set_boolean (value, array_action->reversed);
         break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -272,7 +301,8 @@ katze_array_action_generate_menu (KatzeArrayAction* array_action,
                                   GtkWidget*        menu,
                                   GtkWidget*        proxy)
 {
-    guint i;
+    gint i;
+    gint summand;
     KatzeItem* item;
     GtkWidget* menuitem;
     const gchar* icon_name;
@@ -280,8 +310,17 @@ katze_array_action_generate_menu (KatzeArrayAction* array_action,
     GtkWidget* image;
     GtkWidget* submenu;
 
-    i = 0;
-    while ((item = katze_array_get_nth_item (array, i++)))
+    if (array_action->reversed)
+    {
+        i = katze_array_get_length (array);
+        summand = -1;
+    }
+    else
+    {
+        i = -1;
+        summand = +1;
+    }
+    while ((item = katze_array_get_nth_item (array, i += summand)))
     {
         /* FIXME: The menu item should reflect changes to the item  */
         if (!KATZE_IS_ARRAY (item) && !katze_item_get_uri (item))
@@ -301,8 +340,7 @@ katze_array_action_generate_menu (KatzeArrayAction* array_action,
                 icon = gtk_widget_render_icon (menuitem,
                     GTK_STOCK_DIRECTORY, GTK_ICON_SIZE_MENU, NULL);
             else
-                icon = katze_net_load_icon (array_action->net,
-                    katze_item_get_uri (item), NULL, proxy, NULL);
+                icon = katze_load_cached_icon (katze_item_get_uri (item), proxy);
             image = gtk_image_new_from_pixbuf (icon);
             g_object_unref (icon);
         }
@@ -322,19 +360,12 @@ katze_array_action_generate_menu (KatzeArrayAction* array_action,
         }
         else
         {
-            g_signal_connect (menuitem, "button-press-event",
-                G_CALLBACK (katze_array_action_menu_button_press_cb), array_action);
             /* we need the 'activate' signal as well for keyboard events */
             g_signal_connect (menuitem, "activate",
                 G_CALLBACK (katze_array_action_menu_activate_cb), array_action);
         }
-        gtk_widget_show (menuitem);
-    }
-    if (!i)
-    {
-        menuitem = gtk_image_menu_item_new_with_label (_("Empty"));
-        gtk_widget_set_sensitive (menuitem, FALSE);
-        gtk_menu_shell_append (GTK_MENU_SHELL (menu), menuitem);
+        g_signal_connect (menuitem, "button-press-event",
+            G_CALLBACK (katze_array_action_menu_button_press_cb), array_action);
         gtk_widget_show (menuitem);
     }
 }
@@ -370,9 +401,15 @@ katze_array_action_proxy_clicked_cb (GtkWidget*        proxy,
         return;
     }
 
+    array = (KatzeArray*)g_object_get_data (G_OBJECT (proxy), "KatzeArray");
+    if (KATZE_IS_ITEM (array) && katze_item_get_uri ((KatzeItem*)array))
+    {
+        g_signal_emit (array_action, signals[ACTIVATE_ITEM], 0, array);
+        return;
+    }
+
     menu = gtk_menu_new ();
 
-    array = (KatzeArray*)g_object_get_data (G_OBJECT (proxy), "KatzeArray");
     if (!array)
         array = array_action->array;
     katze_array_action_generate_menu (array_action, array, menu, proxy);
@@ -381,8 +418,14 @@ katze_array_action_proxy_clicked_cb (GtkWidget*        proxy,
     if (array == array_action->array)
         g_signal_emit (array_action, signals[POPULATE_POPUP], 0, menu);
 
+    #if HAVE_HILDON
+    /* Avoid a bug in GTK+ messing up the initial scrolling position */
+    katze_widget_popup (NULL, GTK_MENU (menu),
+                        NULL, KATZE_MENU_POSITION_LEFT);
+    #else
     katze_widget_popup (GTK_WIDGET (proxy), GTK_MENU (menu),
                         NULL, KATZE_MENU_POSITION_LEFT);
+    #endif
 }
 
 static GtkWidget*
@@ -399,7 +442,7 @@ katze_array_action_create_tool_item (GtkAction* action)
 {
     GtkWidget* toolitem;
 
-    toolitem = GTK_WIDGET (gtk_tool_button_new (NULL, NULL));
+    toolitem = GTK_WIDGET (gtk_tool_button_new (NULL, ""));
     return toolitem;
 }
 
@@ -460,8 +503,7 @@ katze_array_action_item_notify_cb (KatzeItem*   item,
     }
     else if (!KATZE_IS_ARRAY (item) && !strcmp (property, "uri"))
     {
-        icon = katze_net_load_icon (array_action->net, katze_item_get_uri (item),
-            NULL, GTK_WIDGET (toolitem), NULL);
+        icon = katze_load_cached_icon (katze_item_get_uri (item), GTK_WIDGET (toolitem));
         image = gtk_image_new_from_pixbuf (icon);
         g_object_unref (icon);
         gtk_widget_show (image);
@@ -497,8 +539,7 @@ katze_array_action_proxy_create_menu_proxy_cb (GtkWidget* proxy,
             icon = gtk_widget_render_icon (menuitem,
                 GTK_STOCK_DIRECTORY, GTK_ICON_SIZE_MENU, NULL);
         else
-            icon = katze_net_load_icon (array_action->net,
-                katze_item_get_uri (item), NULL, proxy, NULL);
+            icon = katze_load_cached_icon (katze_item_get_uri (item), proxy);
         image = gtk_image_new_from_pixbuf (icon);
         g_object_unref (icon);
     }
@@ -508,14 +549,32 @@ katze_array_action_proxy_create_menu_proxy_cb (GtkWidget* proxy,
         GTK_IMAGE_MENU_ITEM (menuitem), TRUE);
     #endif
     g_object_set_data (G_OBJECT (menuitem), "KatzeItem", item);
-    g_signal_connect (menuitem, "button-press-event",
-        G_CALLBACK (katze_array_action_menu_button_press_cb), array_action);
-    /* we need the 'activate' signal as well for keyboard events */
-    g_signal_connect (menuitem, "activate",
-        G_CALLBACK (katze_array_action_menu_activate_cb), array_action);
+    if (KATZE_IS_ARRAY (item))
+    {
+        GtkWidget* submenu = gtk_menu_new ();
+        gtk_menu_item_set_submenu (GTK_MENU_ITEM (menuitem), submenu);
+        g_signal_connect (menuitem, "select",
+            G_CALLBACK (katze_array_action_menu_item_select_cb), array_action);
+    }
+    else
+    {
+        g_signal_connect (menuitem, "button-press-event",
+            G_CALLBACK (katze_array_action_menu_button_press_cb), array_action);
+        /* we need the 'activate' signal as well for keyboard events */
+        g_signal_connect (menuitem, "activate",
+            G_CALLBACK (katze_array_action_menu_activate_cb), array_action);
+    }
     gtk_tool_item_set_proxy_menu_item (GTK_TOOL_ITEM (proxy),
         "katze-tool-item-menu", menuitem);
     return TRUE;
+}
+
+static void
+katze_array_action_toolitem_destroy_cb (GtkToolItem* toolitem,
+                                        KatzeItem*   item)
+{
+    g_signal_handlers_disconnect_by_func (item,
+        G_CALLBACK (katze_array_action_item_notify_cb), toolitem);
 }
 
 /**
@@ -552,15 +611,14 @@ katze_array_action_create_tool_item_for (KatzeArrayAction* array_action,
     if (!KATZE_IS_ARRAY (item) && !uri)
         return gtk_separator_tool_item_new ();
 
-    toolitem = gtk_tool_button_new (NULL, NULL);
+    toolitem = gtk_tool_button_new (NULL, "");
     g_signal_connect (toolitem, "create-menu-proxy",
         G_CALLBACK (katze_array_action_proxy_create_menu_proxy_cb), item);
     if (KATZE_IS_ARRAY (item))
         icon = gtk_widget_render_icon (GTK_WIDGET (toolitem),
             GTK_STOCK_DIRECTORY, GTK_ICON_SIZE_MENU, NULL);
     else
-        icon = katze_net_load_icon (array_action->net, uri,
-            NULL, GTK_WIDGET (toolitem), NULL);
+        icon = katze_load_cached_icon (uri, GTK_WIDGET (toolitem));
     image = gtk_image_new_from_pixbuf (icon);
     g_object_unref (icon);
     gtk_widget_show (image);
@@ -585,16 +643,16 @@ katze_array_action_create_tool_item_for (KatzeArrayAction* array_action,
         gtk_tool_item_set_tooltip_text (toolitem, desc);
     else
         gtk_tool_item_set_tooltip_text (toolitem, uri);
-    if (KATZE_IS_ARRAY (item))
-    {
-        g_object_set_data (G_OBJECT (toolitem), "KatzeArray", item);
-        g_signal_connect (toolitem, "clicked",
-            G_CALLBACK (katze_array_action_proxy_clicked_cb), array_action);
-    }
+
+    g_object_set_data (G_OBJECT (toolitem), "KatzeArray", item);
+    g_signal_connect (toolitem, "clicked",
+        G_CALLBACK (katze_array_action_proxy_clicked_cb), array_action);
 
     g_object_set_data (G_OBJECT (toolitem), "KatzeArrayAction", array_action);
     g_signal_connect (item, "notify",
         G_CALLBACK (katze_array_action_item_notify_cb), toolitem);
+    g_signal_connect (toolitem, "destroy",
+        G_CALLBACK (katze_array_action_toolitem_destroy_cb), item);
     return toolitem;
 }
 

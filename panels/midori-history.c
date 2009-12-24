@@ -328,7 +328,7 @@ midori_history_add_item_cb (KatzeArray*    array,
     if (array == history->array)
     {
         gtk_tree_store_insert_with_values (GTK_TREE_STORE (model),
-            &iter, NULL, G_MAXINT, 0, added_item, -1);
+            &iter, NULL, 0, 0, added_item, -1);
         return;
     }
 
@@ -344,7 +344,7 @@ midori_history_add_item_cb (KatzeArray*    array,
             GtkTreeIter child_iter;
 
             gtk_tree_store_insert_with_values (GTK_TREE_STORE (model),
-                &child_iter, &iter, G_MAXINT, 0, added_item, -1);
+                &child_iter, &iter, 0, 0, added_item, -1);
             break;
         }
         g_object_unref (item);
@@ -560,9 +560,7 @@ midori_history_treeview_render_icon_cb (GtkTreeViewColumn* column,
         pixbuf = gtk_widget_render_icon (treeview, GTK_STOCK_DIRECTORY,
                                          GTK_ICON_SIZE_MENU, NULL);
     else
-        pixbuf = katze_net_load_icon (
-            MIDORI_HISTORY (gtk_widget_get_parent (treeview))->net,
-            katze_item_get_uri (item), NULL, treeview, NULL);
+        pixbuf = katze_load_cached_icon (katze_item_get_uri (item), treeview);
 
     g_object_set (renderer, "pixbuf", pixbuf, NULL);
 
@@ -577,7 +575,7 @@ midori_history_treeview_render_text_cb (GtkTreeViewColumn* column,
                                         GtkCellRenderer*   renderer,
                                         GtkTreeModel*      model,
                                         GtkTreeIter*       iter,
-                                        GtkWidget*         treeview)
+                                        MidoriHistory*     history)
 {
     KatzeItem* item;
     gint64 age;
@@ -590,9 +588,21 @@ midori_history_treeview_render_text_cb (GtkTreeViewColumn* column,
     {
         gchar* sdate;
 
-        g_assert (age >= 0);
+        /* A negative age is a date in the future, the clock is probably off */
+        if (age < -1)
+        {
+            static gboolean clock_warning = FALSE;
+            if (!clock_warning)
+            {
+                midori_app_send_notification (history->app,
+                    _("Erroneous clock time"),
+                    _("The clock time lies in the past. "
+                      "Please check the current date and time."));
+                clock_warning = TRUE;
+            }
+        }
 
-        if (age > 7)
+        if (age > 7 || age < 0)
         {
             g_object_set (renderer, "text", katze_item_get_name (item), NULL);
         }
@@ -828,8 +838,7 @@ midori_history_popup (GtkWidget*      widget,
     midori_history_popup_item (menu, GTK_STOCK_DELETE, NULL,
         item, midori_history_delete_activate_cb, history);
 
-    sokoke_widget_popup (widget, GTK_MENU (menu),
-                         event, SOKOKE_MENU_POSITION_CURSOR);
+    katze_widget_popup (widget, GTK_MENU (menu), event, KATZE_MENU_POSITION_CURSOR);
 }
 
 static gboolean
@@ -941,7 +950,7 @@ midori_history_init (MidoriHistory* history)
     gtk_tree_view_column_pack_start (column, renderer_text, FALSE);
     gtk_tree_view_column_set_cell_data_func (column, renderer_text,
         (GtkTreeCellDataFunc)midori_history_treeview_render_text_cb,
-        treeview, NULL);
+        history, NULL);
     gtk_tree_view_append_column (GTK_TREE_VIEW (treeview), column);
     g_object_unref (model);
     g_object_connect (treeview,

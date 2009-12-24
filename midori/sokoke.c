@@ -11,13 +11,13 @@
 */
 
 #include "sokoke.h"
-#include "midori-stock.h"
-
-#include "compat.h"
 
 #if HAVE_CONFIG_H
     #include <config.h>
 #endif
+
+#include "compat.h"
+#include "midori-stock.h"
 
 #if HAVE_UNISTD_H
     #include <unistd.h>
@@ -38,6 +38,17 @@
     #include <stringprep.h>
     #include <punycode.h>
     #include <idna.h>
+#endif
+
+#ifdef HAVE_HILDON_FM
+    #include <hildon/hildon-file-chooser-dialog.h>
+#endif
+
+#if HAVE_HILDON
+    #include <libosso.h>
+    #include <hildon/hildon.h>
+    #include <hildon-mime.h>
+    #include <hildon-uri.h>
 #endif
 
 static gchar*
@@ -73,7 +84,8 @@ sokoke_js_script_eval (JSContextRef js_context,
     {
         JSStringRef js_message = JSValueToStringCopy (js_context,
                                                       js_exception, NULL);
-        *exception = sokoke_js_string_utf8 (js_message);
+        if (exception)
+            *exception = sokoke_js_string_utf8 (js_message);
         JSStringRelease (js_message);
         js_value = JSValueMakeNull (js_context);
     }
@@ -85,17 +97,106 @@ sokoke_js_script_eval (JSContextRef js_context,
     return value;
 }
 
-static void
-error_dialog (const gchar* short_message,
-              const gchar* detailed_message)
+void
+sokoke_message_dialog (GtkMessageType message_type,
+                       const gchar*   short_message,
+                       const gchar*   detailed_message)
 {
     GtkWidget* dialog = gtk_message_dialog_new (
-        NULL, 0, GTK_MESSAGE_ERROR, GTK_BUTTONS_OK, "%s", short_message);
+        NULL, 0, message_type,
+        #if HAVE_HILDON
+        GTK_BUTTONS_NONE,
+        #else
+        GTK_BUTTONS_OK,
+        #endif
+        "%s", short_message);
     gtk_message_dialog_format_secondary_text (GTK_MESSAGE_DIALOG (dialog),
                                               "%s", detailed_message);
-    gtk_widget_show (dialog);
     g_signal_connect_swapped (dialog, "response",
                               G_CALLBACK (gtk_widget_destroy), dialog);
+    gtk_widget_show (dialog);
+}
+
+/**
+ * sokoke_show_uri_with_mime_type:
+ * @screen: a #GdkScreen, or %NULL
+ * @uri: the URI to show
+ * @mime_type: a MIME type
+ * @timestamp: the timestamp of the event
+ * @error: the location of a #GError, or %NULL
+ *
+ * Shows the specified URI with an appropriate application,
+ * as though it had the specified MIME type.
+ *
+ * On Maemo, hildon_mime_open_file_with_mime_type() is used.
+ *
+ * See also: sokoke_show_uri().
+ *
+ * Return value: %TRUE on success, %FALSE if an error occurred
+ **/
+gboolean
+sokoke_show_uri_with_mime_type (GdkScreen*   screen,
+                                const gchar* uri,
+                                const gchar* mime_type,
+                                guint32      timestamp,
+                                GError**     error)
+{
+    gboolean success;
+    #if HAVE_HILDON
+    osso_context_t* osso;
+    DBusConnection* dbus;
+
+    osso = osso_initialize (PACKAGE_NAME, PACKAGE_VERSION, FALSE, NULL);
+    if (!osso)
+    {
+        g_print ("Failed to initialize libosso\n");
+        return FALSE;
+    }
+
+    dbus = (DBusConnection *) osso_get_dbus_connection (osso);
+    if (!dbus)
+    {
+        osso_deinitialize (osso);
+        g_print ("Failed to get dbus connection from osso context\n");
+        return FALSE;
+    }
+
+    success = (hildon_mime_open_file_with_mime_type (dbus,
+               uri, mime_type) == 1);
+    osso_deinitialize (osso);
+    #else
+    GFile* file = g_file_new_for_uri (uri);
+    gchar* content_type;
+    GAppInfo* app_info;
+    GList* files;
+    gpointer context;
+
+    #if GLIB_CHECK_VERSION (2, 18, 0)
+    content_type = g_content_type_from_mime_type (mime_type);
+    #else
+    content_type = g_strdup (mime_type);
+    #endif
+
+    app_info = g_app_info_get_default_for_type (content_type,
+        !g_str_has_prefix (uri, "file://"));
+    g_free (content_type);
+    files = g_list_prepend (NULL, file);
+    #if GTK_CHECK_VERSION (2, 14, 0)
+    context = gdk_app_launch_context_new ();
+    gdk_app_launch_context_set_screen (context, screen);
+    gdk_app_launch_context_set_timestamp (context, timestamp);
+    #else
+    context = g_app_launch_context_new ();
+    #endif
+
+    success = g_app_info_launch (app_info, files, context, error);
+
+    g_object_unref (app_info);
+    g_list_free (files);
+    g_object_unref (file);
+    #endif
+
+    return success;
 }
 
 /**
@@ -109,6 +210,8 @@ error_dialog (const gchar* short_message,
  * supports xdg-open, exo-open and gnome-open as fallbacks if
  * GIO doesn't do the trick.
  *
+ * On Maemo, hildon_uri_open() is used.
+ *
  * Return value: %TRUE on success, %FALSE if an error occurred
  **/
 gboolean
@@ -117,6 +220,11 @@ sokoke_show_uri (GdkScreen*   screen,
                  guint32      timestamp,
                  GError**     error)
 {
+    #if HAVE_HILDON
+    HildonURIAction* action = hildon_uri_get_default_action_by_uri (uri, NULL);
+    return hildon_uri_open (uri, action, error);
+    #else
+
     const gchar* fallbacks [] = { "xdg-open", "exo-open", "gnome-open" };
     gsize i;
 
@@ -139,49 +247,113 @@ sokoke_show_uri (GdkScreen*   screen,
     }
 
     return FALSE;
+    #endif
 }
 
 gboolean
 sokoke_spawn_program (const gchar* command,
                       const gchar* argument,
-                      gboolean     quote)
+                      gboolean     filename)
 {
-    gchar* argument_escaped;
-    gchar* command_ready;
-    gchar** argv;
     GError* error;
 
     g_return_val_if_fail (command != NULL, FALSE);
     g_return_val_if_fail (argument != NULL, FALSE);
 
-    argument_escaped = quote ? g_shell_quote (argument) : g_strdup (argument);
-    if (strstr (command, "%s"))
-        command_ready = g_strdup_printf (command, argument_escaped);
+    if (filename)
+    {
+        gboolean success;
+
+        #if HAVE_HILDON
+        osso_context_t* osso;
+        DBusConnection* dbus;
+
+        osso = osso_initialize (PACKAGE_NAME, PACKAGE_VERSION, FALSE, NULL);
+        if (!osso)
+        {
+            sokoke_message_dialog (GTK_MESSAGE_ERROR,
+                                   _("Could not run external program."),
+                                   "Failed to initialize libosso");
+            return FALSE;
+        }
+
+        dbus = (DBusConnection *) osso_get_dbus_connection (osso);
+        if (!dbus)
+        {
+            osso_deinitialize (osso);
+            sokoke_message_dialog (GTK_MESSAGE_ERROR,
+                                   _("Could not run external program."),
+                                   "Failed to get dbus connection from osso context");
+            return FALSE;
+        }
+
+        error = NULL;
+        /* FIXME: This is not correct, find a proper way to do this */
+        success = (osso_application_top (osso, command, argument) == OSSO_OK);
+        osso_deinitialize (osso);
+        #else
+        GAppInfo* info;
+        GFile* file;
+        GList* files;
+
+        info = g_app_info_create_from_commandline (command,
+            NULL, G_APP_INFO_CREATE_NONE, NULL);
+        file = g_file_new_for_commandline_arg (argument);
+        files = g_list_append (NULL, file);
+
+        error = NULL;
+        success = g_app_info_launch (info, files, NULL, &error);
+        g_object_unref (file);
+        g_list_free (files);
+        #endif
+
+        if (!success)
+        {
+            sokoke_message_dialog (GTK_MESSAGE_ERROR,
+                _("Could not run external program."),
+                error ? error->message : "");
+            if (error)
+                g_error_free (error);
+            return FALSE;
+        }
+    }
     else
-        command_ready = g_strconcat (command, " ", argument_escaped, NULL);
-
-    error = NULL;
-    if (!g_shell_parse_argv (command_ready, NULL, &argv, &error))
     {
-        error_dialog (_("Could not run external program."), error->message);
-        g_error_free (error);
+        /* FIXME: Implement Hildon specific version */
+        gchar* command_ready;
+        gchar** argv;
+
+        if (strstr (command, "%s"))
+            command_ready = g_strdup_printf (command, argument);
+        else
+            command_ready = g_strconcat (command, " ", argument, NULL);
+
+        error = NULL;
+        if (!g_shell_parse_argv (command_ready, NULL, &argv, &error))
+        {
+            sokoke_message_dialog (GTK_MESSAGE_ERROR,
+                                   _("Could not run external program."),
+                                   error->message);
+            g_error_free (error);
+            g_free (command_ready);
+            return FALSE;
+        }
         g_free (command_ready);
-        g_free (argument_escaped);
-        return FALSE;
+
+        error = NULL;
+        if (!g_spawn_async (NULL, argv, NULL,
+            (GSpawnFlags)G_SPAWN_SEARCH_PATH | G_SPAWN_DO_NOT_REAP_CHILD,
+            NULL, NULL, NULL, &error))
+        {
+            sokoke_message_dialog (GTK_MESSAGE_ERROR,
+                                   _("Could not run external program."),
+                                   error->message);
+            g_error_free (error);
+        }
+
+        g_strfreev (argv);
     }
 
-    error = NULL;
-    if (!g_spawn_async (NULL, argv, NULL,
-        (GSpawnFlags)G_SPAWN_SEARCH_PATH | G_SPAWN_DO_NOT_REAP_CHILD,
-        NULL, NULL, NULL, &error))
-    {
-        error_dialog (_("Could not run external program."), error->message);
-        g_error_free (error);
-    }
-
-    g_strfreev (argv);
-    g_free (command_ready);
-    g_free (argument_escaped);
     return TRUE;
 }
 
@@ -365,6 +537,8 @@ sokoke_magic_uri (const gchar* uri,
     /* Just return if it's a javascript: or mailto: uri */
     if (g_str_has_prefix (uri, "javascript:")
      || g_str_has_prefix (uri, "mailto:")
+     || g_str_has_prefix (uri, "tel:")
+     || g_str_has_prefix (uri, "callto:")
      || g_str_has_prefix (uri, "data:"))
         return g_strdup (uri);
     /* Add file:// if we have a local path */
@@ -428,11 +602,22 @@ sokoke_format_uri_for_display (const gchar* uri)
 {
     if (uri && g_str_has_prefix (uri, "http://"))
     {
-        gchar* unescaped = g_uri_unescape_string (uri, NULL);
+        gchar* unescaped = g_uri_unescape_string (uri, " +");
         #ifdef HAVE_LIBSOUP_2_27_90
         gchar* path;
-        gchar* hostname = sokoke_hostname_from_uri (unescaped, &path);
-        gchar* decoded = g_hostname_to_unicode (hostname);
+        gchar* hostname;
+        gchar* decoded;
+
+        if (!unescaped)
+            return g_strdup (uri);
+        else if (!g_utf8_validate (unescaped, -1, NULL))
+        {
+            g_free (unescaped);
+            return g_strdup (uri);
+        }
+
+        hostname = sokoke_hostname_from_uri (unescaped, &path);
+        decoded = g_hostname_to_unicode (hostname);
 
         if (decoded)
         {
@@ -446,6 +631,15 @@ sokoke_format_uri_for_display (const gchar* uri)
         return unescaped;
         #elif HAVE_LIBIDN
         gchar* decoded;
+
+        if (!unescaped)
+            return g_strdup (uri);
+        else if (!g_utf8_validate (unescaped, -1, NULL))
+        {
+            g_free (unescaped);
+            return g_strdup (uri);
+        }
+
         if (!idna_to_unicode_8z8z (unescaped, &decoded, 0) == IDNA_SUCCESS)
             return unescaped;
         g_free (unescaped);
@@ -488,15 +682,6 @@ sokoke_container_show_children (GtkContainer* container)
 {
     /* Show every child but not the container itself */
     gtk_container_foreach (container, (GtkCallback)(gtk_widget_show_all), NULL);
-}
-
-void
-sokoke_widget_popup (GtkWidget*      widget,
-                     GtkMenu*        menu,
-                     GdkEventButton* event,
-                     SokokeMenuPos   pos)
-{
-    katze_widget_popup (widget, menu, event, (KatzeMenuPos)pos);
 }
 
 typedef enum
@@ -606,24 +791,6 @@ sokoke_xfce_header_new (const gchar* icon,
         return vbox;
     }
     return NULL;
-}
-
-GtkWidget*
-sokoke_hig_frame_new (const gchar* title)
-{
-    /* Create a frame with no actual frame but a bold label and indentation */
-    GtkWidget* frame = gtk_frame_new (NULL);
-    #ifdef G_OS_WIN32
-    gtk_frame_set_label (GTK_FRAME (frame), title);
-    #else
-    gchar* title_bold = g_strdup_printf ("<b>%s</b>", title);
-    GtkWidget* label = gtk_label_new (NULL);
-    gtk_label_set_markup (GTK_LABEL (label), title_bold);
-    g_free (title_bold);
-    gtk_frame_set_label_widget (GTK_FRAME (frame), label);
-    gtk_frame_set_shadow_type (GTK_FRAME (frame), GTK_SHADOW_NONE);
-    #endif
-    return frame;
 }
 
 void
@@ -889,20 +1056,6 @@ sokoke_action_create_popup_menu_item (GtkAction* action)
 }
 
 /**
- * sokoke_image_menu_item_new_ellipsized:
- * @label: the text of the menu item
- *
- * Creates a new #GtkImageMenuItem containing an ellipsized label.
- *
- * Return value: a new #GtkImageMenuItem
- **/
-GtkWidget*
-sokoke_image_menu_item_new_ellipsized (const gchar* label)
-{
-    return katze_image_menu_item_new_ellipsized (label);
-}
-
-/**
  * sokoke_time_t_to_julian:
  * @timestamp: a time_t timestamp value
  *
@@ -934,6 +1087,11 @@ sokoke_time_t_to_julian (const time_t* timestamp)
 void
 sokoke_register_stock_items (void)
 {
+    GtkIconSource* icon_source;
+    GtkIconSet* icon_set;
+    GtkIconFactory* factory;
+    gsize i;
+
     typedef struct
     {
         const gchar* stock_id;
@@ -942,11 +1100,6 @@ sokoke_register_stock_items (void)
         guint keyval;
         const gchar* fallback;
     } FatStockItem;
-    GtkIconSource* icon_source;
-    GtkIconSet* icon_set;
-    GtkIconFactory* factory = gtk_icon_factory_new ();
-    gsize i;
-
     static FatStockItem items[] =
     {
         { STOCK_EXTENSION, NULL, 0, 0, GTK_STOCK_CONVERT },
@@ -958,7 +1111,7 @@ sokoke_register_stock_items (void)
         { STOCK_TRANSFER, NULL, 0, 0, GTK_STOCK_SAVE },
 
         { STOCK_BOOKMARK,       N_("_Bookmark"), 0, 0, GTK_STOCK_FILE },
-        { STOCK_BOOKMARKS,      N_("_Bookmarks"), 0, 0, GTK_STOCK_DIRECTORY },
+        { STOCK_BOOKMARKS,      N_("_Bookmarks"), GDK_CONTROL_MASK, GDK_B, GTK_STOCK_DIRECTORY },
         { STOCK_BOOKMARK_ADD,   N_("Add Boo_kmark"), 0, 0, GTK_STOCK_ADD },
         { STOCK_CONSOLE,        N_("_Console"), 0, 0, GTK_STOCK_DIALOG_WARNING },
         { STOCK_EXTENSIONS,     N_("_Extensions"), 0, 0, GTK_STOCK_CONVERT },
@@ -972,6 +1125,7 @@ sokoke_register_stock_items (void)
         { STOCK_WINDOW_NEW,     N_("New _Window"), 0, 0, GTK_STOCK_ADD },
     };
 
+    factory = gtk_icon_factory_new ();
     for (i = 0; i < G_N_ELEMENTS (items); i++)
     {
         icon_set = gtk_icon_set_new ();
@@ -991,6 +1145,55 @@ sokoke_register_stock_items (void)
     gtk_stock_add ((GtkStockItem*)items, G_N_ELEMENTS (items));
     gtk_icon_factory_add_default (factory);
     g_object_unref (factory);
+
+    #if HAVE_HILDON
+    /* Maemo doesn't theme stock icons. So we map platform icons
+        to stock icons. These are all monochrome toolbar icons. */
+    typedef struct
+    {
+        const gchar* stock_id;
+        const gchar* icon_name;
+    } CompatItem;
+    static CompatItem compat_items[] =
+    {
+        { GTK_STOCK_ADD,        "general_add" },
+        { GTK_STOCK_BOLD,       "general_bold" },
+        { GTK_STOCK_CLOSE,      "general_close_b" },
+        { GTK_STOCK_DELETE,     "general_delete" },
+        { GTK_STOCK_DIRECTORY,  "general_toolbar_folder" },
+        { GTK_STOCK_FIND,       "general_search" },
+        { GTK_STOCK_FULLSCREEN, "general_fullsize_b" },
+        { GTK_STOCK_GO_BACK,    "general_back" },
+        { GTK_STOCK_GO_FORWARD, "general_forward" },
+        { GTK_STOCK_GO_UP,      "filemanager_folder_up" },
+        { GTK_STOCK_GOTO_FIRST, "pdf_viewer_first_page" },
+        { GTK_STOCK_GOTO_LAST,  "pdf_viewer_last_page" },
+        { GTK_STOCK_INFO,       "general_information" },
+        { GTK_STOCK_ITALIC,     "general_italic" },
+        { GTK_STOCK_JUMP_TO,    "general_move_to_folder" },
+        { GTK_STOCK_PREFERENCES,"general_settings" },
+        { GTK_STOCK_REFRESH,    "general_refresh" },
+        { GTK_STOCK_SAVE,       "notes_save" },
+        { GTK_STOCK_STOP,       "general_stop" },
+        { GTK_STOCK_UNDERLINE,  "notes_underline" },
+        { GTK_STOCK_ZOOM_IN,    "pdf_zoomin" },
+        { GTK_STOCK_ZOOM_OUT,   "pdf_zoomout" },
+    };
+
+    factory = gtk_icon_factory_new ();
+    for (i = 0; i < G_N_ELEMENTS (compat_items); i++)
+    {
+        icon_set = gtk_icon_set_new ();
+        icon_source = gtk_icon_source_new ();
+        gtk_icon_source_set_icon_name (icon_source, compat_items[i].icon_name);
+        gtk_icon_set_add_source (icon_set, icon_source);
+        gtk_icon_source_free (icon_source);
+        gtk_icon_factory_add (factory, compat_items[i].stock_id, icon_set);
+        gtk_icon_set_unref (icon_set);
+    }
+    gtk_icon_factory_add_default (factory);
+    g_object_unref (factory);
+    #endif
 }
 
 /**
@@ -1117,6 +1320,7 @@ sokoke_find_data_filename (const gchar* filename)
     return g_build_filename (MDATADIR, filename, NULL);
 }
 
+#if !WEBKIT_CHECK_VERSION (1, 1, 14)
 static void
 res_server_handler_cb (SoupServer*        res_server,
                        SoupMessage*       msg,
@@ -1209,6 +1413,7 @@ sokoke_get_res_server (void)
 
     return res_server;
 }
+#endif
 
 gchar*
 sokoke_replace_variables (const gchar* template,
@@ -1233,4 +1438,76 @@ sokoke_replace_variables (const gchar* template,
     va_end (args);
 
     return result;
+}
+
+/**
+ * sokoke_window_activate_key:
+ * @window: a #GtkWindow
+ * @event: a #GdkEventKey
+ *
+ * Attempts to activate they key from the event, much
+ * like gtk_window_activate_key(), including keys
+ * that gtk_accelerator_valid() considers invalid.
+ *
+ * Return value: %TRUE on success
+ **/
+gboolean
+sokoke_window_activate_key (GtkWindow*   window,
+                            GdkEventKey* event)
+{
+    gchar *accel_name;
+    GQuark accel_quark;
+    GObject* object;
+    GSList *slist;
+
+    if (gtk_window_activate_key (window, event))
+        return TRUE;
+
+    /* We don't use gtk_accel_groups_activate because it refuses to
+        activate anything that gtk_accelerator_valid doesn't like. */
+    accel_name = gtk_accelerator_name (event->keyval, (event->state & gtk_accelerator_get_default_mod_mask ()));
+    accel_quark = g_quark_from_string (accel_name);
+    g_free (accel_name);
+    object = G_OBJECT (window);
+
+    for (slist = gtk_accel_groups_from_object (object); slist; slist = slist->next)
+        if (gtk_accel_group_activate (slist->data, accel_quark,
+                                      object, event->keyval, event->state))
+            return TRUE;
+
+    return FALSE;
+}
+
+/**
+ * sokoke_file_chooser_dialog_new:
+ * @title: a window title, or %NULL
+ * @window: a parent #GtkWindow, or %NULL
+ * @action: a #GtkFileChooserAction
+ *
+ * Creates a new file chooser dialog, as appropriate for
+ * the platform, with buttons according to the @action.
+ *
+ * The positive response is %GTK_RESPONSE_OK.
+ *
+ * Return value: a new #GtkFileChooser
+ **/
+GtkWidget*
+sokoke_file_chooser_dialog_new (const gchar*         title,
+                                GtkWindow*           window,
+                                GtkFileChooserAction action)
+{
+    const gchar* stock_id = GTK_STOCK_OPEN;
+    GtkWidget* dialog;
+
+    if (action == GTK_FILE_CHOOSER_ACTION_SAVE)
+        stock_id = GTK_STOCK_SAVE;
+    #ifdef HAVE_HILDON_FM
+    dialog = hildon_file_chooser_dialog_new (window, action);
+    #else
+    dialog = gtk_file_chooser_dialog_new (title, window, action,
+        GTK_STOCK_CANCEL, GTK_RESPONSE_CANCEL,
+        stock_id, GTK_RESPONSE_OK, NULL);
+    gtk_window_set_icon_name (GTK_WINDOW (dialog), stock_id);
+    #endif
+    return dialog;
 }
