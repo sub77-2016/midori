@@ -91,7 +91,7 @@ feed_panel_treeview_render_icon_cb (GtkTreeViewColumn* column,
     uri = katze_item_get_uri (pitem);
     if (uri)
     {
-        pixbuf = katze_net_load_icon (panel->net, uri, NULL, NULL, NULL);
+        pixbuf = katze_load_cached_icon (uri, NULL);
         if (!pixbuf)
             pixbuf = panel->pixbuf;
     }
@@ -509,8 +509,11 @@ feed_panel_open_in_window_activate_cb (GtkWidget* menuitem,
     if (uri && *uri)
     {
         MidoriBrowser* browser;
+        MidoriBrowser* new_browser;
+
         browser = midori_browser_get_for_widget (GTK_WIDGET (panel));
-        g_signal_emit_by_name (browser, "new-window", uri);
+        g_signal_emit_by_name (browser, "new-window", NULL, &new_browser);
+        midori_browser_add_uri (new_browser, uri);
     }
 }
 
@@ -550,8 +553,8 @@ feed_panel_popup (GtkWidget*      widget,
             item, feed_panel_delete_activate_cb, panel);
     }
 
-    sokoke_widget_popup (widget, GTK_MENU (menu),
-                         event, SOKOKE_MENU_POSITION_CURSOR);
+    katze_widget_popup (widget, GTK_MENU (menu),
+                        event, KATZE_MENU_POSITION_CURSOR);
 }
 
 static gboolean

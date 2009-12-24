@@ -20,7 +20,16 @@
 #include <gtk/gtk.h>
 #include <glib/gi18n.h>
 
-#if HAVE_UNIQUE
+#if HAVE_HILDON
+    #include <libosso.h>
+    #ifdef HAVE_HILDON_2_2
+        #include <dbus/dbus.h>
+        #include <mce/mode-names.h>
+        #include <mce/dbus-names.h>
+    #endif
+    typedef osso_context_t* MidoriAppInstance;
+    #define MidoriAppInstanceNull NULL
+#elif HAVE_UNIQUE
     typedef gpointer MidoriAppInstance;
     #define MidoriAppInstanceNull NULL
     #include <unique/unique.h>
@@ -31,19 +40,9 @@
     #include "socket.h"
 #endif
 
-typedef struct _NotifyNotification NotifyNotification;
-
-typedef struct
-{
-    gboolean            (*init)               (const gchar* app_name);
-    void                (*uninit)             (void);
-    NotifyNotification* (*notification_new)   (const gchar* summary,
-                                               const gchar* body,
-                                               const gchar* icon,
-                                               GtkWidget*   attach);
-    gboolean            (*notification_show)  (NotifyNotification* notification,
-                                               GError**            error);
-} LibNotifyFuncs;
+#if HAVE_LIBNOTIFY
+    #include <libnotify/notify.h>
+#endif
 
 struct _MidoriApp
 {
@@ -63,10 +62,9 @@ struct _MidoriApp
 
     MidoriAppInstance instance;
 
-    /* libnotify handling */
-    gchar*         program_notify_send;
-    GModule*       libnotify_module;
-    LibNotifyFuncs libnotify_funcs;
+    #if !HAVE_HILDON
+    gchar* program_notify_send;
+    #endif
 };
 
 struct _MidoriAppClass
@@ -116,9 +114,6 @@ static void
 midori_app_finalize (GObject* object);
 
 static void
-midori_app_init_libnotify (MidoriApp* app);
-
-static void
 midori_app_set_property (GObject*      object,
                          guint         prop_id,
                          const GValue* value,
@@ -140,21 +135,26 @@ midori_browser_focus_in_event_cb (MidoriBrowser* browser,
     return FALSE;
 }
 
-static void
+static MidoriBrowser*
 midori_browser_new_window_cb (MidoriBrowser* browser,
                               MidoriBrowser* new_browser,
                               MidoriApp*     app)
 {
-    g_object_set (new_browser,
-                  "settings", app->settings,
-                  "bookmarks", app->bookmarks,
-                  "trash", app->trash,
-                  "search-engines", app->search_engines,
-                  "history", app->history,
-                  NULL);
+    if (new_browser)
+        g_object_set (new_browser,
+                      "settings", app->settings,
+                      "bookmarks", app->bookmarks,
+                      "trash", app->trash,
+                      "search-engines", app->search_engines,
+                      "history", app->history,
+                      NULL);
+    else
+        new_browser = midori_app_create_browser (app);
 
     midori_app_add_browser (app, new_browser);
     gtk_widget_show (GTK_WIDGET (new_browser));
+
+    return new_browser;
 }
 
 static gboolean
@@ -407,6 +407,9 @@ midori_app_command_received (MidoriApp*   app,
 
     if (g_str_equal (command, "activate"))
     {
+        if (!app->browser)
+            return FALSE;
+
         gtk_window_set_screen (GTK_WINDOW (app->browser), screen);
         gtk_window_present (GTK_WINDOW (app->browser));
         return TRUE;
@@ -424,6 +427,9 @@ midori_app_command_received (MidoriApp*   app,
     }
     else if (g_str_equal (command, "open"))
     {
+        if (!app->browser)
+            return FALSE;
+
         gtk_window_set_screen (GTK_WINDOW (app->browser), screen);
         gtk_window_present (GTK_WINDOW (app->browser));
         if (!uris)
@@ -465,16 +471,51 @@ midori_app_command_received (MidoriApp*   app,
     }
     else if (g_str_equal (command, "command"))
     {
+        guint i = 0;
+
         if (!uris || !app->browser)
             return FALSE;
-        midori_browser_activate_action (app->browser, *uris);
+        while (uris[i] != NULL)
+        {
+            midori_browser_activate_action (app->browser, uris[i]);
+            i++;
+        }
         return TRUE;
     }
 
     return FALSE;
 }
 
-#if HAVE_UNIQUE
+#if HAVE_HILDON
+static osso_return_t
+midori_app_osso_rpc_handler_cb (const gchar* interface,
+                                const gchar* method,
+                                GArray*      arguments,
+                                gpointer     data,
+                                osso_rpc_t * retval)
+{
+    MidoriApp* app = MIDORI_APP (data);
+    GdkScreen* screen = NULL;
+    gboolean success;
+
+    if (!g_strcmp0 (method, "top_application"))
+        success = midori_app_command_received (app, "activate", NULL, screen);
+    else if (!g_strcmp0 (method, "new"))
+        success = midori_app_command_received (app, "new", NULL, screen);
+    else if (!g_strcmp0 (method, "open"))
+    {
+        /* FIXME: Handle arguments */
+        success = midori_app_command_received (app, "open", NULL, screen);
+    }
+    else if (!g_strcmp0 (method, "command"))
+    {
+        /* FIXME: Handle arguments */
+        success = midori_app_command_received (app, "command", NULL, screen);
+    }
+
+    return success ? OSSO_OK : OSSO_INVALID;
+}
+#elif HAVE_UNIQUE
 static UniqueResponse
 midori_browser_message_received_cb (UniqueApp*         instance,
                                     UniqueCommand      command,
@@ -577,6 +618,30 @@ midori_app_create_instance (MidoriApp*   app,
                             const gchar* name)
 {
     MidoriAppInstance instance;
+
+    #if HAVE_HILDON
+    instance = osso_initialize (PACKAGE_NAME, PACKAGE_VERSION, FALSE, NULL);
+
+    if (!instance)
+    {
+        g_critical ("Error initializing OSSO D-Bus context - Midori");
+        return NULL;
+    }
+
+    if (osso_rpc_set_default_cb_f (instance, midori_app_osso_rpc_handler_cb,
+                                   app) != OSSO_OK)
+    {
+        g_critical ("Error initializing remote procedure call handler - Midori");
+        osso_deinitialize (instance);
+        return NULL;
+    }
+
+    #ifdef HAVE_HILDON_2_2
+    if (OSSO_OK == osso_rpc_run_system (instance, MCE_SERVICE, MCE_REQUEST_PATH,
+        MCE_REQUEST_IF, MCE_ACCELEROMETER_ENABLE_REQ, NULL, DBUS_TYPE_INVALID))
+        /* Accelerometer enabled */;
+    #endif
+    #else
     GdkDisplay* display;
     gchar* display_name;
     gchar* instance_name;
@@ -595,7 +660,8 @@ midori_app_create_instance (MidoriApp*   app,
     display_name = g_strdup (gdk_display_get_name (display));
     n = strlen (display_name);
     for (i = 0; i < n; i++)
-        if (display_name[i] == ':' || display_name[i] == '.')
+        if (display_name[i] == ':' || display_name[i] == '.'
+         || display_name[i] == '\\')
             display_name[i] = '_';
     instance_name = g_strdup_printf ("de.twotoasts.%s_%s", name, display_name);
 
@@ -608,14 +674,18 @@ midori_app_create_instance (MidoriApp*   app,
     instance = socket_init (instance_name, sokoke_set_config_dir (NULL), &exists);
     g_object_set_data (G_OBJECT (app), "sock-exists",
         exists ? (gpointer)0xdeadbeef : NULL);
-    channel = g_io_channel_unix_new (instance);
-    g_io_add_watch (channel, G_IO_IN | G_IO_PRI | G_IO_ERR,
-        (GIOFunc)midori_app_io_channel_watch_cb, app);
+    if (instance != MidoriAppInstanceNull)
+    {
+        channel = g_io_channel_unix_new (instance);
+        g_io_add_watch (channel, G_IO_IN | G_IO_PRI | G_IO_ERR,
+            (GIOFunc)midori_app_io_channel_watch_cb, app);
+    }
     #endif
 
     g_free (instance_name);
     g_free (display_name);
 
+    #endif
     return instance;
 }
 
@@ -634,7 +704,11 @@ midori_app_init (MidoriApp* app)
 
     app->instance = MidoriAppInstanceNull;
 
-    midori_app_init_libnotify (app);
+    #if HAVE_LIBNOTIFY
+    notify_init ("midori");
+    #endif
+
+    app->program_notify_send = g_find_program_in_path ("notify-send");
 }
 
 static void
@@ -653,17 +727,19 @@ midori_app_finalize (GObject* object)
     katze_object_assign (app->extensions, NULL);
     katze_object_assign (app->browsers, NULL);
 
-    #if HAVE_UNIQUE
+    #if HAVE_HILDON
+    osso_deinitialize (app->instance);
+    app->instance = NULL;
+    #elif HAVE_UNIQUE
     katze_object_assign (app->instance, NULL);
     #else
     sock_cleanup ();
     #endif
 
-    if (app->libnotify_module)
-    {
-        app->libnotify_funcs.uninit ();
-        g_module_close (app->libnotify_module);
-    }
+    #if HAVE_LIBNOTIFY
+    if (notify_is_initted ())
+        notify_uninit ();
+    #endif
     katze_assign (app->program_notify_send, NULL);
 
     G_OBJECT_CLASS (midori_app_parent_class)->finalize (object);
@@ -794,7 +870,12 @@ midori_app_instance_is_running (MidoriApp* app)
 
     if (app->instance == MidoriAppInstanceNull)
         app->instance = midori_app_create_instance (app, app->name);
-    #if HAVE_UNIQUE
+
+    #if HAVE_HILDON
+    /* FIXME: Determine if application is running already */
+    if (app->instance)
+        return FALSE;
+    #elif HAVE_UNIQUE
     if (app->instance)
         return unique_app_is_running (app->instance);
     #else
@@ -824,7 +905,9 @@ midori_app_instance_send_activate (MidoriApp* app)
     /* g_return_val_if_fail (MIDORI_IS_APP (app), FALSE); */
     g_return_val_if_fail (midori_app_instance_is_running (app), FALSE);
 
-    #if HAVE_UNIQUE
+    #if HAVE_HILDON
+    osso_application_top (app->instance, PACKAGE_NAME, NULL);
+    #elif HAVE_UNIQUE
     if (app->instance)
     {
         response = unique_app_send_message (app->instance, UNIQUE_ACTIVATE, NULL);
@@ -860,7 +943,9 @@ midori_app_instance_send_new_browser (MidoriApp* app)
     /* g_return_val_if_fail (MIDORI_IS_APP (app), FALSE); */
     g_return_val_if_fail (midori_app_instance_is_running (app), FALSE);
 
-    #if HAVE_UNIQUE
+    #if HAVE_HILDON
+    osso_application_top (app->instance, PACKAGE_NAME, "new");
+    #elif HAVE_UNIQUE
     if (app->instance)
     {
         response = unique_app_send_message (app->instance, UNIQUE_NEW, NULL);
@@ -902,7 +987,9 @@ midori_app_instance_send_uris (MidoriApp* app,
     g_return_val_if_fail (midori_app_instance_is_running (app), FALSE);
     g_return_val_if_fail (uris != NULL, FALSE);
 
-    #if HAVE_UNIQUE
+    #if HAVE_HILDON
+    /* FIXME: Implement */
+    #elif HAVE_UNIQUE
     if (app->instance)
     {
         message = unique_message_data_new ();
@@ -952,7 +1039,9 @@ midori_app_send_command (MidoriApp* app,
     if (!midori_app_instance_is_running (app))
         return midori_app_command_received (app, "command", command, NULL);
 
-    #if HAVE_UNIQUE
+    #if HAVE_HILDON
+    /* FIXME: Implement */
+    #elif HAVE_UNIQUE
     if (app->instance)
     {
         message = unique_message_data_new ();
@@ -1003,6 +1092,9 @@ midori_app_add_browser (MidoriApp*     app,
  * Creates a #MidoriBrowser which inherits its settings,
  * bookmarks, trash, search engines and history from  @app.
  *
+ * Note that creating a browser this way can be a lot
+ * faster than setting it up manually.
+ *
  * Return value: a new #MidoriBrowser
  *
  * Since: 0.1.2
@@ -1037,52 +1129,16 @@ midori_app_quit (MidoriApp* app)
     g_signal_emit (app, signals[QUIT], 0);
 }
 
-static void
-midori_app_init_libnotify (MidoriApp* app)
-{
-    gint i;
-    const gchar* sonames[] = { "libnotify.so", "libnotify.so.1", NULL };
-
-    for (i = 0; sonames[i] != NULL && app->libnotify_module == NULL; i++ )
-    {
-        app->libnotify_module = g_module_open (sonames[i], G_MODULE_BIND_LOCAL);
-    }
-
-    if (app->libnotify_module != NULL)
-    {
-        g_module_symbol (app->libnotify_module, "notify_init",
-            (void*) &(app->libnotify_funcs.init));
-        g_module_symbol (app->libnotify_module, "notify_uninit",
-            (void*) &(app->libnotify_funcs.uninit));
-        g_module_symbol (app->libnotify_module, "notify_notification_new",
-            (void*) &(app->libnotify_funcs.notification_new));
-        g_module_symbol (app->libnotify_module, "notify_notification_show",
-            (void*) &(app->libnotify_funcs.notification_show));
-
-        /* init libnotify */
-        if (!app->libnotify_funcs.init || !app->libnotify_funcs.init ("midori"))
-        {
-             g_module_close (app->libnotify_module);
-             app->libnotify_module = NULL;
-        }
-    }
-
-    app->program_notify_send = g_find_program_in_path ("notify-send");
-}
-
 /**
  * midori_app_send_notification:
  * @app: a #MidoriApp
  * @title: title of the notification
  * @message: text of the notification, or NULL
  *
- * Send #message to the notification daemon to display it.
- * This is done by using libnotify if available or by using the program
- * "notify-send" as a fallback.
+ * Send #message to a notification service to display it.
  *
- * There is no guarantee that the message have been sent and displayed, as
- * neither libnotify nor "notify-send" might be available or the
- * notification daemon might not be running.
+ * There is no guarantee that the message has been sent and displayed, as
+ * there might not be any notification service available.
  *
  * Since 0.1.7
  **/
@@ -1091,19 +1147,26 @@ midori_app_send_notification (MidoriApp*   app,
                               const gchar* title,
                               const gchar* message)
 {
-    gboolean sent = FALSE;
-
     g_return_if_fail (MIDORI_IS_APP (app));
     g_return_if_fail (title);
 
-    if (app->libnotify_module)
-    {
-        NotifyNotification* n;
+    #if HAVE_HILDON
+    hildon_banner_show_information_with_markup (GTK_WIDGET (app->browser),
+                                                "midori", message);
+    #else
+    gboolean sent = FALSE;
 
-        n = app->libnotify_funcs.notification_new (title, message, "midori", NULL);
-        sent = app->libnotify_funcs.notification_show (n, NULL);
-        g_object_unref (n);
+    #if HAVE_LIBNOTIFY
+    if (notify_is_initted ())
+    {
+        NotifyNotification* note;
+
+        note = notify_notification_new (title, message, "midori", NULL);
+        sent = notify_notification_show (note, NULL);
+        g_object_unref (note);
     }
+    #endif
+
     /* Fall back to the command line program "notify-send" */
     if (!sent && app->program_notify_send)
     {
@@ -1118,4 +1181,5 @@ midori_app_send_notification (MidoriApp*   app,
         g_free (msgq);
         g_free (command);
     }
+    #endif
 }

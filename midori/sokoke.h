@@ -15,8 +15,7 @@
 
 #include <katze/katze.h>
 
-#include <gtk/gtk.h>
-#include <libsoup/soup.h>
+#include <webkit/webkit.h>
 #include <JavaScriptCore/JavaScript.h>
 
 gchar*
@@ -26,6 +25,18 @@ sokoke_js_script_eval                   (JSContextRef    js_context,
 
 /* Many themes need this hack for small toolbars to work */
 #define GTK_ICON_SIZE_SMALL_TOOLBAR GTK_ICON_SIZE_BUTTON
+
+void
+sokoke_message_dialog                   (GtkMessageType  message_type,
+                                         const gchar*    short_message,
+                                         const gchar*    detailed_message);
+
+gboolean
+sokoke_show_uri_with_mime_type          (GdkScreen*      screen,
+                                         const gchar*    uri,
+                                         const gchar*    mime_type,
+                                         guint32         timestamp,
+                                         GError**        error);
 
 gboolean
 sokoke_show_uri                         (GdkScreen*      screen,
@@ -55,12 +66,6 @@ sokoke_magic_uri                        (const gchar*    uri,
 gchar*
 sokoke_format_uri_for_display           (const gchar*    uri);
 
-typedef enum {
-    SOKOKE_MENU_POSITION_CURSOR = 0,
-    SOKOKE_MENU_POSITION_LEFT,
-    SOKOKE_MENU_POSITION_RIGHT
-} SokokeMenuPos;
-
 void
 sokoke_combo_box_add_strings            (GtkComboBox*    combobox,
                                          const gchar*    label_first,
@@ -73,18 +78,9 @@ sokoke_widget_set_visible               (GtkWidget*      widget,
 void
 sokoke_container_show_children          (GtkContainer*   container);
 
-void
-sokoke_widget_popup                     (GtkWidget*      widget,
-                                         GtkMenu*        menu,
-                                         GdkEventButton* event,
-                                         SokokeMenuPos   pos);
-
 GtkWidget*
 sokoke_xfce_header_new                  (const gchar*    icon,
                                          const gchar*    title);
-
-GtkWidget*
-sokoke_hig_frame_new                    (const gchar*    title);
 
 void
 sokoke_widget_set_pango_font_style      (GtkWidget*      widget,
@@ -145,9 +141,6 @@ sokoke_widget_get_text_size             (GtkWidget*      widget,
 GtkWidget*
 sokoke_action_create_popup_menu_item    (GtkAction*      action);
 
-GtkWidget*
-sokoke_image_menu_item_new_ellipsized   (const gchar*    label);
-
 gint64
 sokoke_time_t_to_julian                 (const time_t*   timestamp);
 
@@ -168,11 +161,22 @@ sokoke_find_config_filename             (const gchar*    folder,
 gchar*
 sokoke_find_data_filename               (const gchar*    filename);
 
+#if !WEBKIT_CHECK_VERSION (1, 1, 14)
 SoupServer*
 sokoke_get_res_server                   (void);
+#endif
 
 gchar*
 sokoke_replace_variables                (const gchar* template,
                                          const gchar* variable_first, ...);
+
+gboolean
+sokoke_window_activate_key              (GtkWindow*      window,
+                                         GdkEventKey*    event);
+
+GtkWidget*
+sokoke_file_chooser_dialog_new          (const gchar*         title,
+                                         GtkWindow*           window,
+                                         GtkFileChooserAction action);
 
 #endif /* !__SOKOKE_H__ */

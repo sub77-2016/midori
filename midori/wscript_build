@@ -10,7 +10,9 @@ obj.target = 'midori'
 obj.includes = '. ..'
 obj.find_sources_in_dirs ('.', excludes=['main.c'])
 obj.add_marshal_file ('marshal.list', 'midori_cclosure_marshal')
-obj.uselib = 'UNIQUE LIBSOUP LIBIDN GIO GTK SQLITE WEBKIT LIBXML WS2_32 OPENSSL HILDON'
+obj.uselib = 'UNIQUE LIBSOUP LIBIDN GIO GTK SQLITE LIBNOTIFY WEBKIT LIBXML ' \
+             'WS2_32 OPENSSL ' \
+             'HILDON HILDON_FM'
 obj.uselib_local = 'katze'
 obj.install_path = None
 
@@ -19,7 +21,7 @@ obj.name = 'panels'
 obj.target = 'panels'
 obj.includes = '. ..'
 obj.find_sources_in_dirs ('../panels')
-obj.uselib = 'UNIQUE LIBSOUP GMODULE GTHREAD GIO GTK SQLITE WEBKIT LIBXML'
+obj.uselib = 'UNIQUE LIBSOUP GMODULE GTHREAD GIO GTK SQLITE WEBKIT LIBXML X11'
 obj.uselib_local = 'midori-core'
 obj.install_path = None
 

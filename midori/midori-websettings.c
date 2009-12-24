@@ -50,6 +50,7 @@ struct _MidoriWebSettings
     gboolean compact_sidepanel;
     gboolean show_panel_controls;
     gboolean right_align_sidepanel;
+    gboolean open_panels_in_windows;
 
     MidoriStartup load_on_startup;
     gchar* homepage;
@@ -82,14 +83,12 @@ struct _MidoriWebSettings
 
     gboolean remember_last_visited_pages;
     gint maximum_history_age;
-    gboolean remember_last_form_inputs;
     gboolean remember_last_downloaded_files;
 
     gchar* http_proxy;
     gboolean auto_detect_proxy;
     MidoriIdentity identify_as;
     gchar* ident_string;
-    gint cache_size;
 
     gint clear_private_data;
 };
@@ -127,6 +126,7 @@ enum
     PROP_COMPACT_SIDEPANEL,
     PROP_SHOW_PANEL_CONTROLS,
     PROP_RIGHT_ALIGN_SIDEPANEL,
+    PROP_OPEN_PANELS_IN_WINDOWS,
 
     PROP_LOAD_ON_STARTUP,
     PROP_HOMEPAGE,
@@ -150,6 +150,9 @@ enum
     PROP_OPEN_TABS_NEXT_TO_CURRENT,
     PROP_OPEN_POPUPS_IN_TABS,
 
+    PROP_AUTO_LOAD_IMAGES,
+    PROP_ENABLE_SCRIPTS,
+    PROP_ENABLE_PLUGINS,
     PROP_ZOOM_TEXT_AND_IMAGES,
     PROP_FIND_WHILE_TYPING,
     PROP_KINETIC_SCROLLING,
@@ -159,14 +162,12 @@ enum
 
     PROP_REMEMBER_LAST_VISITED_PAGES,
     PROP_MAXIMUM_HISTORY_AGE,
-    PROP_REMEMBER_LAST_FORM_INPUTS,
     PROP_REMEMBER_LAST_DOWNLOADED_FILES,
 
     PROP_HTTP_PROXY,
     PROP_AUTO_DETECT_PROXY,
     PROP_IDENTIFY_AS,
     PROP_IDENT_STRING,
-    PROP_CACHE_SIZE,
 
     PROP_CLEAR_PRIVATE_DATA
 };
@@ -215,6 +216,7 @@ midori_preferred_encoding_get_type (void)
         static const GEnumValue values[] = {
          { MIDORI_ENCODING_CHINESE, "MIDORI_ENCODING_CHINESE", N_("Chinese (BIG5)") },
          { MIDORI_ENCODING_JAPANESE, "MIDORI_ENCODING_JAPANESE", N_("Japanese (SHIFT_JIS)") },
+         { MIDORI_ENCODING_KOREAN, "MIDORI_ENCODING_KOREAN", N_("Korean (EUC-KR)") },
          { MIDORI_ENCODING_RUSSIAN, "MIDORI_ENCODING_RUSSIAN", N_("Russian (KOI8-R)") },
          { MIDORI_ENCODING_UNICODE, "MIDORI_ENCODING_UNICODE", N_("Unicode (UTF-8)") },
          { MIDORI_ENCODING_WESTERN, "MIDORI_ENCODING_WESTERN", N_("Western (ISO-8859-1)") },
@@ -252,6 +254,7 @@ midori_toolbar_style_get_type (void)
         static const GEnumValue values[] = {
          { MIDORI_TOOLBAR_DEFAULT, "MIDORI_TOOLBAR_DEFAULT", N_("Default") },
          { MIDORI_TOOLBAR_ICONS, "MIDORI_TOOLBAR_ICONS", N_("Icons") },
+         { MIDORI_TOOLBAR_SMALL_ICONS, "MIDORI_TOOLBAR_SMALL_ICONS", N_("Small icons") },
          { MIDORI_TOOLBAR_TEXT, "MIDORI_TOOLBAR_TEXT", N_("Text") },
          { MIDORI_TOOLBAR_BOTH, "MIDORI_TOOLBAR_BOTH", N_("Icons and text") },
          { MIDORI_TOOLBAR_BOTH_HORIZ, "MIDORI_TOOLBAR_BOTH_HORIZ", N_("Text beside icons") },
@@ -320,7 +323,7 @@ midori_get_download_dir (void)
     const gchar* dir = g_get_user_special_dir (G_USER_DIRECTORY_DOWNLOAD);
     if (dir)
     {
-        g_mkdir_with_parents (dir, 0700);
+        katze_mkdir_with_parents (dir, 0700);
         return dir;
     }
     return g_get_home_dir ();
@@ -566,6 +569,22 @@ midori_web_settings_class_init (MidoriWebSettingsClass* class)
                                      FALSE,
                                      flags));
 
+    /**
+     * MidoriWebSettings:open-panels-in-window:
+     *
+     * Whether to open panels in separate windows.
+     *
+     * Since: 0.2.2
+     */
+    g_object_class_install_property (gobject_class,
+                                     PROP_OPEN_PANELS_IN_WINDOWS,
+                                     g_param_spec_boolean (
+                                     "open-panels-in-windows",
+                                     _("Open panels in separate windows"),
+        _("Whether to always open panels in separate windows"),
+                                     FALSE,
+                                     flags));
+
 
     g_object_class_install_property (gobject_class,
                                      PROP_LOAD_ON_STARTUP,
@@ -803,6 +822,32 @@ midori_web_settings_class_init (MidoriWebSettingsClass* class)
                                      G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
 
 
+    /* Override properties to localize them for preference proxies */
+    g_object_class_install_property (gobject_class,
+                                     PROP_AUTO_LOAD_IMAGES,
+                                     g_param_spec_boolean (
+                                     "auto-load-images",
+                                     _("Load images automatically"),
+                                     _("Load and display images automatically"),
+                                     TRUE,
+                                     flags));
+    g_object_class_install_property (gobject_class,
+                                     PROP_ENABLE_SCRIPTS,
+                                     g_param_spec_boolean (
+                                     "enable-scripts",
+                                     _("Enable scripts"),
+                                     _("Enable embedded scripting languages"),
+                                     TRUE,
+                                     flags));
+    g_object_class_install_property (gobject_class,
+                                     PROP_ENABLE_PLUGINS,
+                                     g_param_spec_boolean (
+                                     "enable-plugins",
+                                     _("Enable Netscape plugins"),
+                                     _("Enable embedded Netscape plugin objects"),
+                                     TRUE,
+                                     flags));
+
     /**
      * MidoriWebSettings:zoom-text-and-images:
      *
@@ -881,6 +926,13 @@ midori_web_settings_class_init (MidoriWebSettingsClass* class)
 
 
 
+    /**
+    * MidoriWebSettings:remember-last-visited-pages:
+    *
+    * Whether the last visited pages are saved.
+    *
+    * Deprecated: 0.2.2
+    */
     g_object_class_install_property (gobject_class,
                                      PROP_REMEMBER_LAST_VISITED_PAGES,
                                      g_param_spec_boolean (
@@ -898,15 +950,6 @@ midori_web_settings_class_init (MidoriWebSettingsClass* class)
                                      _("The maximum number of days to save the history for"),
                                      0, G_MAXINT, 30,
                                      flags));
-
-    g_object_class_install_property (gobject_class,
-                                     PROP_REMEMBER_LAST_FORM_INPUTS,
-                                     g_param_spec_boolean (
-                                     "remember-last-form-inputs",
-                                     _("Remember last form inputs"),
-                                     _("Whether the last form inputs are saved"),
-                                     TRUE,
-                                     G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
 
     g_object_class_install_property (gobject_class,
                                      PROP_REMEMBER_LAST_DOWNLOADED_FILES,
@@ -978,15 +1021,6 @@ midori_web_settings_class_init (MidoriWebSettingsClass* class)
                                      NULL,
                                      G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 
-    g_object_class_install_property (gobject_class,
-                                     PROP_CACHE_SIZE,
-                                     g_param_spec_int (
-                                     "cache-size",
-                                     _("Cache size"),
-                                     _("The allowed size of the cache"),
-                                     0, G_MAXINT, 100,
-                                     G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
-
     /**
      * MidoriWebSettings:clear-private-data:
      *
@@ -1021,6 +1055,8 @@ notify_default_encoding_cb (GObject*    object,
         web_settings->preferred_encoding = MIDORI_ENCODING_CHINESE;
     else if (!strcmp (encoding, "SHIFT_JIS"))
         web_settings->preferred_encoding = MIDORI_ENCODING_JAPANESE;
+    else if (!strcmp (encoding, "EUC-KR"))
+        web_settings->preferred_encoding = MIDORI_ENCODING_KOREAN;
     else if (!strcmp (encoding, "KOI8-R"))
         web_settings->preferred_encoding = MIDORI_ENCODING_RUSSIAN;
     else if (!strcmp (encoding, "UTF-8"))
@@ -1041,7 +1077,6 @@ midori_web_settings_init (MidoriWebSettings* web_settings)
     web_settings->http_proxy = NULL;
     web_settings->show_panel_controls = TRUE;
     web_settings->open_popups_in_tabs = TRUE;
-    web_settings->remember_last_form_inputs = TRUE;
     web_settings->remember_last_downloaded_files = TRUE;
     web_settings->kinetic_scrolling = TRUE;
     web_settings->auto_detect_proxy = TRUE;
@@ -1070,7 +1105,7 @@ midori_web_settings_finalize (GObject* object)
     G_OBJECT_CLASS (midori_web_settings_parent_class)->finalize (object);
 }
 
-#if defined (G_OS_UNIX)
+#if defined (G_OS_UNIX) && !HAVE_OSX
 static gchar*
 get_sys_name (void)
 {
@@ -1233,6 +1268,9 @@ midori_web_settings_set_property (GObject*      object,
     case PROP_RIGHT_ALIGN_SIDEPANEL:
         web_settings->right_align_sidepanel = g_value_get_boolean (value);
         break;
+    case PROP_OPEN_PANELS_IN_WINDOWS:
+        web_settings->open_panels_in_windows = g_value_get_boolean (value);
+        break;
 
     case PROP_LOAD_ON_STARTUP:
         web_settings->load_on_startup = g_value_get_enum (value);
@@ -1277,6 +1315,9 @@ midori_web_settings_set_property (GObject*      object,
         case MIDORI_ENCODING_JAPANESE:
             g_object_set (object, "default-encoding", "SHIFT_JIS", NULL);
             break;
+       case MIDORI_ENCODING_KOREAN:
+            g_object_set (object, "default-encoding", "EUC-KR", NULL);
+            break;
         case MIDORI_ENCODING_RUSSIAN:
             g_object_set (object, "default-encoding", "KOI8-R", NULL);
             break;
@@ -1316,6 +1357,18 @@ midori_web_settings_set_property (GObject*      object,
         web_settings->open_popups_in_tabs = g_value_get_boolean (value);
         break;
 
+    case PROP_AUTO_LOAD_IMAGES:
+        g_object_set (web_settings, "WebKitWebSettings::auto-load-images",
+                      g_value_get_boolean (value), NULL);
+        break;
+    case PROP_ENABLE_SCRIPTS:
+        g_object_set (web_settings, "WebKitWebSettings::enable-scripts",
+                      g_value_get_boolean (value), NULL);
+        break;
+    case PROP_ENABLE_PLUGINS:
+        g_object_set (web_settings, "WebKitWebSettings::enable-plugins",
+                      g_value_get_boolean (value), NULL);
+        break;
     case PROP_ZOOM_TEXT_AND_IMAGES:
         web_settings->zoom_text_and_images = g_value_get_boolean (value);
         break;
@@ -1340,9 +1393,6 @@ midori_web_settings_set_property (GObject*      object,
         break;
     case PROP_MAXIMUM_HISTORY_AGE:
         web_settings->maximum_history_age = g_value_get_int (value);
-        break;
-    case PROP_REMEMBER_LAST_FORM_INPUTS:
-        web_settings->remember_last_form_inputs = g_value_get_boolean (value);
         break;
     case PROP_REMEMBER_LAST_DOWNLOADED_FILES:
         web_settings->remember_last_downloaded_files = g_value_get_boolean (value);
@@ -1374,9 +1424,6 @@ midori_web_settings_set_property (GObject*      object,
             g_object_set (web_settings, "user-agent", web_settings->ident_string, NULL);
             #endif
         }
-        break;
-    case PROP_CACHE_SIZE:
-        web_settings->cache_size = g_value_get_int (value);
         break;
     case PROP_CLEAR_PRIVATE_DATA:
         web_settings->clear_private_data = g_value_get_int (value);
@@ -1459,6 +1506,9 @@ midori_web_settings_get_property (GObject*    object,
     case PROP_RIGHT_ALIGN_SIDEPANEL:
         g_value_set_boolean (value, web_settings->right_align_sidepanel);
         break;
+    case PROP_OPEN_PANELS_IN_WINDOWS:
+        g_value_set_boolean (value, web_settings->open_panels_in_windows);
+        break;
 
     case PROP_LOAD_ON_STARTUP:
         g_value_set_enum (value, web_settings->load_on_startup);
@@ -1522,6 +1572,18 @@ midori_web_settings_get_property (GObject*    object,
         g_value_set_boolean (value, web_settings->open_popups_in_tabs);
         break;
 
+    case PROP_AUTO_LOAD_IMAGES:
+        g_value_set_boolean (value, katze_object_get_boolean (web_settings,
+                             "WebKitWebSettings::auto-load-images"));
+        break;
+    case PROP_ENABLE_SCRIPTS:
+        g_value_set_boolean (value, katze_object_get_boolean (web_settings,
+                             "WebKitWebSettings::enable-scripts"));
+        break;
+    case PROP_ENABLE_PLUGINS:
+        g_value_set_boolean (value, katze_object_get_boolean (web_settings,
+                             "WebKitWebSettings::enable-plugins"));
+        break;
     case PROP_ZOOM_TEXT_AND_IMAGES:
         g_value_set_boolean (value, web_settings->zoom_text_and_images);
         break;
@@ -1547,9 +1609,6 @@ midori_web_settings_get_property (GObject*    object,
     case PROP_MAXIMUM_HISTORY_AGE:
         g_value_set_int (value, web_settings->maximum_history_age);
         break;
-    case PROP_REMEMBER_LAST_FORM_INPUTS:
-        g_value_set_boolean (value, web_settings->remember_last_form_inputs);
-        break;
     case PROP_REMEMBER_LAST_DOWNLOADED_FILES:
         g_value_set_boolean (value, web_settings->remember_last_downloaded_files);
         break;
@@ -1570,9 +1629,6 @@ midori_web_settings_get_property (GObject*    object,
             katze_assign (web_settings->ident_string, string);
         }
         g_value_set_string (value, web_settings->ident_string);
-        break;
-    case PROP_CACHE_SIZE:
-        g_value_set_int (value, web_settings->cache_size);
         break;
     case PROP_CLEAR_PRIVATE_DATA:
         g_value_set_int (value, web_settings->clear_private_data);
