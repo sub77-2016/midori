@@ -8,8 +8,10 @@ midori (0.2.2-1) UNRELEASED; urgency=low
     - Ctrl-w on last tab now closes it but still not the browser
       (Closes: #545251)
     - Ctrl-u in urlbar with emacs key binding theme works (Closes: #538327)
+  * move libjs-mootools to Recommends, it's not required (Closes:
+    #547584)
 
- -- Ryan Niebur <ryan@debian.org>  Thu, 24 Dec 2009 16:57:45 -0800
+ -- Ryan Niebur <ryan@debian.org>  Thu, 24 Dec 2009 17:24:00 -0800
 
 midori (0.2.0-1) unstable; urgency=low
 
