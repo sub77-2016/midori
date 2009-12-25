@@ -10,7 +10,7 @@ Build-Depends: debhelper (>= 7.0.50),
  libwebkit-dev (>= 1.1.15),
  libxml2-dev (>= 2.6),
 # For waf:
- python,
+ waf,
 # Optional dependencies:
  intltool,
  libidn11-dev,
