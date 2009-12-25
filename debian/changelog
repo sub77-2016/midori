@@ -1,7 +1,13 @@
 midori (0.2.2-1) UNRELEASED; urgency=low
 
-  * New Upstream Version
-  * move libnotify from Recommends to Build-Deps
+  * New Upstream Version (Closes: #556184, #558339)
+    - fixes local uri handling (Closes: #560866, #550844)
+    - move libnotify from Recommends to Build-Deps to follow upstream
+    - fixes handling of URLs like "some.url?%00" (Closes: #561451)
+    - running twice doesn't crash the browser (Closes: #514435)
+    - Ctrl-w on last tab now closes it but still not the browser
+      (Closes: #545251)
+    - Ctrl-u in urlbar with emacs key binding theme works (Closes: #538327)
 
  -- Ryan Niebur <ryan@debian.org>  Thu, 24 Dec 2009 16:57:45 -0800
 
