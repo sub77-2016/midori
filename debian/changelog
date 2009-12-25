@@ -1,4 +1,4 @@
-midori (0.2.2-1) UNRELEASED; urgency=low
+midori (0.2.2-1) unstable; urgency=low
 
   * New Upstream Version (Closes: #556184, #558339)
     - fixes local uri handling (Closes: #560866, #550844)
@@ -20,7 +20,7 @@ midori (0.2.2-1) UNRELEASED; urgency=low
       and I've set #561130 in the BTS to affect midori, so (Closes: #559989)
   * refresh patch
 
- -- Ryan Niebur <ryan@debian.org>  Thu, 24 Dec 2009 18:29:23 -0800
+ -- Ryan Niebur <ryan@debian.org>  Thu, 24 Dec 2009 18:30:46 -0800
 
 midori (0.2.0-1) unstable; urgency=low
 
