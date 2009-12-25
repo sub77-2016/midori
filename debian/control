@@ -19,6 +19,7 @@ Build-Depends: debhelper (>= 7.0.50),
  libunique-dev (>= 1.0.6),
  python-docutils,
  libsoup2.4-dev (>= 2.25.2),
+ libnotify-dev,
 # For testing under xvfb:
  xvfb,
  xauth,
@@ -35,7 +36,7 @@ Vcs-Browser: http://git.ryan52.info/?p=midori;a=summary
 Package: midori
 Architecture: any
 Depends: ${shlibs:Depends}, ${misc:Depends}, dbus-x11, libjs-mootools
-Recommends: gnome-icon-theme, libnotify1
+Recommends: gnome-icon-theme
 Provides: www-browser
 # For http://bugs.debian.org/522436 (missing symbols):
 Conflicts: libsoup2.4-1 (<< 2.25.2)
