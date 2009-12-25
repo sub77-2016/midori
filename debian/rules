@@ -2,6 +2,8 @@
 
 CMD=$(shell echo $@ | sed 's/override_//')
 
+LIBWEBKIT_PKG=$(shell dpkg-query -p libwebkit-dev | grep Depends | sed -r 's/.*(libwebkit[^ ]+).*/\1/')
+GTKLAUNCHER=$(shell dpkg-query -L $(LIBWEBKIT_PKG) | grep GtkLauncher)
 DISTRO=$(shell lsb_release -is)
 CONFIG_FILE=debian/config/$(DISTRO).h
 ifneq (0, $(shell test -e $(CONFIG_FILE); echo "$$?"))
@@ -18,6 +20,12 @@ override_dh_quilt_patch:
 
 #WAF=/usr/bin/waf
 WAF=./waf
+
+debian/presubj: debian/presubj.in
+	sed -e "s,%LIBWEBKIT_PKG%,$(LIBWEBKIT_PKG),g" -e "s,%GTKLAUNCHER%,$(GTKLAUNCHER),g" $@.in > $@
+
+override_dh_install: debian/presubj
+	$(CMD)
 
 override_dh_auto_clean:
 	$(WAF) --nocache distclean

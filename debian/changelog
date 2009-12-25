@@ -10,8 +10,12 @@ midori (0.2.2-1) UNRELEASED; urgency=low
     - Ctrl-u in urlbar with emacs key binding theme works (Closes: #538327)
   * move libjs-mootools to Recommends, it's not required (Closes:
     #547584)
+  * tell the user to report the bug against libwebkit-1.0-2 if they
+    reproduce it in the Webkit test browser. Figure out the package name
+    and the path to GtkLauncher automagically during build. (Closes:
+    #562501)
 
- -- Ryan Niebur <ryan@debian.org>  Thu, 24 Dec 2009 17:24:00 -0800
+ -- Ryan Niebur <ryan@debian.org>  Thu, 24 Dec 2009 17:35:45 -0800
 
 midori (0.2.0-1) unstable; urgency=low
 
