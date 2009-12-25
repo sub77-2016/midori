@@ -18,8 +18,9 @@ midori (0.2.2-1) UNRELEASED; urgency=low
   * switch to system waf
     - the FTBFS #559989 is no longer the fault of anything in my package,
       and I've set #561130 in the BTS to affect midori, so (Closes: #559989)
+  * refresh patch
 
- -- Ryan Niebur <ryan@debian.org>  Thu, 24 Dec 2009 17:47:19 -0800
+ -- Ryan Niebur <ryan@debian.org>  Thu, 24 Dec 2009 18:29:23 -0800
 
 midori (0.2.0-1) unstable; urgency=low
 
