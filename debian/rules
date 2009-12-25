@@ -22,6 +22,12 @@ override_dh_quilt_patch:
 WAF=./waf
 
 debian/presubj: debian/presubj.in
+	@echo "presubj parameters:"
+	@echo "Replacing %LIBWEBKIT_PKG% with $(LIBWEBKIT_PKG)"
+	@echo "Replacing %GTKLAUNCHER% with $(GTKLAUNCHER)"
+	test -f "/var/lib/dpkg/info/$(LIBWEBKIT_PKG).list"
+	test -f "$(GTKLAUNCHER)"
+	test -n "$(GTKLAUNCHER)"
 	sed -e "s,%LIBWEBKIT_PKG%,$(LIBWEBKIT_PKG),g" -e "s,%GTKLAUNCHER%,$(GTKLAUNCHER),g" $@.in > $@
 
 override_dh_install: debian/presubj
