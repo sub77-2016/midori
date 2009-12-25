@@ -40,6 +40,12 @@ Copyright: © 2007, Emanuele Rocca <ema@debian.org>
  2009, Ryan Niebur <ryanryan52@gmail.com>
 License: expat
 
+Files: po/gl.po
+Copyright: Copyright (C) 2008 Christian Dywan <christian@twotoasts.de>
+ Copyright (C) 2008, 2009 Miguel Anxo Bouzada.
+ Copyright (C) 2009 Leandro Regueiro.
+License: LGPL-2.1+
+
 Files: katze/katze-http-cookies.c
 Copyright: Copyright (C) 2008-2009 Christian Dywan <christian@twotoasts.de>
  Copyright (C) 2008 Xan Lopez <xan@gnome.org>
@@ -57,8 +63,9 @@ Copyright: Copyright 1999-2008 Hiroyuki Yamamoto
 License: LGPL-2.1+
 
 Files: katze/katze-utils.c
-Copyright: Copyright (C) 2007-2008 Christian Dywan <christian@twotoasts.de>
+Copyright: Copyright (C) 2007-2009 Christian Dywan <christian@twotoasts.de>
  Copyright (C) 1995-1997 Peter Mattis, Spencer Kimball and Josh MacDonald
+ Copyright 2000 Red Hat, Inc.
 License: LGPL-2.1+
 
 Files: katze/katze-utils.h
@@ -72,8 +79,21 @@ Copyright:   Copyright (C) 2007-2009 Christian Dywan <christian@twotoasts.de>
  Copyright (C) 2009 Jérôme Geulfucci <jeromeg@xfce.org>
 License: LGPL-2.1+
 
-Files: extensions/dnsprefetch.c, extensions/formhistory.c
+Files: extensions/dnsprefetch.c
 Copyright: Copyright (C) 2009 Alexander Butenko <a.butenka@gmail.com>
+License: LGPL-2.1+
+
+Files: extensions/formhistory.c
+Copyright: Copyright (C) 2009 Alexander Butenko <a.butenka@gmail.com>
+ Copyright (C) 2009 Christian Dywan <christian@twotoasts.de>
+License: LGPL-2.1+
+
+Files: katze/katze-preferences.c
+Copyright: Copyright (C) 2007-2009 Christian Dywan <christian@twotoasts.de>
+License: LGPL-2.1+
+
+Files: katze/katze-preferences.h
+Copyright: Copyright (C) 2008-2009 Christian Dywan <christian@twotoasts.de>
 License: LGPL-2.1+
 
 Files: katze/katze-scrolled.c, katze/katze-scrolled.h
@@ -101,8 +121,18 @@ Files: midori/midori-locationentry.?
 Copyright: © 2008, Dale Whittaker <dayul@users.sf.net>
 License: LGPL-2.1+
 
-Files: extensions/mouse-gestures/*
-Copyright: © 2009, Matthias Kruk <mkruk@matthiaskruk.de>
+Files: extensions/mouse-gestures.c
+Copyright: Copyright (C) 2009 Matthias Kruk <mkruk@matthiaskruk.de>
+ Copyright (C) 2009 Christian Dywan <christian@twotoasts.de>
+License: LGPL-2.1+
+
+Files: extensions/tab-switcher.c
+Copyright: Copyright (C) 2009 André Stösel <Midori-Plugin@PyIT.de>
+License: LGPL-2.1+
+
+Files: extensions/web-cache.c
+Copyright: Copyright (C) 2009 Christian Dywan <christian@twotoasts.de>
+ Copyright (C) 2009 Alexander Butenko <a.butenka@gmail.com>
 License: LGPL-2.1+
 
 Files: icons/scalable/extension.svg
