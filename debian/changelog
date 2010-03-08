@@ -1,3 +1,9 @@
+midori (0.2.4-1) UNRELEASED; urgency=low
+
+  * New Upstream Version
+
+ -- Ryan Niebur <ryan@debian.org>  Sun, 07 Mar 2010 21:42:02 -0800
+
 midori (0.2.2-1) unstable; urgency=low
 
   * New Upstream Version (Closes: #556184, #558339)
