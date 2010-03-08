@@ -18,8 +18,8 @@ override_dh_quilt_patch:
 	test -e midori/midori-debian.h
 	$(CMD)
 
-WAF=/usr/bin/waf
-#WAF=./waf
+#WAF=/usr/bin/waf
+WAF=./waf
 
 debian/presubj: debian/presubj.in
 	@echo "presubj parameters:"

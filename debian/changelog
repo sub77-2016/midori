@@ -2,8 +2,9 @@ midori (0.2.4-1) UNRELEASED; urgency=low
 
   * New Upstream Version
     - update d/copyright
+  * use bundled waf again (Closes: 571709)
 
- -- Ryan Niebur <ryan@debian.org>  Sun, 07 Mar 2010 21:56:25 -0800
+ -- Ryan Niebur <ryan@debian.org>  Sun, 07 Mar 2010 21:58:06 -0800
 
 midori (0.2.2-1) unstable; urgency=low
 
