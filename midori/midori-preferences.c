@@ -16,7 +16,6 @@
 #endif
 
 #include "sokoke.h"
-#include "compat.h"
 
 #include <string.h>
 #include <glib/gi18n.h>
@@ -390,7 +389,11 @@ midori_preferences_set_settings (MidoriPreferences* preferences,
         GTK_WIDGET (parent) : GTK_WIDGET (preferences)))
         button = katze_property_proxy (settings, "kinetic-scrolling", NULL);
     else
-        button = katze_property_proxy (settings, "open-panels-in-windows", NULL);
+    {
+        button = katze_property_proxy (settings, "enforce-96-dpi", NULL);
+        gtk_button_set_label (GTK_BUTTON (button), _("Enforce 96 dots per inch"));
+        gtk_widget_set_tooltip_text (button, _("Enforce a video dot density of 96 DPI"));
+    }
     #else
     button = katze_property_proxy (settings, "middle-click-opens-selection", NULL);
     #endif
@@ -398,27 +401,23 @@ midori_preferences_set_settings (MidoriPreferences* preferences,
     #if !HAVE_HILDON
     button = katze_property_proxy (settings, "enable-scripts", NULL);
     INDENTED_ADD (button);
+    button = katze_property_proxy (settings, "open-panels-in-windows", NULL);
+    SPANNED_ADD (button);
     button = katze_property_proxy (settings, "enable-plugins", NULL);
-    SPANNED_ADD (button);
-    button = katze_property_proxy (settings, "enforce-96-dpi", NULL);
-    gtk_button_set_label (GTK_BUTTON (button), _("Enforce 96 dots per inch"));
-    gtk_widget_set_tooltip_text (button, _("Enforce a video dot density of 96 DPI"));
     INDENTED_ADD (button);
-    button = katze_property_proxy (settings, "enable-developer-extras", NULL);
-    gtk_button_set_label (GTK_BUTTON (button), _("Enable developer tools"));
-    gtk_widget_set_tooltip_text (button, _("Enable special extensions for developers"));
-    SPANNED_ADD (button);
     #endif
-    button = katze_property_proxy (settings, "zoom-text-and-images", NULL);
-    INDENTED_ADD (button);
     button = katze_property_proxy (settings, "find-while-typing", NULL);
     SPANNED_ADD (button);
+    button = katze_property_proxy (settings, "zoom-text-and-images", NULL);
+    INDENTED_ADD (button);
     #if WEBKIT_CHECK_VERSION (1, 1, 6)
     FRAME_NEW (_("Spell Checking"));
     /* FIXME: Provide a nice dictionary selection */
     button = katze_property_proxy (settings, "enable-spell-checking", NULL);
     gtk_button_set_label (GTK_BUTTON (button), _("Enable Spell Checking"));
     gtk_widget_set_tooltip_text (button, _("Enable spell checking while typing"));
+    INDENTED_ADD (button);
+    button = gtk_label_new (_("Spelling dictionaries:"));
     INDENTED_ADD (button);
     entry = katze_property_proxy (settings, "spell-checking-languages", NULL);
     /* i18n: The example should be adjusted to contain a good local default */
@@ -469,7 +468,7 @@ midori_preferences_set_settings (MidoriPreferences* preferences,
     SPANNED_ADD (entry);
     label = katze_property_label (settings, "download-manager");
     INDENTED_ADD (label);
-    entry = katze_property_proxy (settings, "download-manager", "application-Network");
+    entry = katze_property_proxy (settings, "download-manager", "application-FileTransfer");
     SPANNED_ADD (entry);
     label = katze_property_label (settings, "news-aggregator");
     INDENTED_ADD (label);
@@ -494,8 +493,13 @@ midori_preferences_set_settings (MidoriPreferences* preferences,
     #endif
     label = katze_property_label (settings, "identify-as");
     INDENTED_ADD (label);
-    button = katze_property_proxy (settings, "identify-as", "custom-ident-string");
+    button = katze_property_proxy (settings, "identify-as", "custom-user-agent");
     SPANNED_ADD (button);
+    label = katze_property_label (settings, "preferred-languages");
+    INDENTED_ADD (label);
+    entry = katze_property_proxy (settings, "preferred-languages", NULL);
+    SPANNED_ADD (entry);
+
 
     /* Page "Privacy" */
     PAGE_NEW (GTK_STOCK_INDEX, _("Privacy"));
@@ -504,14 +508,19 @@ midori_preferences_set_settings (MidoriPreferences* preferences,
     INDENTED_ADD (label);
     button = katze_property_proxy (settings, "accept-cookies", NULL);
     SPANNED_ADD (button);
-    button = katze_property_proxy (settings, "original-cookies-only", NULL);
-    INDENTED_ADD (button);
     label = katze_property_label (settings, "maximum-cookie-age");
     INDENTED_ADD (label);
     entry = katze_property_proxy (settings, "maximum-cookie-age", NULL);
     SPANNED_ADD (entry);
     label = gtk_label_new (_("days"));
     SPANNED_ADD (label);
+    #if WEBKIT_CHECK_VERSION (1, 1, 8)
+    INDENTED_ADD (katze_property_proxy (settings, "enable-html5-database", NULL));
+    SPANNED_ADD (katze_property_proxy (settings, "enable-html5-local-storage", NULL));
+    #endif
+    #if WEBKIT_CHECK_VERSION (1, 1, 13)
+    INDENTED_ADD (katze_property_proxy (settings, "enable-offline-web-application-cache", NULL));
+    #endif
     FRAME_NEW (_("History"));
     button = katze_property_label (settings, "maximum-history-age");
     INDENTED_ADD (button);

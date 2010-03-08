@@ -6,7 +6,6 @@ midori/midori-app.c
 midori/midori-array.c
 midori/midori-browser.c
 midori/midori-locationaction.c
-midori/midori-locationentry.c
 midori/midori-panel.c
 midori/midori-websettings.c
 midori/midori-view.c
@@ -18,7 +17,6 @@ panels/midori-bookmarks.c
 panels/midori-console.c
 panels/midori-extensions.c
 panels/midori-history.c
-panels/midori-plugins.c
 panels/midori-transfers.c
 katze/katze-http-auth.c
 katze/katze-throbber.c
@@ -32,7 +30,6 @@ extensions/colorful-tabs.c
 extensions/cookie-manager/cookie-manager.c
 extensions/cookie-manager/cookie-manager-page.c
 extensions/cookie-manager/main.c
-extensions/dnsprefetch.c
 extensions/feed-panel/feed-atom.c
 extensions/feed-panel/feed-panel.c
 extensions/feed-panel/feed-parse.c

@@ -13,18 +13,53 @@
 #ifndef __SOKOKE_H__
 #define __SOKOKE_H__ 1
 
+/* Common behavior modifiers */
+#define MIDORI_MOD_NEW_WINDOW(state) (state & GDK_SHIFT_MASK)
+#define MIDORI_MOD_NEW_TAB(state) (state & GDK_CONTROL_MASK)
+#define MIDORI_MOD_BACKGROUND(state) (state & GDK_SHIFT_MASK)
+#define MIDORI_MOD_SCROLL(state) (state & GDK_CONTROL_MASK)
+
 #include <katze/katze.h>
 
 #include <webkit/webkit.h>
 #include <JavaScriptCore/JavaScript.h>
 
+#if !GLIB_CHECK_VERSION (2, 14, 0)
+    #define G_PARAM_STATIC_STRINGS \
+    (G_PARAM_STATIC_NAME | G_PARAM_STATIC_NICK | G_PARAM_STATIC_BLURB)
+    #define gtk_dialog_get_content_area(dlg) dlg->vbox
+#endif
+
+#if !GTK_CHECK_VERSION (2, 16, 0)
+    #define GTK_ACTIVATABLE GTK_WIDGET
+    #define gtk_activatable_get_related_action gtk_widget_get_action
+#endif
+
+#if !GTK_CHECK_VERSION (2, 18, 0)
+    #define gtk_widget_is_toplevel(widget) GTK_WIDGET_TOPLEVEL (widget)
+    #define gtk_widget_has_focus(widget) GTK_WIDGET_HAS_FOCUS (widget)
+#endif
+
+#if !GTK_CHECK_VERSION(2, 12, 0)
+
+void
+gtk_widget_set_has_tooltip             (GtkWidget*         widget,
+                                        gboolean           has_tooltip);
+
+void
+gtk_widget_set_tooltip_text            (GtkWidget*         widget,
+                                        const gchar*       text);
+
+void
+gtk_tool_item_set_tooltip_text         (GtkToolItem*       toolitem,
+                                        const gchar*       text);
+
+#endif
+
 gchar*
 sokoke_js_script_eval                   (JSContextRef    js_context,
                                          const gchar*    script,
                                          gchar**         exception);
-
-/* Many themes need this hack for small toolbars to work */
-#define GTK_ICON_SIZE_SMALL_TOOLBAR GTK_ICON_SIZE_BUTTON
 
 void
 sokoke_message_dialog                   (GtkMessageType  message_type,
@@ -60,8 +95,7 @@ gchar*
 sokoke_uri_to_ascii                     (const gchar*    uri);
 
 gchar*
-sokoke_magic_uri                        (const gchar*    uri,
-                                         KatzeArray*     search_engines);
+sokoke_magic_uri                        (const gchar*    uri);
 
 gchar*
 sokoke_format_uri_for_display           (const gchar*    uri);
@@ -144,6 +178,10 @@ sokoke_action_create_popup_menu_item    (GtkAction*      action);
 gint64
 sokoke_time_t_to_julian                 (const time_t*   timestamp);
 
+gint
+sokoke_days_between                     (const time_t*   day1,
+                                         const time_t*   day2);
+
 void
 sokoke_register_stock_items             (void);
 
@@ -160,6 +198,9 @@ sokoke_find_config_filename             (const gchar*    folder,
 
 gchar*
 sokoke_find_data_filename               (const gchar*    filename);
+
+gchar**
+sokoke_get_argv                         (gchar**         argument_vector);
 
 #if !WEBKIT_CHECK_VERSION (1, 1, 14)
 SoupServer*
@@ -178,5 +219,11 @@ GtkWidget*
 sokoke_file_chooser_dialog_new          (const gchar*         title,
                                          GtkWindow*           window,
                                          GtkFileChooserAction action);
+
+gboolean
+sokoke_prefetch_uri                     (const char* uri);
+
+gchar *
+sokoke_accept_languages                 (const gchar* const * lang_names);
 
 #endif /* !__SOKOKE_H__ */

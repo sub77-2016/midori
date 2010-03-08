@@ -61,7 +61,7 @@ typedef struct _MidoriView                MidoriView;
 typedef struct _MidoriViewClass           MidoriViewClass;
 
 GType
-midori_view_get_type                   (void);
+midori_view_get_type                   (void) G_GNUC_CONST;
 
 GtkWidget*
 midori_view_new                        (KatzeNet*          net);
@@ -159,6 +159,12 @@ midori_view_can_go_forward             (MidoriView*        view);
 
 void
 midori_view_go_forward                 (MidoriView*        view);
+
+const gchar*
+midori_view_get_previous_page          (MidoriView*        view);
+
+const gchar*
+midori_view_get_next_page              (MidoriView*        view);
 
 gboolean
 midori_view_can_print                  (MidoriView*        view);

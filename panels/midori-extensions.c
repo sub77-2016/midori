@@ -103,14 +103,10 @@ midori_extensions_get_toolbar (MidoriViewable* extensions)
     if (!MIDORI_EXTENSIONS (extensions)->toolbar)
     {
         GtkWidget* toolbar;
-        GtkToolItem* toolitem;
 
         toolbar = gtk_toolbar_new ();
         gtk_toolbar_set_style (GTK_TOOLBAR (toolbar), GTK_TOOLBAR_BOTH_HORIZ);
         gtk_toolbar_set_icon_size (GTK_TOOLBAR (toolbar), GTK_ICON_SIZE_BUTTON);
-        toolitem = gtk_tool_item_new ();
-        gtk_toolbar_insert (GTK_TOOLBAR (toolbar), toolitem, -1);
-        gtk_widget_show (GTK_WIDGET (toolitem));
 
         MIDORI_EXTENSIONS (extensions)->toolbar = toolbar;
     }
@@ -227,7 +223,7 @@ midori_extensions_treeview_render_tick_cb (GtkTreeViewColumn* column,
 
     g_object_set (renderer,
         "activatable", midori_extension_is_prepared (extension),
-        "active", midori_extension_is_active (extension),
+        "active", midori_extension_is_active (extension) || g_object_get_data (G_OBJECT (extension), "static"),
         NULL);
 
     g_object_unref (extension);

@@ -28,8 +28,6 @@ struct _MidoriSearchAction
     KatzeItem* default_item;
     gchar* text;
 
-    KatzeNet* net;
-
     GtkWidget* last_proxy;
 
     GtkWidget* dialog;
@@ -193,8 +191,6 @@ midori_search_action_init (MidoriSearchAction* search_action)
     search_action->default_item = NULL;
     search_action->text = NULL;
 
-    search_action->net = katze_net_new ();
-
     search_action->last_proxy = NULL;
 
     search_action->dialog = NULL;
@@ -210,8 +206,6 @@ midori_search_action_finalize (GObject* object)
     MidoriSearchAction* search_action = MIDORI_SEARCH_ACTION (object);
 
     katze_assign (search_action->text, NULL);
-
-    katze_object_assign (search_action->net, NULL);
 
     G_OBJECT_CLASS (midori_search_action_parent_class)->finalize (object);
 }
@@ -357,15 +351,15 @@ midori_search_action_key_press_event_cb (GtkWidget*          entry,
     case GDK_Return:
         text = gtk_entry_get_text (GTK_ENTRY (entry));
         g_signal_emit (search_action, signals[SUBMIT], 0, text,
-            (event->state & GDK_MOD1_MASK) ? TRUE : FALSE);
+                       MIDORI_MOD_NEW_TAB (event->state));
         search_action->last_proxy = entry;
         return TRUE;
     case GDK_Up:
-        if (event->state & GDK_CONTROL_MASK)
+        if (MIDORI_MOD_SCROLL (event->state))
             _midori_search_action_move_index (search_action, - 1);
         return TRUE;
     case GDK_Down:
-        if (event->state & GDK_CONTROL_MASK)
+        if (MIDORI_MOD_SCROLL (event->state))
             _midori_search_action_move_index (search_action, + 1);
         return TRUE;
     }
@@ -413,6 +407,9 @@ midori_search_action_get_icon (KatzeItem*    item,
 {
     const gchar* icon;
 
+    if ((icon = katze_item_get_uri (item)) && (g_strstr_len (icon, 8, "://")))
+        return katze_load_cached_icon (icon, widget);
+
     if ((icon = katze_item_get_icon (item)) && *icon)
     {
         GdkScreen* screen;
@@ -421,14 +418,11 @@ midori_search_action_get_icon (KatzeItem*    item,
         screen = gtk_widget_get_screen (widget);
         icon_theme = gtk_icon_theme_get_for_screen (screen);
         if (gtk_icon_theme_has_icon (icon_theme, icon))
+        {
             *icon_name = icon;
-        else
-            *icon_name = GTK_STOCK_FILE;
-        return NULL;
+            return NULL;
+        }
     }
-
-    if ((icon = katze_item_get_uri (item)) && (g_strstr_len (icon, 8, "://")))
-        return katze_load_cached_icon (icon, widget);
 
     *icon_name = GTK_STOCK_FILE;
     return NULL;
@@ -440,10 +434,6 @@ midori_search_action_icon_released_cb (GtkWidget*           entry,
                                        gint                 button,
                                        GtkAction*           action)
 {
-
-    if (icon_pos == GTK_ICON_ENTRY_SECONDARY)
-        return;
-
     KatzeArray* search_engines;
     GtkWidget* menu;
     guint i;
@@ -451,6 +441,9 @@ midori_search_action_icon_released_cb (GtkWidget*           entry,
     KatzeItem* item;
     GdkPixbuf* icon;
     GtkWidget* image;
+
+    if (icon_pos == GTK_ICON_ENTRY_SECONDARY)
+        return;
 
     search_engines = MIDORI_SEARCH_ACTION (action)->search_engines;
     menu = gtk_menu_new ();
@@ -812,7 +805,8 @@ midori_search_action_dialog_render_tick_cb (GtkTreeViewColumn* column,
     gtk_tree_model_get (model, iter, 0, &item, -1);
 
     search_action = g_object_get_data (G_OBJECT (treeview), "search-action");
-    gtk_icon_size_lookup (GTK_ICON_SIZE_MENU, &width, NULL);
+    gtk_icon_size_lookup_for_settings (gtk_widget_get_settings (treeview),
+                                       GTK_ICON_SIZE_MENU, &width, NULL);
     g_object_set (renderer, "stock-id",
         search_action->default_item == item ? GTK_STOCK_YES : NULL,
         "width", width + 4, NULL);
@@ -1189,6 +1183,14 @@ midori_search_action_treeview_destroy_cb (GtkWidget*          treeview,
     }
 }
 
+static void
+midori_search_action_dialog_respnse_cb (GtkWidget* dialog,
+                                        gint       response,
+                                        gpointer   data)
+{
+    gtk_widget_destroy (dialog);
+}
+
 /**
  * midori_search_action_get_dialog:
  * @search_action: a #MidoriSearchAction
@@ -1251,7 +1253,7 @@ midori_search_action_get_dialog (MidoriSearchAction* search_action)
     sokoke_widget_get_text_size (dialog, "M", &width, &height);
     gtk_window_set_default_size (GTK_WINDOW (dialog), width * 52, -1);
     g_signal_connect (dialog, "response",
-                      G_CALLBACK (gtk_widget_destroy), dialog);
+                      G_CALLBACK (midori_search_action_dialog_respnse_cb), NULL);
     /* TODO: Do we want tooltips for explainations or can we omit that?
              We need mnemonics */
     if ((xfce_heading = sokoke_xfce_header_new (

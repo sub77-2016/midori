@@ -10,6 +10,7 @@
 */
 
 #include <gtk/gtk.h>
+#include <gdk/gdkkeysyms.h>
 
 #include <midori/midori.h>
 #include <midori/gtkiconentry.h>
@@ -66,6 +67,8 @@ static void cm_button_delete_all_clicked_cb(GtkToolButton *button, CookieManager
 static void cm_tree_popup_collapse_activate_cb(GtkMenuItem *item, CookieManagerPage *cmp);
 static void cm_tree_popup_expand_activate_cb(GtkMenuItem *item, CookieManagerPage *cmp);
 static void cm_filter_tree(CookieManagerPage *cmp, const gchar *filter_text);
+
+typedef void (*CMPathWalkFunc) (GtkTreePath *path);
 
 
 G_DEFINE_TYPE_WITH_CODE(CookieManagerPage, cookie_manager_page, GTK_TYPE_VBOX,
@@ -225,7 +228,6 @@ static void cookie_manager_page_set_property(GObject *object, guint prop_id, con
 				COOKIE_MANAGER_COL_VISIBLE);
 			gtk_tree_view_set_model(GTK_TREE_VIEW(priv->treeview), GTK_TREE_MODEL(priv->filter));
 			g_object_unref(priv->filter);
-
 			break;
 		}
 		case PROP_PARENT:
@@ -304,6 +306,28 @@ static void cm_set_button_sensitiveness(CookieManagerPage *cmp, gboolean set)
 }
 
 
+static void cm_free_selection_list(GList *rows, GFunc func)
+{
+	g_list_foreach(rows, func, NULL);
+	g_list_free(rows);
+}
+
+
+/* Fast version of g_list_length(). It only checks for the first few elements of
+ * the list and returns the length 0, 1 or 2 where 2 means 2 elements or more. */
+static gint cm_list_length(GList *list)
+{
+	if (list == NULL)
+		return 0;
+	else if (list->next == NULL)
+		return 1;
+	else if (list->next != NULL)
+		return 2;
+
+	return 0; /* safe default */
+}
+
+
 static void cm_tree_popup_collapse_activate_cb(GtkMenuItem *item, CookieManagerPage *cmp)
 {
 	CookieManagerPagePrivate *priv = COOKIE_MANAGER_PAGE_GET_PRIVATE(cmp);
@@ -342,72 +366,165 @@ static void cm_delete_cookie(CookieManagerPage *cmp, GtkTreeModel *model, GtkTre
 }
 
 
-static void cm_button_delete_clicked_cb(GtkToolButton *button, CookieManagerPage *cmp)
+static gboolean cm_try_to_select(CMPathWalkFunc path_func, GtkTreeSelection *selection,
+								 GtkTreeModel *model, GtkTreePath *path)
+{
+	GtkTreeIter iter;
+
+	if (gtk_tree_path_get_depth(path) <= 0) /* sanity check */
+		return FALSE;
+
+	/* modify the path using the passed function */
+	if (path_func != NULL)
+		path_func(path);
+
+	if (gtk_tree_path_get_depth(path) <= 0) /* sanity check */
+		return FALSE;
+
+	/* check whether the path points to something valid and if so, select it */
+	if (gtk_tree_model_get_iter(model, &iter, path))
+	{
+		GtkTreeView *treeview = gtk_tree_selection_get_tree_view(selection);
+		gboolean was_expanded = gtk_tree_view_row_expanded(treeview, path);
+		/* to get gtk_tree_selection_select_path() working, we need to expand the row first
+		 * if it isn't expanded yet, at least when the row is a parent item */
+		if (! was_expanded)
+			gtk_tree_view_expand_to_path(treeview, path);
+
+		gtk_tree_selection_select_path(selection, path);
+
+		if (! was_expanded) /* restore the previous state */
+			gtk_tree_view_collapse_row(treeview, path);
+		return TRUE;
+	}
+
+	return FALSE;
+}
+
+
+/* select an item after deletion */
+static void cm_select_path(CookieManagerPage *cmp, GtkTreeModel *model, GtkTreePath *path)
+{
+	CookieManagerPagePrivate *priv = COOKIE_MANAGER_PAGE_GET_PRIVATE(cmp);
+	GtkTreeSelection *selection = gtk_tree_view_get_selection(GTK_TREE_VIEW(priv->treeview));
+	CMPathWalkFunc path_funcs[] = {
+		(CMPathWalkFunc) gtk_tree_path_prev, (CMPathWalkFunc) gtk_tree_path_up,
+		(CMPathWalkFunc) gtk_tree_path_next, NULL };
+	CMPathWalkFunc *path_func;
+
+	/* first try selecting the item directly to which path points */
+	if (! cm_try_to_select(NULL, selection, model, path))
+	{	/* if this failed, modify the path until we found something valid */
+		path_func = path_funcs;
+		while (*path_func != NULL)
+		{
+			if (cm_try_to_select(*path_func, selection, model, path))
+				break;
+			path_func++;
+		}
+	}
+}
+
+
+static void cm_delete_item(CookieManagerPage *cmp)
 {
 	GtkTreeIter iter, iter_store, child;
 	GtkTreeModel *model;
+	GtkTreePath *path, *last_path;
 	GtkTreeSelection *selection;
+	GList *rows, *row;
+	GList *refs = NULL;
 	CookieManagerPagePrivate *priv = COOKIE_MANAGER_PAGE_GET_PRIVATE(cmp);
 
 	selection = gtk_tree_view_get_selection(GTK_TREE_VIEW(priv->treeview));
-	if (! gtk_tree_selection_get_selected(selection, &model, &iter))
+	rows = gtk_tree_selection_get_selected_rows(selection, &model);
+	if (cm_list_length(rows) == 0)
 		return;
 
-	if (gtk_tree_model_iter_has_child(model, &iter))
-	{
-		GtkTreePath *path = gtk_tree_model_get_path(model, &iter);
+	last_path = gtk_tree_path_copy(g_list_nth_data(rows, 0));
 
-		while (gtk_tree_model_iter_children(model, &child, &iter))
+	/* as paths will change during delete, first create GtkTreeRowReferences for
+	 * all selected rows */
+	row = rows;
+	do
+	{
+		refs = g_list_append(refs, gtk_tree_row_reference_new(model, (GtkTreePath*) (row->data)));
+	} while ((row = row->next) != NULL);
+
+	row = refs;
+	do
+	{
+		/* get iter */
+		path = gtk_tree_row_reference_get_path((GtkTreeRowReference*) row->data);
+		if (path == NULL)
+			continue;
+		gtk_tree_model_get_iter(model, &iter, path);
+
+		if (gtk_tree_model_iter_has_child(model, &iter))
 		{
-			cm_delete_cookie(cmp, model, &child);
-			cm_store_remove(cmp, &child);
-			/* we retrieve again the iter at path because it got invalid by the delete operation */
-			gtk_tree_model_get_iter(model, &iter, path);
+			while (gtk_tree_model_iter_children(model, &child, &iter))
+			{
+				cm_delete_cookie(cmp, model, &child);
+				cm_store_remove(cmp, &child);
+				/* we retrieve again the iter at path because it got invalid by the delete operation */
+				gtk_tree_model_get_iter(model, &iter, path);
+			}
+			/* remove/hide the parent */
+			gtk_tree_model_filter_convert_iter_to_child_iter(GTK_TREE_MODEL_FILTER(priv->filter),
+				&iter_store, &iter);
+			if (gtk_tree_model_iter_has_child(GTK_TREE_MODEL(priv->store), &iter_store))
+				gtk_tree_store_set(priv->store, &iter_store, COOKIE_MANAGER_COL_VISIBLE, FALSE, -1);
+			else
+				cm_store_remove(cmp, &iter);
+		}
+		else
+		{
+			GtkTreePath *path_store, *path_model;
+
+			gtk_tree_model_filter_convert_iter_to_child_iter(GTK_TREE_MODEL_FILTER(priv->filter),
+				&iter_store, &iter);
+			path_store = gtk_tree_model_get_path(GTK_TREE_MODEL(priv->store), &iter_store);
+			path_model = gtk_tree_model_get_path(model, &iter);
+
+			cm_delete_cookie(cmp, model, &iter);
+			gtk_tree_store_remove(priv->store, &iter_store);
+
+			/* check whether the parent still has children, otherwise delete it */
+			if (gtk_tree_path_up(path_store))
+			{
+				gtk_tree_model_get_iter(GTK_TREE_MODEL(priv->store), &iter_store, path_store);
+				if (! gtk_tree_model_iter_has_child(GTK_TREE_MODEL(priv->store), &iter_store))
+					/* remove the empty parent */
+					gtk_tree_store_remove(priv->store, &iter_store);
+			}
+			/* now for the filter model */
+			if (gtk_tree_path_up(path_model))
+			{
+				gtk_tree_model_get_iter(model, &iter, path_model);
+				if (! gtk_tree_model_iter_has_child(model, &iter))
+				{
+					gtk_tree_model_filter_convert_iter_to_child_iter(
+						GTK_TREE_MODEL_FILTER(priv->filter), &iter_store, &iter);
+					/* hide the empty parent */
+					gtk_tree_store_set(priv->store, &iter_store, COOKIE_MANAGER_COL_VISIBLE, FALSE, -1);
+				}
+			}
+			gtk_tree_path_free(path_store);
+			gtk_tree_path_free(path_model);
 		}
 		gtk_tree_path_free(path);
-		/* remove/hide the parent */
-		gtk_tree_model_filter_convert_iter_to_child_iter(GTK_TREE_MODEL_FILTER(priv->filter),
-			&iter_store, &iter);
-		if (gtk_tree_model_iter_has_child(GTK_TREE_MODEL(priv->store), &iter_store))
-			gtk_tree_store_set(priv->store, &iter_store, COOKIE_MANAGER_COL_VISIBLE, FALSE, -1);
-		else
-			cm_store_remove(cmp, &iter);
-	}
-	else
-	{
-		GtkTreePath *path_store, *path_model;
+	} while ((row = row->next) != NULL);
+	cm_free_selection_list(rows, (GFunc) gtk_tree_path_free);
+	cm_free_selection_list(refs, (GFunc) gtk_tree_row_reference_free);
 
-		gtk_tree_model_filter_convert_iter_to_child_iter(GTK_TREE_MODEL_FILTER(priv->filter),
-			&iter_store, &iter);
-		path_store = gtk_tree_model_get_path(GTK_TREE_MODEL(priv->store), &iter_store);
-		path_model = gtk_tree_model_get_path(model, &iter);
+	cm_select_path(cmp, model, last_path);
+	gtk_tree_path_free(last_path);
+}
 
-		cm_delete_cookie(cmp, model, &iter);
-		gtk_tree_store_remove(priv->store, &iter_store);
 
-		/* check whether the parent still has children, otherwise delete it */
-		if (gtk_tree_path_up(path_store))
-		{
-			gtk_tree_model_get_iter(GTK_TREE_MODEL(priv->store), &iter_store, path_store);
-			if (! gtk_tree_model_iter_has_child(GTK_TREE_MODEL(priv->store), &iter_store))
-				/* remove the empty parent */
-				gtk_tree_store_remove(priv->store, &iter_store);
-		}
-		/* now for the filter model */
-		if (gtk_tree_path_up(path_model))
-		{
-			gtk_tree_model_get_iter(model, &iter, path_model);
-			if (! gtk_tree_model_iter_has_child(model, &iter))
-			{
-				gtk_tree_model_filter_convert_iter_to_child_iter(
-					GTK_TREE_MODEL_FILTER(priv->filter), &iter_store, &iter);
-				/* hide the empty parent */
-				gtk_tree_store_set(priv->store, &iter_store, COOKIE_MANAGER_COL_VISIBLE, FALSE, -1);
-			}
-		}
-		gtk_tree_path_free(path_store);
-		gtk_tree_path_free(path_model);
-	}
+static void cm_button_delete_clicked_cb(GtkToolButton *button, CookieManagerPage *cmp)
+{
+	cm_delete_item(cmp);
 }
 
 
@@ -438,11 +555,12 @@ static void cm_delete_all_cookies_real(CookieManagerPage *cmp)
 		else
 			cm_store_remove(cmp, &iter);
 	}
-	gtk_tree_path_free(path_first);
-
 	/* now that we deleted all matching cookies, we reset the filter */
 	gtk_entry_set_text(GTK_ENTRY(priv->filter_entry), "");
 	cm_set_button_sensitiveness(cmp, FALSE);
+
+	cm_select_path(cmp, model, path_first);
+	gtk_tree_path_free(path_first);
 }
 
 
@@ -478,6 +596,12 @@ static void cm_button_delete_all_clicked_cb(GtkToolButton *button, CookieManager
 }
 
 
+static const gchar *cm_skip_leading_dot(const gchar *text)
+{
+	return (*text == '.') ? text + 1 : text;
+}
+
+
 static void cm_tree_drag_data_get_cb(GtkWidget *widget, GdkDragContext *drag_context,
 									 GtkSelectionData *data, guint info, guint ltime,
 									 CookieManagerPage *cmp)
@@ -485,11 +609,18 @@ static void cm_tree_drag_data_get_cb(GtkWidget *widget, GdkDragContext *drag_con
 	GtkTreeIter iter, iter_store;
 	GtkTreeSelection *selection;
 	GtkTreeModel *model;
+	GList *rows;
 	CookieManagerPagePrivate *priv = COOKIE_MANAGER_PAGE_GET_PRIVATE(cmp);
 
 	selection = gtk_tree_view_get_selection(GTK_TREE_VIEW(priv->treeview));
-	if (! gtk_tree_selection_get_selected(selection, &model, &iter))
+	rows = gtk_tree_selection_get_selected_rows(selection, &model);
+	if (cm_list_length(rows) != 1)
+	{
+		cm_free_selection_list(rows, (GFunc) gtk_tree_path_free);
 		return;
+	}
+	/* get iter */
+	gtk_tree_model_get_iter(model, &iter, (GtkTreePath*) (g_list_nth_data(rows, 0)));
 
 	gtk_tree_model_filter_convert_iter_to_child_iter(
 		GTK_TREE_MODEL_FILTER(model), &iter_store, &iter);
@@ -497,18 +628,25 @@ static void cm_tree_drag_data_get_cb(GtkWidget *widget, GdkDragContext *drag_con
 	if (gtk_tree_store_iter_is_valid(priv->store, &iter_store))
 	{
 		SoupCookie *cookie;
-		gchar *name, *text;
+		gchar *name;
+		const gchar *text;
 
 		gtk_tree_model_get(model, &iter,
 			COOKIE_MANAGER_COL_NAME, &name,
 			COOKIE_MANAGER_COL_COOKIE, &cookie,
 			-1);
 
-		if (cookie == NULL && name != NULL)
+		if (name != NULL)
 		{
-			/* skip a leading dot */
-			text = (*name == '.') ? name + 1 : name;
+			GtkTreeIter parent;
+			/* get the name of the parent item which should be a domain item */
+			if (cookie != NULL && gtk_tree_model_iter_parent(model, &parent, &iter))
+			{
+				g_free(name);
+				gtk_tree_model_get(model, &parent, COOKIE_MANAGER_COL_NAME, &name, -1);
+			}
 
+			text = cm_skip_leading_dot(name);
 			gtk_selection_data_set_text(data, text, -1);
 		}
 		g_free(name);
@@ -549,6 +687,24 @@ static gchar *cm_get_cookie_description_text(SoupCookie *cookie)
 			expires);
 
 	return text;
+}
+
+
+static gchar *cm_get_domain_description_text(const gchar *domain, gint cookie_count)
+{
+	gchar *str, *text;
+
+	domain = cm_skip_leading_dot(domain);
+
+	text = g_markup_printf_escaped(
+		_("<b>Domain</b>: %s\n<b>Cookies</b>: %d"),
+		domain, cookie_count);
+
+	str = g_strconcat(text, "\n\n\n\n", NULL);
+
+	g_free(text);
+
+	return str;
 }
 
 
@@ -683,24 +839,36 @@ static void cm_filter_entry_clear_icon_released_cb(GtkIconEntry *e, gint pos, gi
 
 static void cm_tree_selection_changed_cb(GtkTreeSelection *selection, CookieManagerPage *cmp)
 {
+	GList *rows;
 	GtkTreeIter iter, iter_store;
 	GtkTreeModel *model;
-	gchar *text;
+	gchar *text, *name;
 	gboolean valid = TRUE;
-	gboolean delete_possible = FALSE;
+	gboolean delete_possible = TRUE;
+	guint rows_len;
 	SoupCookie *cookie;
 	CookieManagerPagePrivate *priv = COOKIE_MANAGER_PAGE_GET_PRIVATE(cmp);
 
-	if (! gtk_tree_selection_get_selected(selection, &model, &iter))
+	rows = gtk_tree_selection_get_selected_rows(selection, &model);
+	rows_len = cm_list_length(rows);
+	if (rows_len == 0)
+	{
 		valid = FALSE;
-	else
+		delete_possible = FALSE;
+	}
+	else if (rows_len == 1)
+	{
+		/* get iter */
+		gtk_tree_model_get_iter(model, &iter, (GtkTreePath*) (g_list_nth_data(rows, 0)));
+
 		gtk_tree_model_filter_convert_iter_to_child_iter(GTK_TREE_MODEL_FILTER(model),
 			&iter_store, &iter);
+	}
+	else
+		valid = FALSE;
 
 	if (valid && gtk_tree_store_iter_is_valid(priv->store, &iter_store))
 	{
-		delete_possible = TRUE;
-
 		gtk_tree_model_get(model, &iter, COOKIE_MANAGER_COL_COOKIE, &cookie, -1);
 		if (cookie != NULL)
 		{
@@ -711,13 +879,27 @@ static void cm_tree_selection_changed_cb(GtkTreeSelection *selection, CookieMana
 			g_free(text);
 		}
 		else
-			valid = FALSE;
+		{
+			gtk_tree_model_get(model, &iter, COOKIE_MANAGER_COL_NAME, &name, -1);
+			if (name != NULL)
+			{
+				gint cookie_count = gtk_tree_model_iter_n_children(model, &iter);
+
+				text = cm_get_domain_description_text(name, cookie_count);
+				gtk_label_set_markup(GTK_LABEL(priv->desc_label), text);
+
+				g_free(text);
+				g_free(name);
+			}
+		}
 	}
 	/* This is a bit hack'ish but we add some empty lines to get a minimum height of the
 	 * label at the bottom without any font size calculation. */
 	if (! valid)
 		gtk_label_set_text(GTK_LABEL(priv->desc_label), CM_EMPTY_LABEL_TEXT);
 	cm_set_button_sensitiveness(cmp, delete_possible);
+
+	cm_free_selection_list(rows, (GFunc) gtk_tree_path_free);
 }
 
 
@@ -760,19 +942,36 @@ static gboolean cm_tree_button_release_event_cb(GtkWidget *widget, GdkEventButto
 }
 
 
+static gboolean cm_tree_key_press_cb(GtkWidget *widget, GdkEventKey *event, CookieManagerPage *cmp)
+{
+	if (event->keyval == GDK_Delete && !
+		(event->state & (GDK_SHIFT_MASK | GDK_CONTROL_MASK | GDK_MOD1_MASK)))
+	{
+		cm_delete_item(cmp);
+		return TRUE;
+	}
+	return FALSE;
+}
+
+
 static gboolean cm_tree_button_press_event_cb(GtkWidget *widget, GdkEventButton *ev,
 											  CookieManagerPage *cmp)
 {
+	gboolean ret = FALSE;
+
 	if (ev->type == GDK_2BUTTON_PRESS)
 	{
 		GtkTreeSelection *selection;
 		GtkTreeModel *model;
 		GtkTreeIter iter;
+		GList *rows;
 
 		selection = gtk_tree_view_get_selection(GTK_TREE_VIEW(widget));
-
-		if (gtk_tree_selection_get_selected(selection, &model, &iter))
+		rows = gtk_tree_selection_get_selected_rows(selection, &model);
+		if (cm_list_length(rows) == 1)
 		{
+			/* get iter */
+			gtk_tree_model_get_iter(model, &iter, (GtkTreePath*) (g_list_nth_data(rows, 0)));
 			/* double click on parent node expands/collapses it */
 			if (gtk_tree_model_iter_has_child(model, &iter))
 			{
@@ -785,12 +984,32 @@ static gboolean cm_tree_button_press_event_cb(GtkWidget *widget, GdkEventButton 
 
 				gtk_tree_path_free(path);
 
-				return TRUE;
+				ret = TRUE;
 			}
 		}
+		cm_free_selection_list(rows, (GFunc) gtk_tree_path_free);
 	}
+	return ret;
+}
 
-	return FALSE;
+
+static void cm_tree_render_text_cb(GtkTreeViewColumn *column, GtkCellRenderer *renderer, GtkTreeModel *model,
+								   GtkTreeIter *iter, gpointer data)
+{
+	gchar *name;
+
+	gtk_tree_model_get(model, iter, COOKIE_MANAGER_COL_NAME, &name, -1);
+
+	if (name != NULL && *name != '.')
+	{
+		gchar *display_name = g_strconcat(" ", name, NULL);
+		g_object_set(renderer, "text", display_name, NULL);
+		g_free(display_name);
+	}
+	else
+		g_object_set(renderer, "text", name, NULL);
+
+	g_free(name);
 }
 
 
@@ -812,6 +1031,8 @@ static GtkWidget *cm_tree_prepare(CookieManagerPage *cmp)
 	gtk_tree_view_column_set_sort_indicator(column, TRUE);
 	gtk_tree_view_column_set_sort_column_id(column, COOKIE_MANAGER_COL_NAME);
 	gtk_tree_view_column_set_resizable(column, TRUE);
+	gtk_tree_view_column_set_cell_data_func(column, renderer,
+        (GtkTreeCellDataFunc) cm_tree_render_text_cb, NULL, NULL);
 	gtk_tree_view_append_column(GTK_TREE_VIEW(treeview), column);
 
 	gtk_tree_view_set_rules_hint(GTK_TREE_VIEW(treeview), TRUE);
@@ -820,10 +1041,11 @@ static GtkWidget *cm_tree_prepare(CookieManagerPage *cmp)
 
 	/* selection handling */
 	sel = gtk_tree_view_get_selection(GTK_TREE_VIEW(treeview));
-	gtk_tree_selection_set_mode(sel, GTK_SELECTION_SINGLE);
+	gtk_tree_selection_set_mode(sel, GTK_SELECTION_MULTIPLE);
 
 	/* signals */
 	g_signal_connect(sel, "changed", G_CALLBACK(cm_tree_selection_changed_cb), cmp);
+	g_signal_connect(treeview, "key-press-event", G_CALLBACK(cm_tree_key_press_cb), cmp);
 	g_signal_connect(treeview, "button-press-event", G_CALLBACK(cm_tree_button_press_event_cb), cmp);
 	g_signal_connect(treeview, "button-release-event", G_CALLBACK(cm_tree_button_release_event_cb), cmp);
 	g_signal_connect(treeview, "popup-menu", G_CALLBACK(cm_tree_popup_menu_cb), cmp);
@@ -843,7 +1065,6 @@ static GtkWidget *cm_tree_prepare(CookieManagerPage *cmp)
 		GDK_ACTION_COPY
 	);
 	gtk_drag_source_add_text_targets(treeview);
-	/*gtk_drag_source_add_uri_targets(treeview);*/
 	g_signal_connect(treeview, "drag-data-get", G_CALLBACK(cm_tree_drag_data_get_cb), cmp);
 
 	/* popup menu */
