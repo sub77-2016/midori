@@ -2,6 +2,7 @@ midori (0.2.4-1) UNRELEASED; urgency=low
 
   * New Upstream Version
     - update d/copyright
+    - handles files in current dir correctly (Closes: #565329)
   * use bundled waf again (Closes: 571709)
   * set Standards-Version to 3.8.4
 
