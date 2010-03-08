@@ -57,6 +57,10 @@ PRIORITY=$(shell sed -r -e '/DEBIAN_WWW_ALTERNATIVES_PRIORITY/ !d' -e 's/.* ([^ 
 debian/midori.postinst: debian/midori.postinst.base
 	sed "s/DEBIAN_WWW_ALTERNATIVES_PRIORITY/$(PRIORITY)/g" debian/midori.postinst.base > debian/midori.postinst
 
+override_dh_clean:
+	rm -fr .waf-1.5.3-575529c232c0559c3efb0adb3d077447/
+	$(CMD)
+
 override_dh_installdeb: debian/midori.postinst
 	$(CMD)
 
