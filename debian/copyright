@@ -5,7 +5,12 @@ Upstream-Maintainer: Christian Dywan <christian@twotoasts.de>
 Upstream-Source: http://goodies.xfce.org/releases/midori/
 
 Files: *
+Copyright: © 2007-2010, Christian Dywan <christian@twotoasts.de>
+License: LGPL-2.1+
+
+Files: tests/magic-uri.c
 Copyright: © 2007-2009, Christian Dywan <christian@twotoasts.de>
+ Copyright (C) 2009 Alexander Butenko <a.butenka@gmail.com>
 License: LGPL-2.1+
 
 Files: midori/midori-view.c
@@ -41,9 +46,12 @@ Copyright: © 2007, Emanuele Rocca <ema@debian.org>
 License: expat
 
 Files: po/gl.po
-Copyright: Copyright (C) 2008 Christian Dywan <christian@twotoasts.de>
- Copyright (C) 2008, 2009 Miguel Anxo Bouzada.
- Copyright (C) 2009 Leandro Regueiro.
+Copyright: Copyright (C) 2008, 2009 Miguel Anxo Bouzada.
+ Copyright (C) 2009-2010 Leandro Regueiro.
+License: LGPL-2.1+
+
+Files: po/sv.po
+Copyright: Copyright (C) 2008, 2009 Free Software Foundation, Inc.
 License: LGPL-2.1+
 
 Files: katze/katze-http-cookies.c
@@ -79,10 +87,6 @@ Copyright:   Copyright (C) 2007-2009 Christian Dywan <christian@twotoasts.de>
  Copyright (C) 2009 Jérôme Geulfucci <jeromeg@xfce.org>
 License: LGPL-2.1+
 
-Files: extensions/dnsprefetch.c
-Copyright: Copyright (C) 2009 Alexander Butenko <a.butenka@gmail.com>
-License: LGPL-2.1+
-
 Files: extensions/formhistory.c
 Copyright: Copyright (C) 2009 Alexander Butenko <a.butenka@gmail.com>
  Copyright (C) 2009 Christian Dywan <christian@twotoasts.de>
@@ -115,11 +119,9 @@ License: LGPL-2.1+
 Files: midori/gtkiconentry.?
 Copyright: © 2004, Christian Hammond
  © 2008, Cody Russell <bratsche@gnome.org>
+ (C) 1995-1997 Peter Mattis, Spencer Kimball and Josh MacDonald
+ Modified by the GTK+ Team and others 1997-2000
 License: LGPL-2+
-
-Files: midori/midori-locationentry.?
-Copyright: © 2008, Dale Whittaker <dayul@users.sf.net>
-License: LGPL-2.1+
 
 Files: extensions/mouse-gestures.c
 Copyright: Copyright (C) 2009 Matthias Kruk <mkruk@matthiaskruk.de>
@@ -141,6 +143,9 @@ License: LGPL-2.1+
 
 Files: midori/sokoke.c
 Copyright: Copyright (C) 2009 Dale Whittaker <dayul@users.sf.net>
+ Copyright (C) 2009 Alexander Butenko <a.butenka@gmail.com>
+ Copyright (C) 2009 Mario Sanchez Prada <msanchez@igalia.com>
+ Copyright (C) 2009 Dan Winship <danw@gnome.org>
 License: LGPL-2.1+
 
 Files: extensions/toolbar-editor.c
