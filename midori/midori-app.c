@@ -62,7 +62,7 @@ struct _MidoriApp
 
     MidoriAppInstance instance;
 
-    #if !HAVE_HILDON
+    #if !HAVE_HILDON || !HAVE_LIBNOTIFY
     gchar* program_notify_send;
     #endif
 };
@@ -172,7 +172,10 @@ midori_browser_destroy_cb (MidoriBrowser* browser,
     g_signal_emit (app, signals[REMOVE_BROWSER], 0, browser);
     katze_array_remove_item (app->browsers, browser);
     if (!katze_array_is_empty (app->browsers))
+    {
+        app->browser = katze_array_get_nth_item (app->browsers, 0);
         return FALSE;
+    }
     midori_app_quit (app);
     return TRUE;
 }
@@ -206,8 +209,10 @@ _midori_app_add_browser (MidoriApp*     app,
 
     app->browser = browser;
     #if HAVE_UNIQUE
+    /* We *do not* let unique watch windows because that includes
+        bringing windows in the foreground, even from other workspaces.
     if (app->instance)
-        unique_app_watch_window (app->instance, GTK_WINDOW (browser));
+        unique_app_watch_window (app->instance, GTK_WINDOW (browser)); */
     #endif
 }
 
@@ -391,6 +396,15 @@ midori_app_class_init (MidoriAppClass* class)
                                      G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
 }
 
+static void
+midori_app_raise_window (GtkWindow* window,
+                         GdkScreen* screen)
+{
+    gtk_window_set_screen (window, screen);
+    gtk_window_present (window);
+    gtk_window_deiconify (window);
+}
+
 static gboolean
 midori_app_command_received (MidoriApp*   app,
                              const gchar* command,
@@ -410,8 +424,7 @@ midori_app_command_received (MidoriApp*   app,
         if (!app->browser)
             return FALSE;
 
-        gtk_window_set_screen (GTK_WINDOW (app->browser), screen);
-        gtk_window_present (GTK_WINDOW (app->browser));
+        midori_app_raise_window (GTK_WINDOW (app->browser), screen);
         return TRUE;
     }
     else if (g_str_equal (command, "new"))
@@ -421,8 +434,8 @@ midori_app_command_received (MidoriApp*   app,
         /* FIXME: Should open the homepage according to settings */
         midori_browser_add_uri (browser, "");
         midori_browser_activate_action (browser, "Location");
-        gtk_window_set_screen (GTK_WINDOW (app->browser), screen);
         gtk_widget_show (GTK_WIDGET (browser));
+        midori_app_raise_window (GTK_WINDOW (browser), screen);
         return TRUE;
     }
     else if (g_str_equal (command, "open"))
@@ -430,8 +443,6 @@ midori_app_command_received (MidoriApp*   app,
         if (!app->browser)
             return FALSE;
 
-        gtk_window_set_screen (GTK_WINDOW (app->browser), screen);
-        gtk_window_present (GTK_WINDOW (app->browser));
         if (!uris)
             return FALSE;
         else
@@ -446,15 +457,19 @@ midori_app_command_received (MidoriApp*   app,
             {
                 browser = midori_app_create_browser (app);
                 midori_app_add_browser (app, browser);
-                gtk_window_set_screen (GTK_WINDOW (app->browser), screen);
                 gtk_widget_show (GTK_WIDGET (browser));
             }
             else
                 browser = app->browser;
+
+            midori_app_raise_window (GTK_WINDOW (browser), screen);
+
             first = (open_external_pages_in == MIDORI_NEW_PAGE_CURRENT);
             while (*uris)
             {
-                gchar* fixed_uri = sokoke_magic_uri (*uris, NULL);
+                gchar* fixed_uri = sokoke_magic_uri (*uris);
+                if (!fixed_uri)
+                    fixed_uri = g_strdup (*uris);
                 if (first)
                 {
                     midori_browser_set_current_uri (browser, fixed_uri);
@@ -605,8 +620,6 @@ midori_app_io_channel_watch_cb (GIOChannel*  channel,
         }
     }
 
-    gtk_window_present (GTK_WINDOW (app->browser));
-
     fd_close (sock);
 
     return TRUE;
@@ -706,9 +719,10 @@ midori_app_init (MidoriApp* app)
 
     #if HAVE_LIBNOTIFY
     notify_init ("midori");
+    #else
+    app->program_notify_send = g_find_program_in_path ("notify-send");
     #endif
 
-    app->program_notify_send = g_find_program_in_path ("notify-send");
 }
 
 static void
@@ -739,8 +753,9 @@ midori_app_finalize (GObject* object)
     #if HAVE_LIBNOTIFY
     if (notify_is_initted ())
         notify_uninit ();
+    #else
+        katze_assign (app->program_notify_send, NULL);
     #endif
-    katze_assign (app->program_notify_send, NULL);
 
     G_OBJECT_CLASS (midori_app_parent_class)->finalize (object);
 }
@@ -1165,8 +1180,7 @@ midori_app_send_notification (MidoriApp*   app,
         sent = notify_notification_show (note, NULL);
         g_object_unref (note);
     }
-    #endif
-
+    #else
     /* Fall back to the command line program "notify-send" */
     if (!sent && app->program_notify_send)
     {
@@ -1181,5 +1195,6 @@ midori_app_send_notification (MidoriApp*   app,
         g_free (msgq);
         g_free (command);
     }
+    #endif
     #endif
 }

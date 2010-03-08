@@ -5,7 +5,9 @@ Makefile
 _build_
 
 po/.intltool-merge-cache
+po/LINGUAS
 po/POTFILES
+po/midori.pot
 po/stamp-it
 po/*.gmo
 

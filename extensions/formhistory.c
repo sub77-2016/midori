@@ -31,22 +31,24 @@ static gchar* jsforms;
 static gboolean
 formhistory_prepare_js ()
 {
+   gchar* data_name;
+   gchar* data_path;
    gchar* autosuggest;
    gchar* style;
    guint i;
    gchar* file;
 
-   gchar* data_path = g_build_filename (MDATADIR, PACKAGE_NAME, "res", NULL);
-   file = g_build_filename (data_path,"/autosuggestcontrol.js",NULL);
-   if (!g_file_test (file, G_FILE_TEST_EXISTS))
+   data_name = g_build_filename (PACKAGE_NAME, "res", NULL);
+   data_path = sokoke_find_data_filename (data_name);
+   g_free (data_name);
+   file = g_build_filename (data_path, G_DIR_SEPARATOR_S, "autosuggestcontrol.js",NULL);
+   if (!g_file_get_contents (file, &autosuggest, NULL, NULL))
        return FALSE;
-   g_file_get_contents (file, &autosuggest, NULL, NULL);
    g_strchomp (autosuggest);
 
-   file = g_build_filename (data_path,"/autosuggestcontrol.css",NULL);
-   if (!g_file_test (file, G_FILE_TEST_EXISTS))
+   file = g_build_filename (data_path, G_DIR_SEPARATOR_S, "autosuggestcontrol.css",NULL);
+   if(!g_file_get_contents (file, &style, NULL, NULL))
        return FALSE;
-   g_file_get_contents (file, &style, NULL, NULL);
    g_strchomp (style);
    i = 0;
    while (style[i])
@@ -58,15 +60,17 @@ formhistory_prepare_js ()
 
    jsforms = g_strdup_printf (
         "%s"
-        "window.addEventListener (\"load\", function () { initSuggestions (); }, true);"
         "window.addEventListener ('DOMContentLoaded',"
         "function () {"
-        "var mystyle = document.createElement(\"style\");"
-        "mystyle.setAttribute(\"type\", \"text/css\");"
-        "mystyle.appendChild(document.createTextNode(\"%s\"));"
-        "var head = document.getElementsByTagName(\"head\")[0];"
-        "if (head) head.appendChild(mystyle);"
-        "else document.documentElement.insertBefore(mystyle, document.documentElement.firstChild);"
+        "   if (document.getElementById('formhistory'))"
+        "       return;"
+        "   initSuggestions ();"
+        "   var mystyle = document.createElement('style');"
+        "   mystyle.setAttribute('type', 'text/css');"
+        "   mystyle.setAttribute('id', 'formhistory');"
+        "   mystyle.appendChild(document.createTextNode('%s'));"
+        "   var head = document.getElementsByTagName('head')[0];"
+        "   if (head) head.appendChild(mystyle);"
         "}, true);",
         autosuggest,
         style);
@@ -191,7 +195,6 @@ formhistory_navigation_decision_cb (WebKitWebView*             web_view,
                                     WebKitWebPolicyDecision*   decision,
                                     MidoriExtension*           extension)
 {
-    JSContextRef js_context = webkit_web_frame_get_global_context (web_frame);
     /* The script returns form data in the form "field_name|,|value|,|field_type".
        We are handling only input fields with 'text' or 'password' type.
        The field separator is "|||" */
@@ -203,18 +206,19 @@ formhistory_navigation_decision_cb (WebKitWebView*             web_view,
                  "        var eid = inputs[i].getAttribute('id');"
                  "        if (!ename && eid)"
                  "            ename=eid;"
-                 "        out += ename+'|,|'+inputs[i].value +'|,|'+inputs[i].type +'|||';"
+                 "        if (inputs[i].getAttribute('autocomplete') != 'off')"
+                 "            out += ename+'|,|'+inputs[i].value +'|,|'+inputs[i].type +'|||';"
                  "    }"
                  "  }"
                  "  return out;"
                  "}"
                  "dumpForm (document.getElementsByTagName('input'))";
 
-    if (webkit_web_navigation_action_get_reason (action) == WEBKIT_WEB_NAVIGATION_REASON_FORM_SUBMITTED
-     || webkit_web_navigation_action_get_reason (action) == WEBKIT_WEB_NAVIGATION_REASON_FORM_RESUBMITTED)
+    if (webkit_web_navigation_action_get_reason (action) == WEBKIT_WEB_NAVIGATION_REASON_FORM_SUBMITTED)
     {
+        JSContextRef js_context = webkit_web_frame_get_global_context (web_frame);
         gchar* value = sokoke_js_script_eval (js_context, script, NULL);
-        if (value)
+        if (value && *value)
         {
             gpointer db = g_object_get_data (G_OBJECT (extension), "formhistory-db");
             gchar** inputs = g_strsplit (value, "|||", 0);
@@ -286,13 +290,15 @@ formhistory_session_request_queued_cb (SoupSession*     session,
 #endif
 
 static void
-formhistory_window_object_cleared_cb (GtkWidget*      web_view,
+formhistory_window_object_cleared_cb (WebKitWebView*  web_view,
                                       WebKitWebFrame* web_frame,
                                       JSContextRef    js_context,
                                       JSObjectRef     js_window)
 {
-    webkit_web_view_execute_script (WEBKIT_WEB_VIEW (web_view),
-                                    formhistory_build_js ());
+    gchar* script;
+    script = formhistory_build_js ();
+    sokoke_js_script_eval (js_context, script, NULL);
+    g_free (script);
 }
 
 static void
@@ -344,8 +350,6 @@ formhistory_deactivate_tabs (MidoriView*      view,
 {
     GtkWidget* web_view = gtk_bin_get_child (GTK_BIN (view));
     g_signal_handlers_disconnect_by_func (
-       browser, formhistory_add_tab_cb, extension);
-    g_signal_handlers_disconnect_by_func (
        web_view, formhistory_window_object_cleared_cb, NULL);
     #if WEBKIT_CHECK_VERSION (1, 1, 4)
     g_signal_handlers_disconnect_by_func (
@@ -366,13 +370,15 @@ formhistory_deactivate_cb (MidoriExtension* extension,
     #endif
 
     g_signal_handlers_disconnect_by_func (
+       browser, formhistory_add_tab_cb, extension);
+    g_signal_handlers_disconnect_by_func (
         extension, formhistory_deactivate_cb, browser);
     g_signal_handlers_disconnect_by_func (
         app, formhistory_app_add_browser_cb, extension);
     midori_browser_foreach (browser,
         (GtkCallback)formhistory_deactivate_tabs, extension);
 
-    jsforms = "";
+    katze_assign (jsforms, NULL);
     if (global_keys)
         g_hash_table_destroy (global_keys);
 
@@ -429,6 +435,8 @@ formhistory_activate_cb (MidoriExtension* extension,
     global_keys = g_hash_table_new_full (g_str_hash, g_str_equal,
                                (GDestroyNotify)g_free,
                                (GDestroyNotify)g_free);
+    if(!jsforms)
+        formhistory_prepare_js ();
     #if HAVE_SQLITE
     config_dir = midori_extension_get_config_dir (extension);
     katze_mkdir_with_parents (config_dir, 0700);
@@ -498,7 +506,7 @@ extension_init (void)
 
     if (formhistory_prepare_js ())
     {
-        ver = "0.1";
+        ver = "1.0";
         desc = g_strdup (_("Stores history of entered form data"));
     }
     else

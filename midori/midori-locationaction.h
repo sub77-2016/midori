@@ -12,8 +12,6 @@
 #ifndef __MIDORI_LOCATION_ACTION_H__
 #define __MIDORI_LOCATION_ACTION_H__
 
-#include "midori-locationentry.h"
-
 #include <katze/katze.h>
 
 G_BEGIN_DECLS
@@ -35,7 +33,7 @@ typedef struct _MidoriLocationAction         MidoriLocationAction;
 typedef struct _MidoriLocationActionClass    MidoriLocationActionClass;
 
 GType
-midori_location_action_get_type             (void);
+midori_location_action_get_type             (void) G_GNUC_CONST;
 
 void
 midori_location_action_freeze              (MidoriLocationAction* location_action);

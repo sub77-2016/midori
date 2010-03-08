@@ -21,8 +21,17 @@
     #include "config.h"
 #endif
 
+#if HAVE_UNISTD_H
+    #include <unistd.h>
+#endif
+
 #ifdef HAVE_HILDON_2_2
     #include <hildon/hildon.h>
+#endif
+
+#if !GTK_CHECK_VERSION (2, 18, 0)
+    #define gtk_widget_get_has_window(wdgt) !GTK_WIDGET_NO_WINDOW (wdgt)
+    #define gtk_widget_get_allocation(wdgt, alloc) *alloc = wdgt->allocation
 #endif
 
 static void
@@ -30,13 +39,15 @@ proxy_toggle_button_toggled_cb (GtkToggleButton* button,
                                 GObject*         object)
 {
     gboolean toggled;
+    const gchar* property;
+
     #ifdef HAVE_HILDON_2_2
     if (HILDON_IS_CHECK_BUTTON (button))
         toggled = hildon_check_button_get_active (HILDON_CHECK_BUTTON (button));
     #else
     toggled = gtk_toggle_button_get_active (button);
     #endif
-    const gchar* property = g_object_get_data (G_OBJECT (button), "property");
+    property = g_object_get_data (G_OBJECT (button), "property");
     g_object_set (object, property, toggled, NULL);
 }
 
@@ -616,8 +627,12 @@ katze_property_proxy (gpointer     object,
         GtkComboBox* combo;
         GList* apps;
         const gchar* app_type = &hint[12];
+        GtkSettings* settings;
         gint icon_width = 16;
-        gtk_icon_size_lookup (GTK_ICON_SIZE_MENU, &icon_width, NULL);
+
+        settings = gtk_settings_get_for_screen (gdk_screen_get_default ());
+        gtk_icon_size_lookup_for_settings (settings, GTK_ICON_SIZE_MENU,
+                                           &icon_width, NULL);
 
         model = gtk_list_store_new (4, G_TYPE_APP_INFO, G_TYPE_STRING,
                                        G_TYPE_STRING, G_TYPE_INT);
@@ -906,21 +921,24 @@ katze_widget_popup_position_menu (GtkMenu*  menu,
 {
     gint wx, wy;
     gint menu_width;
+    GtkAllocation allocation;
     GtkRequisition menu_req;
     GtkRequisition widget_req;
     KatzePopupInfo* info = user_data;
     GtkWidget* widget = info->widget;
     gint widget_height;
 
+    gtk_widget_get_allocation (widget, &allocation);
+
     /* Retrieve size and position of both widget and menu */
-    if (GTK_WIDGET_NO_WINDOW (widget))
+    if (!gtk_widget_get_has_window (widget))
     {
-        gdk_window_get_position (widget->window, &wx, &wy);
-        wx += widget->allocation.x;
-        wy += widget->allocation.y;
+        gdk_window_get_position (gtk_widget_get_window (widget), &wx, &wy);
+        wx += allocation.x;
+        wy += allocation.y;
     }
     else
-        gdk_window_get_origin (widget->window, &wx, &wy);
+        gdk_window_get_origin (gtk_widget_get_window (widget), &wx, &wy);
     gtk_widget_size_request (GTK_WIDGET (menu), &menu_req);
     gtk_widget_size_request (widget, &widget_req);
     menu_width = menu_req.width;
@@ -931,7 +949,7 @@ katze_widget_popup_position_menu (GtkMenu*  menu,
         ; /* Do nothing? */
     else if (info->position == KATZE_MENU_POSITION_RIGHT)
     {
-        *x = wx + widget->allocation.width - menu_width;
+        *x = wx + allocation.width - menu_width;
         *y = wy + widget_height;
     } else if (info->position == KATZE_MENU_POSITION_LEFT)
     {
@@ -1340,7 +1358,8 @@ katze_mkdir_with_parents (const gchar* pathname,
 {
   gchar* fn, *p;
 
-  if (g_file_test (pathname, G_FILE_TEST_EXISTS))
+  /* Use g_access instead of g_file_test for better performance */
+  if (g_access (pathname, F_OK) == 0)
       return 0;
 
   fn = g_strdup (pathname);
@@ -1360,7 +1379,7 @@ katze_mkdir_with_parents (const gchar* pathname,
       else
           *p = '\0';
 
-      if (!g_file_test (fn, G_FILE_TEST_EXISTS))
+      if (g_access (fn, F_OK) != 0)
       {
           if (g_mkdir (fn, mode) == -1)
           {
@@ -1452,17 +1471,18 @@ katze_load_cached_icon (const gchar* uri,
             i++;
         if (uri[i] == '/')
         {
-            icon_uri = g_strdup (uri);
-            icon_uri[i] = '\0';
-            icon_uri = g_strdup_printf ("%s/favicon.ico", icon_uri);
+            gchar* ticon_uri = g_strdup (uri);
+            ticon_uri[i] = '\0';
+            icon_uri = g_strdup_printf ("%s/favicon.ico", ticon_uri);
+            g_free (ticon_uri);
         }
         else
             icon_uri = g_strdup_printf ("%s/favicon.ico", uri);
 
         checksum = g_compute_checksum_for_string (G_CHECKSUM_MD5, icon_uri, -1);
         ext = g_strrstr (icon_uri, ".");
-        g_free (icon_uri);
         filename = g_strdup_printf ("%s%s", checksum, ext ? ext : "");
+        g_free (icon_uri);
         g_free (checksum);
         path = g_build_filename (g_get_user_cache_dir (), PACKAGE_NAME,
                                  "icons", filename, NULL);
@@ -1476,4 +1496,97 @@ katze_load_cached_icon (const gchar* uri,
 
     return icon || !widget ? icon : gtk_widget_render_icon (widget,
         GTK_STOCK_FILE, GTK_ICON_SIZE_MENU, NULL);
+}
+
+/**
+ * katze_collfold:
+ * @str: a non-NULL UTF-8 string
+ *
+ * Computes a string without case and decomposited so
+ * it can be used for comparison.
+ *
+ * Return value: a normalized string
+ *
+ * Since: 0.2.3
+ **/
+gchar*
+katze_collfold (const gchar* str)
+{
+    GString* result = g_string_new (NULL);
+    const gchar* p = str;
+
+    while (*p)
+    {
+        gunichar ch = g_unichar_tolower (g_utf8_get_char (p));
+        gsize len;
+        gunichar* sch = g_unicode_canonical_decomposition (ch, &len);
+        guint i = 0;
+        while (i < len)
+            g_string_append_unichar (result, sch[i++]);
+
+        p = g_utf8_next_char (p);
+    }
+
+    return g_string_free (result, FALSE);
+}
+
+/**
+ * katze_utf8_stristr:
+ * @haystack: a non-NULL UTF-8 string
+ * @needle: a normalized non-NULL UTF-8 string
+ *
+ * Determines whether @needle is in @haystack, disregarding
+ * differences in case.
+ *
+ * Return value: %TRUE if @needle is found in @haystack
+ *
+ * Since: 0.2.3
+ **/
+gboolean
+katze_utf8_stristr (const gchar* haystack,
+                    const gchar* needle)
+{
+    #if 0 /* 0,000159 seconds */
+    /* Too slow for use in completion */
+    gchar* nhaystack = g_utf8_normalize (haystack, -1, G_NORMALIZE_DEFAULT);
+    const gchar *p = nhaystack;
+    gsize len = strlen (needle);
+    gsize i;
+
+    while (*p)
+    {
+        for (i = 0; i < len; i++)
+            if (g_unichar_tolower (g_utf8_get_char (p + i))
+             != g_unichar_tolower (g_utf8_get_char (needle + i)))
+                goto next;
+
+        g_free (nhaystack);
+        return TRUE;
+
+        next:
+            p = g_utf8_next_char (p);
+    }
+
+    g_free (nhaystack);
+    return FALSE;
+    #else /* 0,000044 seconds */
+    /* No unicode matching */
+    const gchar *p = haystack;
+    gsize len = strlen (needle);
+    gsize i;
+
+    while (*p)
+    {
+        for (i = 0; i < len; i++)
+            if (g_ascii_tolower (p[i]) != g_ascii_tolower (needle[i]))
+                goto next;
+
+        return TRUE;
+
+        next:
+            p++;
+    }
+
+    return FALSE;
+    #endif
 }

@@ -1,5 +1,6 @@
 /*
  Copyright (C) 2008-2009 Christian Dywan <christian@twotoasts.de>
+ Copyright (C) 2009 Alexander Butenko <a.butenka@gmail.com>
 
  This library is free software; you can redistribute it and/or
  modify it under the terms of the GNU Lesser General Public
@@ -13,7 +14,6 @@
     #include <config.h>
 #endif
 
-#include "compat.h"
 #include "sokoke.h"
 
 #define SM "http://www.searchmash.com/search/"
@@ -37,6 +37,8 @@ test_input (const gchar* input,
             const gchar* expected)
 {
     static KatzeArray* search_engines = NULL;
+    gchar* uri;
+
     if (G_UNLIKELY (!search_engines))
     {
         KatzeItem* item;
@@ -54,7 +56,30 @@ test_input (const gchar* input,
         g_object_unref (item);
     }
 
-    gchar* uri = sokoke_magic_uri (input, search_engines);
+    uri = sokoke_magic_uri (input);
+    if (!uri)
+    {
+        gchar** parts;
+        gchar* keywords = NULL;
+        const gchar* search_uri = NULL;
+
+        /* Do we have a keyword and a string? */
+        parts = g_strsplit (input, " ", 2);
+        if (parts[0])
+        {
+            KatzeItem* item;
+            if ((item = katze_array_find_token (search_engines, parts[0])))
+            {
+                keywords = g_strdup (parts[1] ? parts[1] : "");
+                search_uri = katze_item_get_uri (item);
+            }
+        }
+        g_strfreev (parts);
+
+        uri = keywords ? sokoke_search_uri (search_uri, keywords) : NULL;
+
+        g_free (keywords);
+    }
     sokoke_assert_str_equal (input, uri, expected);
     g_free (uri);
 }
@@ -108,6 +133,7 @@ magic_uri_idn (void)
     #endif
     { "http://en.wikipedia.org/wiki/Kölsch_language", NULL },
     { "file:///home/mark/frühstück", NULL },
+    { "about:version", NULL },
      };
     guint i;
 
@@ -165,6 +191,7 @@ magic_uri_search (void)
     test_input ("g max@mustermann.de", NULL);
     test_input ("g inurl:http://twotoasts.de bug", NULL);
     test_input ("sm", SM);
+    /* test_input ("LT_PREREQ(2.2)", NULL); */
 }
 
 static void
@@ -211,6 +238,8 @@ magic_uri_format (void)
        "http://digilife.bz/wiki/index.php?Pythonの開発手順" },
      { "http://die-welt.net/~evgeni/LenovoBatteryLinux/", NULL },
      { "http://wiki.c3sl.ufpr.br/multiseat/index.php/Xephyr_Solution", NULL },
+     { "http://şøñđëřżēıċħęŋđőmæîņĭśŧşũþėŗ.de/char.jpg", NULL },
+     { "http://www.ⓖⓝⓞⓜⓔ.org/", "http://www.gnome.org/" },
      };
     guint i;
 
@@ -223,10 +252,30 @@ magic_uri_format (void)
     }
 }
 
+static void
+magic_uri_prefetch (void)
+{
+    g_assert (!sokoke_prefetch_uri (NULL));
+    g_assert (sokoke_prefetch_uri ("http://google.com"));
+    g_assert (sokoke_prefetch_uri ("http://google.com"));
+    g_assert (sokoke_prefetch_uri ("http://googlecom"));
+    g_assert (sokoke_prefetch_uri ("http://1kino.com"));
+    g_assert (sokoke_prefetch_uri ("http://"));
+    g_assert (!sokoke_prefetch_uri ("http:/"));
+    g_assert (!sokoke_prefetch_uri ("http"));
+    g_assert (!sokoke_prefetch_uri ("ftp://ftphost.org"));
+    g_assert (!sokoke_prefetch_uri ("http://10.0.0.1"));
+    g_assert (!sokoke_prefetch_uri ("about:blank"));
+    g_assert (!sokoke_prefetch_uri ("javascript: alert()"));
+}
+
 int
 main (int    argc,
       char** argv)
 {
+    /* libSoup uses threads, therefore if WebKit is built with libSoup
+       or Midori is using it, we need to initialize threads. */
+    if (!g_thread_supported ()) g_thread_init (NULL);
     g_test_init (&argc, &argv, NULL);
     gtk_init_check (&argc, &argv);
 
@@ -236,6 +285,7 @@ main (int    argc,
     g_test_add_func ("/magic-uri/pseudo", magic_uri_pseudo);
     g_test_add_func ("/magic-uri/performance", magic_uri_performance);
     g_test_add_func ("/magic-uri/format", magic_uri_format);
+    g_test_add_func ("/magic-uri/prefetch", magic_uri_prefetch);
 
     return g_test_run ();
 }

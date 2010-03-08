@@ -21,11 +21,9 @@
 #include "midori-console.h"
 #include "midori-extensions.h"
 #include "midori-history.h"
-#include "midori-plugins.h"
 #include "midori-transfers.h"
 
 #include "sokoke.h"
-#include "compat.h"
 
 #if HAVE_UNISTD_H
     #include <unistd.h>
@@ -55,15 +53,6 @@
 #else
     #define BOOKMARK_FILE "bookmarks.xbel"
 #endif
-
-#define MIDORI_HISTORY_ERROR g_quark_from_string("MIDORI_HISTORY_ERROR")
-
-typedef enum
-{
-    MIDORI_HISTORY_ERROR_DB_OPEN,    /* Error opening the database file */
-    MIDORI_HISTORY_ERROR_EXEC_SQL,   /* Error executing SQL statement */
-
-} MidoriHistoryError;
 
 static gchar*
 build_config_filename (const gchar* filename)
@@ -115,46 +104,40 @@ settings_new_from_file (const gchar* filename,
         pspec = pspecs[i];
         if (!(pspec->flags & G_PARAM_WRITABLE))
             continue;
+
         type = G_PARAM_SPEC_TYPE (pspec);
         property = g_param_spec_get_name (pspec);
+        if (!g_key_file_has_key (key_file, "settings", property, NULL))
+            continue;
+
         if (type == G_TYPE_PARAM_STRING)
         {
-            str = sokoke_key_file_get_string_default (key_file,
-                "settings", property,
-                G_PARAM_SPEC_STRING (pspec)->default_value, NULL);
+            str = g_key_file_get_string (key_file, "settings", property, NULL);
             g_object_set (settings, property, str, NULL);
             g_free (str);
         }
         else if (type == G_TYPE_PARAM_INT)
         {
-            integer = sokoke_key_file_get_integer_default (key_file,
-                "settings", property,
-                G_PARAM_SPEC_INT (pspec)->default_value, NULL);
+            integer = g_key_file_get_integer (key_file, "settings", property, NULL);
             g_object_set (settings, property, integer, NULL);
         }
         else if (type == G_TYPE_PARAM_FLOAT)
         {
-            number = sokoke_key_file_get_double_default (key_file,
-                "settings", property,
-                G_PARAM_SPEC_FLOAT (pspec)->default_value, NULL);
+            number = g_key_file_get_double (key_file, "settings", property, NULL);
             g_object_set (settings, property, number, NULL);
         }
         else if (type == G_TYPE_PARAM_BOOLEAN)
         {
-            boolean = sokoke_key_file_get_boolean_default (key_file,
-                "settings", property,
-                G_PARAM_SPEC_BOOLEAN (pspec)->default_value, NULL);
+            boolean = g_key_file_get_boolean (key_file, "settings", property, NULL);
             g_object_set (settings, property, boolean, NULL);
         }
         else if (type == G_TYPE_PARAM_ENUM)
         {
             GEnumClass* enum_class = G_ENUM_CLASS (
-                g_type_class_ref (pspec->value_type));
-            GEnumValue* enum_value = g_enum_get_value (enum_class,
-                G_PARAM_SPEC_ENUM (pspec)->default_value);
-            str = sokoke_key_file_get_string_default (key_file,
-                "settings", property,
-                enum_value->value_name, NULL);
+                g_type_class_peek (pspec->value_type));
+            GEnumValue* enum_value;
+
+            str = g_key_file_get_string (key_file, "settings", property, NULL);
             enum_value = g_enum_get_value_by_name (enum_class, str);
             if (enum_value)
                 g_object_set (settings, property, enum_value->value, NULL);
@@ -363,329 +346,47 @@ search_engines_save_to_file (KatzeArray*  search_engines,
 }
 
 #if HAVE_SQLITE
-/* Open database 'dbname' */
-static sqlite3*
-db_open (const char* dbname,
-         GError**    error)
-{
-    sqlite3* db;
-
-    if (sqlite3_open (dbname, &db))
-    {
-        if (error)
-        {
-            *error = g_error_new (MIDORI_HISTORY_ERROR,
-                                  MIDORI_HISTORY_ERROR_DB_OPEN,
-                                  _("Failed to open database: %s\n"),
-                                  sqlite3_errmsg (db));
-        }
-        sqlite3_close (db);
-        return NULL;
-    }
-    return (db);
-}
-
-/* Close database 'db' */
-static void
-db_close (sqlite3* db)
-{
-    sqlite3_close (db);
-}
-
-/* Execute an SQL statement and run 'callback' on the result data */
-static gboolean
-db_exec_callback (sqlite3*    db,
-                  const char* sqlcmd,
-                  int         (*callback)(void*, int, char**, char**),
-                  void*       cbarg,
-                  GError**    error)
-{
-    char* errmsg;
-
-    if (sqlite3_exec (db, sqlcmd, callback, cbarg, &errmsg) != SQLITE_OK)
-    {
-        if (error)
-        {
-            *error = g_error_new (MIDORI_HISTORY_ERROR,
-                                  MIDORI_HISTORY_ERROR_EXEC_SQL,
-                                  _("Failed to execute database statement: %s\n"),
-                                  errmsg);
-        }
-        sqlite3_free (errmsg);
-        return FALSE;
-    }
-    return TRUE;
-}
-
-/* Execute a SQL statement */
-static gboolean
-db_exec (sqlite3*    db,
-         const char* sqlcmd,
-         GError**    error)
-{
-    return (db_exec_callback (db, sqlcmd, NULL, NULL, error));
-}
-
-/* sqlite method for retrieving the date/ time */
-static int
-gettimestr (void*  data,
-            int    argc,
-            char** argv,
-            char** colname)
-{
-    KatzeItem* item = KATZE_ITEM (data);
-    (void) colname;
-
-    g_return_val_if_fail (argc == 1, 1);
-
-    katze_item_set_added (item, g_ascii_strtoull (argv[0], NULL, 10));
-    return 0;
-}
-
-static void
-midori_history_remove_item_cb (KatzeArray* history,
-                               KatzeItem*  item,
-                               sqlite3*    db)
-{
-    gchar* sqlcmd;
-    gboolean success = TRUE;
-    GError* error = NULL;
-
-    g_return_if_fail (KATZE_IS_ITEM (item));
-
-    sqlcmd = sqlite3_mprintf (
-        "DELETE FROM history WHERE uri = '%q' AND"
-        " title = '%q' AND date = %llu",
-        katze_item_get_uri (item),
-        katze_item_get_name (item),
-        katze_item_get_added (item));
-    success = db_exec (db, sqlcmd, &error);
-    if (!success)
-    {
-        g_printerr (_("Failed to remove history item: %s\n"), error->message);
-        g_error_free (error);
-        return ;
-    }
-    sqlite3_free (sqlcmd);
-}
-
-static void
-midori_history_clear_before_cb (KatzeArray* item,
-                                sqlite3*    db)
-{
-    g_signal_handlers_block_by_func (item, midori_history_remove_item_cb, db);
-}
-
-static void
-midori_history_clear_cb (KatzeArray* history,
-                         sqlite3*    db)
-{
-    GError* error = NULL;
-
-    g_return_if_fail (KATZE_IS_ARRAY (history));
-
-    if (!db_exec (db, "DELETE FROM history", &error))
-    {
-        g_printerr (_("Failed to clear history: %s\n"), error->message);
-        g_error_free (error);
-    }
-}
-
-static void
-midori_history_notify_item_cb (KatzeItem*  item,
-                               GParamSpec* pspec,
-                               sqlite3*    db)
-{
-    gchar* sqlcmd;
-    gboolean success = TRUE;
-    GError* error = NULL;
-
-    sqlcmd = sqlite3_mprintf ("UPDATE history SET title='%q' WHERE "
-                              "uri='%q' AND date=%llu",
-                              katze_item_get_name (item),
-                              katze_item_get_uri (item),
-                              katze_item_get_added (item));
-    success = db_exec (db, sqlcmd, &error);
-    sqlite3_free (sqlcmd);
-    if (!success)
-    {
-        g_printerr (_("Failed to add history item: %s\n"), error->message);
-        g_error_free (error);
-        return ;
-    }
-}
-
-static void
-midori_history_add_item_cb (KatzeArray* array,
-                            KatzeItem*  item,
-                            sqlite3*    db)
-{
-    gchar* sqlcmd;
-    gboolean success = TRUE;
-    GError* error = NULL;
-
-    g_return_if_fail (KATZE_IS_ITEM (item));
-
-    if (KATZE_IS_ARRAY (item))
-    {
-        g_signal_connect_after (item, "add-item",
-                G_CALLBACK (midori_history_add_item_cb), db);
-        g_signal_connect (item, "remove-item",
-                G_CALLBACK (midori_history_remove_item_cb), db);
-        g_signal_connect (item, "clear",
-            G_CALLBACK (midori_history_clear_before_cb), db);
-        return;
-    }
-
-    /* New item, set added to the current date/ time */
-    if (!katze_item_get_added (item))
-    {
-        if (!db_exec_callback (db, "SELECT date('now')",
-                               gettimestr, item, &error))
-        {
-            g_printerr (_("Failed to add history item: %s\n"), error->message);
-            g_error_free (error);
-            return;
-        }
-    }
-    sqlcmd = sqlite3_mprintf ("INSERT INTO history VALUES"
-                              "('%q', '%q', %llu,"
-                              " %llu)",
-                              katze_item_get_uri (item),
-                              katze_item_get_name (item),
-                              katze_item_get_added (item),
-                              katze_item_get_added (KATZE_ITEM (array)));
-    success = db_exec (db, sqlcmd, &error);
-    sqlite3_free (sqlcmd);
-    if (!success)
-    {
-        g_printerr (_("Failed to add history item: %s\n"), error->message);
-        g_error_free (error);
-        return ;
-    }
-
-    /* The title is set after the item is added */
-    g_signal_connect_after (item, "notify::name",
-                            G_CALLBACK (midori_history_notify_item_cb), db);
-}
-
-static int
-midori_history_add_items (void*  data,
-                          int    argc,
-                          char** argv,
-                          char** colname)
-{
-    KatzeItem* item;
-    KatzeArray* parent;
-    KatzeArray* array;
-    gint64 date;
-    gint64 day;
-    gint i;
-    gint j;
-    gint n;
-    gint ncols = 4;
-    gchar token[50];
-
-    array = KATZE_ARRAY (data);
-    g_return_val_if_fail (KATZE_IS_ARRAY (array), 1);
-
-    /* Test whether have the right number of columns */
-    g_return_val_if_fail (argc % ncols == 0, 1);
-
-    for (i = 0; i < (argc - ncols) + 1; i++)
-    {
-        if (argv[i])
-        {
-            if (colname[i] && !g_ascii_strcasecmp (colname[i], "uri") &&
-                colname[i + 1] && !g_ascii_strcasecmp (colname[i + 1], "title") &&
-                colname[i + 2] && !g_ascii_strcasecmp (colname[i + 2], "date") &&
-                colname[i + 3] && !g_ascii_strcasecmp (colname[i + 3], "day"))
-            {
-                item = katze_item_new ();
-                katze_item_set_uri (item, argv[i]);
-                katze_item_set_name (item, argv[i + 1]);
-                date = g_ascii_strtoull (argv[i + 2], NULL, 10);
-                day = g_ascii_strtoull (argv[i + 3], NULL, 10);
-                katze_item_set_added (item, date);
-
-                n = katze_array_get_length (array);
-                for (j = n - 1; j >= 0; j--)
-                {
-                    parent = katze_array_get_nth_item (array, j);
-                    if (day == katze_item_get_added (KATZE_ITEM (parent)))
-                        break;
-                }
-                if (j < 0)
-                {
-                    parent = katze_array_new (KATZE_TYPE_ARRAY);
-                    katze_item_set_added (KATZE_ITEM (parent), day);
-                    strftime (token, sizeof (token), "%x",
-                          localtime ((time_t *)&date));
-                    katze_item_set_name (KATZE_ITEM (parent), token);
-                    katze_array_add_item (array, parent);
-                }
-                katze_array_add_item (parent, item);
-            }
-        }
-    }
-    return 0;
-}
-
-static int
-midori_history_test_day_column (void*  data,
-                                int    argc,
-                                char** argv,
-                                char** colname)
-{
-    gint i;
-    gboolean* has_day;
-
-    has_day = (gboolean*)data;
-
-    for (i = 0; i < argc; i++)
-    {
-        if (argv[i] &&
-            !g_ascii_strcasecmp (colname[i], "name") &&
-            !g_ascii_strcasecmp (argv[i], "day"))
-        {
-            *has_day = TRUE;
-            break;
-        }
-    }
-
-    return 0;
-}
-
 static sqlite3*
 midori_history_initialize (KatzeArray*  array,
                            const gchar* filename,
-                           GError**     error)
+                           char**       errmsg)
 {
     sqlite3* db;
-    KatzeItem* item;
-    gint i;
     gboolean has_day;
+    sqlite3_stmt* stmt;
+    gint result;
 
     has_day = FALSE;
 
-    if ((db = db_open (filename, error)) == NULL)
-        return db;
+    if (sqlite3_open (filename, &db) != SQLITE_OK)
+    {
+        if (errmsg)
+            *errmsg = g_strdup_printf (_("Failed to open database: %s\n"),
+                                       sqlite3_errmsg (db));
+        sqlite3_close (db);
+        return NULL;
+    }
 
-    if (!db_exec (db,
-                  "CREATE TABLE IF NOT EXISTS "
-                  "history(uri text, title text, date integer, day integer)",
-                  error))
+    if (sqlite3_exec (db,
+                      "CREATE TABLE IF NOT EXISTS "
+                      "history (uri text, title text, date integer, day integer);"
+                      "CREATE TABLE IF NOT EXISTS "
+                      "search (keywords text, uri text, day integer);"
+                      "CREATE TEMP VIEW history_view AS SELECT "
+                      "1 AS type, uri, title, day FROM history;"
+                      "CREATE TEMP VIEW search_view AS SELECT "
+                      "2 AS type, uri, keywords AS title, day FROM search;",
+                      NULL, NULL, errmsg) != SQLITE_OK)
         return NULL;
 
-    if (!db_exec_callback (db,
-                           "PRAGMA table_info(history)",
-                           midori_history_test_day_column,
-                           &has_day, error))
-        return NULL;
+    sqlite3_prepare_v2 (db, "SELECT day FROM history LIMIT 1", -1, &stmt, NULL);
+    result = sqlite3_step (stmt);
+    if (result == SQLITE_ROW)
+        has_day = TRUE;
+    sqlite3_finalize (stmt);
 
     if (!has_day)
-    {
-        if (!db_exec (db,
+        sqlite3_exec (db,
                       "BEGIN TRANSACTION;"
                       "CREATE TEMPORARY TABLE backup (uri text, title text, date integer);"
                       "INSERT INTO backup SELECT uri,title,date FROM history;"
@@ -697,28 +398,7 @@ midori_history_initialize (KatzeArray*  array,
                       "FROM backup;"
                       "DROP TABLE backup;"
                       "COMMIT;",
-                      error))
-        return NULL;
-    }
-
-    if (!db_exec_callback (db,
-                           "SELECT uri, title, date, day FROM history "
-                           "ORDER BY date ASC",
-                           midori_history_add_items,
-                           array,
-                           error))
-        return NULL;
-
-    i = 0;
-    while ((item = katze_array_get_nth_item (array, i++)))
-    {
-        g_signal_connect_after (item, "add-item",
-            G_CALLBACK (midori_history_add_item_cb), db);
-        g_signal_connect (item, "remove-item",
-            G_CALLBACK (midori_history_remove_item_cb), db);
-        g_signal_connect (item, "clear",
-            G_CALLBACK (midori_history_clear_before_cb), db);
-    }
+                      NULL, NULL, errmsg);
     return db;
 }
 
@@ -727,33 +407,22 @@ midori_history_terminate (sqlite3* db,
                           gint     max_history_age)
 {
     gchar* sqlcmd;
-    gboolean success = TRUE;
-    GError* error = NULL;
+    char* errmsg = NULL;
 
     sqlcmd = g_strdup_printf (
         "DELETE FROM history WHERE "
         "(julianday(date('now')) - julianday(date(date,'unixepoch')))"
         " >= %d", max_history_age);
-    db_exec (db, sqlcmd, &error);
-    if (!success)
+    if (sqlite3_exec (db, sqlcmd, NULL, NULL, &errmsg) != SQLITE_OK)
     {
         /* i18n: Couldn't remove items that are older than n days */
-        g_printerr (_("Failed to remove old history items: %s\n"), error->message);
-        g_error_free (error);
-        return ;
+        g_printerr (_("Failed to remove old history items: %s\n"), errmsg);
+        sqlite3_free (errmsg);
     }
     g_free (sqlcmd);
-    db_close (db);
+    sqlite3_close (db);
 }
 #endif
-
-static void
-midori_app_quit_cb (MidoriApp* app)
-{
-    gchar* config_file = build_config_filename ("running");
-    g_unlink (config_file);
-    g_free (config_file);
-}
 
 static void
 settings_notify_cb (MidoriWebSettings* settings,
@@ -990,11 +659,6 @@ midori_app_add_browser_cb (MidoriApp*     app,
     gtk_widget_show (addon);
     midori_panel_append_page (MIDORI_PANEL (panel), MIDORI_VIEWABLE (addon));
 
-    /* Plugins */
-    addon = g_object_new (MIDORI_TYPE_PLUGINS, "app", app, NULL);
-    gtk_widget_show (addon);
-    midori_panel_append_page (MIDORI_PANEL (panel), MIDORI_VIEWABLE (addon));
-
     /* Extensions */
     addon = g_object_new (MIDORI_TYPE_EXTENSIONS, NULL);
     gtk_widget_show (addon);
@@ -1038,6 +702,18 @@ midori_browser_session_cb (MidoriBrowser* browser,
         save_timeout = g_timeout_add_full (G_PRIORITY_LOW, 5000,
             (GSourceFunc)midori_session_save_timeout_cb, session, NULL);
     }
+}
+
+static void
+midori_app_quit_cb (MidoriBrowser* browser,
+                    KatzeArray*    session)
+{
+    gchar* config_file = build_config_filename ("running");
+    g_unlink (config_file);
+    g_free (config_file);
+
+    if (save_timeout && session)
+        midori_session_save_timeout_cb (session);
 }
 
 static void
@@ -1111,11 +787,39 @@ soup_session_settings_notify_ident_string_cb (MidoriWebSettings* settings,
                                               GParamSpec*        pspec,
                                               SoupSession*       session)
 {
-    gchar* ident_string = katze_object_get_string (settings, "ident-string");
+    gchar* ident_string = katze_object_get_string (settings, "user-agent");
     g_object_set (session, "user-agent", ident_string, NULL);
     g_free (ident_string);
 }
 #endif
+
+static void
+midori_soup_session_settings_accept_language_cb (SoupSession*       session,
+                                                 SoupMessage*       msg,
+                                                 MidoriWebSettings* settings)
+{
+    gchar* languages = katze_object_get_string (settings, "preferred-languages");
+    gchar* accpt;
+
+    /* Empty, use the system locales */
+    if (!(languages && *languages))
+        accpt = sokoke_accept_languages (g_get_language_names ());
+    /* No =, no ., looks like a list of language names */
+    else if (!(strchr (languages, '=') && strchr (languages, '.')))
+    {
+        gchar ** lang_names = g_strsplit_set (languages, ",; ", -1);
+        accpt = sokoke_accept_languages ((const gchar* const *)lang_names);
+        g_strfreev (lang_names);
+    }
+    /* Presumably a well formatted list including priorities */
+    else
+        accpt = languages;
+
+    if (accpt != languages)
+        g_free (languages);
+    soup_message_headers_append (msg->request_headers, "Accept-Language", accpt);
+    g_free (accpt);
+}
 
 static void
 midori_soup_session_debug (SoupSession* session)
@@ -1147,9 +851,12 @@ midori_soup_session_prepare (SoupSession*       session,
 
     #if !WEBKIT_CHECK_VERSION (1, 1, 11)
     soup_session_settings_notify_ident_string_cb (settings, NULL, session);
-    g_signal_connect (settings, "notify::ident-string",
+    g_signal_connect (settings, "notify::user-agent",
         G_CALLBACK (soup_session_settings_notify_ident_string_cb), session);
     #endif
+
+    g_signal_connect (session, "request-queued",
+        G_CALLBACK (midori_soup_session_settings_accept_language_cb), settings);
 
     config_file = build_config_filename ("logins");
     feature = g_object_new (KATZE_TYPE_HTTP_AUTH, "filename", config_file, NULL);
@@ -1217,12 +924,8 @@ midori_create_diagnostic_dialog (MidoriWebSettings* settings,
 
     dialog = gtk_message_dialog_new (
         NULL, 0, GTK_MESSAGE_WARNING,
-        #if HAVE_HILDON
-        #if HILDON_CHECK_VERSION (2, 2, 0)
+        #ifdef HAVE_HILDON_2_2
         GTK_BUTTONS_NONE,
-        #else
-        GTK_BUTTONS_OK,
-        #endif
         #else
         GTK_BUTTONS_OK,
         #endif
@@ -1259,8 +962,7 @@ midori_create_diagnostic_dialog (MidoriWebSettings* settings,
     gtk_box_pack_start (GTK_BOX (box), button, FALSE, FALSE, 4);
     gtk_widget_show_all (box);
     gtk_container_add (GTK_CONTAINER (GTK_DIALOG (dialog)->vbox), box);
-    #if HAVE_HILDON
-    #if HILDON_CHECK_VERSION (2, 2, 0)
+    #ifdef HAVE_HILDON_2_2
     box = gtk_hbox_new (FALSE, 4);
     gtk_box_pack_start (GTK_BOX (GTK_DIALOG (dialog)->vbox), box, TRUE, FALSE, 4);
     button = hildon_gtk_button_new (HILDON_SIZE_FINGER_HEIGHT | HILDON_SIZE_HALFSCREEN_WIDTH);
@@ -1270,7 +972,6 @@ midori_create_diagnostic_dialog (MidoriWebSettings* settings,
         G_CALLBACK (gtk_widget_destroy), dialog);
     gtk_box_pack_start (GTK_BOX (box), button, TRUE, FALSE, 4);
     gtk_widget_show_all (box);
-    #endif
     #endif
     if (1)
     {
@@ -1316,12 +1017,64 @@ midori_load_cookie_jar (gpointer data)
 }
 
 static gboolean
+midori_load_netscape_plugins (gpointer data)
+{
+    MidoriApp* app = MIDORI_APP (data);
+    KatzeArray* extensions = katze_object_get_object (app, "extensions");
+    /* FIXME: WebKit should have API to obtain the list of plugins. */
+    /* FIXME: Monitor folders for newly added and removes files */
+    GtkWidget* web_view = webkit_web_view_new ();
+    WebKitWebFrame* web_frame = webkit_web_view_get_main_frame (WEBKIT_WEB_VIEW (web_view));
+    JSContextRef js_context = webkit_web_frame_get_global_context (web_frame);
+    /* This snippet joins the available plugins into a string like this:
+        URI1|title1,URI2|title2
+    FIXME: Ensure separators contained in the string can't break it */
+    gchar* value = sokoke_js_script_eval (js_context,
+        "function plugins (l) { var f = new Array (); for (i in l) "
+        "{ var p = l[i].name + '|' + l[i].filename; "
+        "if (f.indexOf (p) == -1) f.push (p); } return f; }"
+        "plugins (navigator.plugins)", NULL);
+    gchar** items = g_strsplit (value, ",", 0);
+    guint i = 0;
+
+    if (items != NULL)
+    while (items[i] != NULL)
+    {
+        gchar** parts = g_strsplit (items[i], "|", 2);
+        if (parts && *parts && !g_str_equal (parts[1], "undefined"))
+        {
+            MidoriExtension* extension;
+            gchar* desc = parts[1];
+            gsize j = 0;
+            while (desc[j++])
+                if (desc[j-1] == ';')
+                    desc[j-1] = '\n';
+            extension = g_object_new (MIDORI_TYPE_EXTENSION,
+                "name", parts[0], "description", desc, NULL);
+            g_object_set_data (G_OBJECT (extension), "static", (void*)0xdeadbeef);
+            katze_array_add_item (extensions, extension);
+        }
+        g_strfreev (parts);
+        i++;
+    }
+    g_strfreev (items);
+    g_object_unref (extensions);
+
+    return FALSE;
+}
+
+static gboolean
 midori_load_extensions (gpointer data)
 {
     MidoriApp* app = MIDORI_APP (data);
     gchar** active_extensions = g_object_get_data (G_OBJECT (app), "extensions");
     KatzeArray* extensions;
-    MidoriExtension* extension;
+    #ifdef G_ENABLE_DEBUG
+    gboolean startup_timer = g_getenv ("MIDORI_STARTTIME") != NULL;
+    GTimer* timer;
+    if (startup_timer)
+        timer = g_timer_new ();
+    #endif
 
     /* Load extensions */
     extensions = katze_array_new (MIDORI_TYPE_EXTENSION);
@@ -1333,12 +1086,26 @@ midori_load_extensions (gpointer data)
         GDir* extension_dir;
 
         if (!(extension_path = g_strdup (g_getenv ("MIDORI_EXTENSION_PATH"))))
+        {
+            #ifdef G_OS_WIN32
+            {
+                gchar *path = g_win32_get_package_installation_directory_of_module (NULL);
+                extension_path = g_build_filename (path, "lib", PACKAGE_NAME, NULL);
+                g_free (path);
+                if (g_access (extension_path, F_OK) != 0)
+                {
+                    g_free (extension_path);
+                    extension_path = g_build_filename (LIBDIR, PACKAGE_NAME, NULL);
+                }
+            }
+            #else
             extension_path = g_build_filename (LIBDIR, PACKAGE_NAME, NULL);
+            #endif
+        }
         extension_dir = g_dir_open (extension_path, 0, NULL);
         if (extension_dir != NULL)
         {
             const gchar* filename;
-            gchar* config_file = build_config_filename ("config");
 
             while ((filename = g_dir_read_name (extension_dir)))
             {
@@ -1346,6 +1113,7 @@ midori_load_extensions (gpointer data)
                 GModule* module;
                 typedef MidoriExtension* (*extension_init_func)(void);
                 extension_init_func extension_init;
+                MidoriExtension* extension;
 
                 /* Ignore files which don't have the correct suffix */
                 if (!g_str_has_suffix (filename, G_MODULE_SUFFIX))
@@ -1389,12 +1157,17 @@ midori_load_extensions (gpointer data)
                 g_object_unref (extension);
             }
             g_dir_close (extension_dir);
-            g_free (config_file);
         }
         g_free (extension_path);
     }
-
     g_strfreev (active_extensions);
+
+    g_idle_add (midori_load_netscape_plugins, app);
+
+    #ifdef G_ENABLE_DEBUG
+    if (startup_timer)
+        g_debug ("Extensions:\t%f", g_test_timer_elapsed ());
+    #endif
 
     return FALSE;
 }
@@ -1437,10 +1210,19 @@ midori_load_session (gpointer data)
     guint i;
     gint64 current;
     gchar** command = g_object_get_data (G_OBJECT (app), "execute-command");
+    #ifdef G_ENABLE_DEBUG
+    gboolean startup_timer = g_getenv ("MIDORI_STARTTIME") != NULL;
+    GTimer* timer;
+    if (startup_timer)
+        timer = g_timer_new ();
+    #endif
 
     browser = midori_app_create_browser (app);
+    g_signal_connect_after (katze_object_get_object (app, "settings"), "notify",
+        G_CALLBACK (settings_notify_cb), app);
+
     config_file = build_config_filename ("session.old.xbel");
-    if (g_file_test (config_file, G_FILE_TEST_EXISTS))
+    if (g_access (config_file, F_OK) == 0)
     {
         GtkActionGroup* action_group = midori_browser_get_action_group (browser);
         GtkAction* action = gtk_action_group_get_action (action_group, "LastSession");
@@ -1479,7 +1261,10 @@ midori_load_session (gpointer data)
     session = midori_browser_get_proxy_array (browser);
     i = 0;
     while ((item = katze_array_get_nth_item (_session, i++)))
+    {
+        g_object_set_data (G_OBJECT (item), "midori-view-append", (void*)1);
         midori_browser_add_item (browser, item);
+    }
     current = katze_item_get_meta_integer (KATZE_ITEM (_session), "current");
     if (current < 0)
         current = 0;
@@ -1497,11 +1282,18 @@ midori_load_session (gpointer data)
         G_CALLBACK (midori_browser_session_cb), session);
     g_signal_connect_after (browser, "remove-tab",
         G_CALLBACK (midori_browser_session_cb), session);
+    g_signal_connect (app, "quit",
+        G_CALLBACK (midori_app_quit_cb), session);
     g_object_weak_ref (G_OBJECT (session),
         (GWeakNotify)(midori_browser_weak_notify_cb), browser);
 
     if (command)
         midori_app_send_command (app, command);
+
+    #ifdef G_ENABLE_DEBUG
+    if (startup_timer)
+        g_debug ("Session setup:\t%f", g_test_timer_elapsed ());
+    #endif
 
     return FALSE;
 }
@@ -1509,24 +1301,24 @@ midori_load_session (gpointer data)
 static gint
 midori_run_script (const gchar* filename)
 {
+    gchar* exception;
+    gchar* script;
+    GError* error;
+
     if (!(filename))
     {
         g_print ("%s - %s\n", _("Midori"), _("No filename specified"));
         return 1;
     }
 
-    JSGlobalContextRef js_context;
-    gchar* exception;
-    gchar* script;
-    GError* error = NULL;
-
-    js_context = JSGlobalContextCreateInGroup (NULL, NULL);
-
+    error = NULL;
     if (g_file_get_contents (filename, &script, NULL, &error))
     {
+        JSGlobalContextRef js_context = JSGlobalContextCreateInGroup (NULL, NULL);
         if (sokoke_js_script_eval (js_context, script, &exception))
             exception = NULL;
         g_free (script);
+        JSGlobalContextRelease (js_context);
     }
     else if (error)
     {
@@ -1536,7 +1328,6 @@ midori_run_script (const gchar* filename)
     else
         exception = g_strdup (_("An unknown error occured."));
 
-    JSGlobalContextRelease (js_context);
     if (!exception)
         return 0;
 
@@ -1597,12 +1388,35 @@ midori_remove_config_file (gint         clear_prefs,
     }
 }
 
+static gchar*
+midori_prepare_uri (const gchar *uri)
+{
+    gchar* uri_ready;
+
+    if (g_path_is_absolute (uri))
+        return g_filename_to_uri (uri, NULL, NULL);
+    else if (g_file_test (uri, G_FILE_TEST_EXISTS | G_FILE_TEST_IS_REGULAR))
+    {
+        gchar* current_dir = g_get_current_dir ();
+        uri_ready = g_strconcat ("file://", current_dir,
+                                 G_DIR_SEPARATOR_S, uri, NULL);
+        g_free (current_dir);
+        return uri_ready;
+    }
+
+    uri_ready = sokoke_magic_uri (uri);
+    if (uri_ready)
+        return sokoke_uri_to_ascii (uri_ready);
+
+    return sokoke_uri_to_ascii (uri);
+}
+
 #ifdef HAVE_SIGNAL_H
 static void
 signal_handler (int signal_id)
 {
     signal (signal_id, 0);
-    midori_app_quit_cb (NULL);
+    midori_app_quit_cb (NULL, NULL);
     if (kill (getpid (), signal_id))
       exit (1);
 }
@@ -1614,6 +1428,7 @@ main (int    argc,
 {
     gchar* webapp;
     gchar* config;
+    gboolean diagnostic_dialog;
     gboolean run;
     gchar* snapshot;
     gboolean execute;
@@ -1630,6 +1445,8 @@ main (int    argc,
        { "config", 'c', 0, G_OPTION_ARG_FILENAME, &config,
        N_("Use FOLDER as configuration folder"), N_("FOLDER") },
        #endif
+       { "diagnostic-dialog", 'd', 0, G_OPTION_ARG_NONE, &diagnostic_dialog,
+       N_("Show a diagnostic dialog"), NULL },
        { "run", 'r', 0, G_OPTION_ARG_NONE, &run,
        N_("Run the specified filename as javascript"), NULL },
        #if WEBKIT_CHECK_VERSION (1, 1, 6)
@@ -1659,10 +1476,18 @@ main (int    argc,
     KatzeItem* item;
     gchar* uri_ready;
     #if HAVE_SQLITE
+    gchar* errmsg;
     sqlite3* db;
     gint max_history_age;
     #endif
     gint clear_prefs = MIDORI_CLEAR_NONE;
+    #ifdef G_ENABLE_DEBUG
+        gboolean startup_timer = g_getenv ("MIDORI_STARTTIME") != NULL;
+        #define midori_startup_timer(tmrmsg) if (startup_timer) \
+            g_debug (tmrmsg, (g_test_timer_last () - g_test_timer_elapsed ()) * -1)
+    #else
+        #define midori_startup_timer(tmrmsg)
+    #endif
 
     #if ENABLE_NLS
     setlocale (LC_ALL, "");
@@ -1697,9 +1522,13 @@ main (int    argc,
     #endif
     #endif
 
+    /* Preserve argument vector */
+    sokoke_get_argv (argv);
+
     /* Parse cli options */
     webapp = NULL;
     config = NULL;
+    diagnostic_dialog = FALSE;
     run = FALSE;
     snapshot = NULL;
     execute = FALSE;
@@ -1718,6 +1547,11 @@ main (int    argc,
     if (!g_thread_supported ()) g_thread_init (NULL);
     sokoke_register_stock_items ();
     g_set_application_name (_("Midori"));
+
+    #ifdef G_ENABLE_DEBUG
+    if (startup_timer)
+        g_test_timer_start ();
+    #endif
 
     if (version)
     {
@@ -1773,6 +1607,9 @@ main (int    argc,
     if (webapp)
     {
         MidoriBrowser* browser = midori_browser_new ();
+        gchar* tmp_uri = midori_prepare_uri (webapp);
+        katze_assign (webapp, tmp_uri);
+        midori_startup_timer ("Browser: \t%f");
         settings = katze_object_get_object (browser, "settings");
         g_object_set (settings,
                       "show-menubar", FALSE,
@@ -1780,9 +1617,11 @@ main (int    argc,
                       "toolbar-items", "Back,Forward,ReloadStop,Location",
                       "homepage", NULL,
                       "show-statusbar", TRUE,
+                      "enable-developer-extras", FALSE,
                       NULL);
-        g_object_unref (settings);
         g_object_set (browser, "settings", settings, NULL);
+        midori_startup_timer ("Setup config: \t%f");
+        g_object_unref (settings);
         sokoke_set_config_dir ("/");
         g_signal_connect (browser, "notify::load-status",
             G_CALLBACK (midori_web_app_browser_notify_load_status_cb), NULL);
@@ -1803,6 +1642,7 @@ main (int    argc,
                 i++;
             }
         }
+        midori_startup_timer ("App created: \t%f");
         gtk_main ();
         return 0;
     }
@@ -1830,6 +1670,7 @@ main (int    argc,
     else
         app = midori_app_new ();
     g_free (config);
+    midori_startup_timer ("App created: \t%f");
 
     /* FIXME: The app might be 'running' but actually showing a dialog
               after a crash, so running a new window isn't a good idea. */
@@ -1842,12 +1683,11 @@ main (int    argc,
         else if (uris)
         {
             /* TODO: Open a tab per URI, seperated by pipes */
-            /* FIXME: Handle relative files or magic URI here */
             /* Encode any IDN addresses because libUnique doesn't like them */
             i = 0;
             while (uris[i] != NULL)
             {
-                gchar* new_uri = sokoke_uri_to_ascii (uris[i]);
+                gchar* new_uri = midori_prepare_uri (uris[i]);
                 katze_assign (uris[i], new_uri);
                 i++;
             }
@@ -1870,15 +1710,22 @@ main (int    argc,
 
     katze_mkdir_with_parents (sokoke_set_config_dir (NULL), 0700);
 
-    /* Load configuration files */
+    /* Load configuration file */
     error_messages = g_string_new (NULL);
     config_file = build_config_filename ("config");
     error = NULL;
     settings = settings_new_from_file (config_file, &extensions);
+    g_object_set (settings, "enable-developer-extras", TRUE, NULL);
+    midori_startup_timer ("Config read: \t%f");
+
+    /* Load accelerators */
     katze_assign (config_file, build_config_filename ("accels"));
-    if (!g_file_test (config_file, G_FILE_TEST_EXISTS))
+    if (g_access (config_file, F_OK) != 0)
         katze_assign (config_file, sokoke_find_config_filename (NULL, "accels"));
     gtk_accel_map_load (config_file);
+    midori_startup_timer ("Accels read: \t%f");
+
+    /* Load search engines */
     katze_assign (config_file, build_config_filename ("search"));
     error = NULL;
     search_engines = search_engines_new_from_file (config_file, &error);
@@ -1913,6 +1760,17 @@ main (int    argc,
                 error->message);
         g_error_free (error);
     }
+    /* Pick first search engine as default if not set */
+    g_object_get (settings, "location-entry-search", &uri, NULL);
+    if (!(uri && *uri) && !katze_array_is_empty (search_engines))
+    {
+        item = katze_array_get_nth_item (search_engines, 0);
+        g_object_set (settings, "location-entry-search",
+                      katze_item_get_uri (item), NULL);
+    }
+    g_free (uri);
+    midori_startup_timer ("Search read: \t%f");
+
     bookmarks = katze_array_new (KATZE_TYPE_ARRAY);
     #if HAVE_LIBXML
     katze_assign (config_file, build_config_filename (BOOKMARK_FILE));
@@ -1931,6 +1789,8 @@ main (int    argc,
         g_error_free (error);
     }
     #endif
+    midori_startup_timer ("Bkmarks read: \t%f");
+
     _session = katze_array_new (KATZE_TYPE_ITEM);
     #if HAVE_LIBXML
     g_object_get (settings, "load-on-startup", &load_on_startup, NULL);
@@ -1947,6 +1807,8 @@ main (int    argc,
         }
     }
     #endif
+    midori_startup_timer ("Session read: \t%f");
+
     trash = katze_array_new (KATZE_TYPE_ITEM);
     #if HAVE_LIBXML
     katze_assign (config_file, build_config_filename ("tabtrash.xbel"));
@@ -1959,19 +1821,22 @@ main (int    argc,
         g_error_free (error);
     }
     #endif
-    #if HAVE_SQLITE
-    katze_assign (config_file, build_config_filename ("history.db"));
-    #endif
+
+    midori_startup_timer ("Trash read: \t%f");
     history = katze_array_new (KATZE_TYPE_ARRAY);
     #if HAVE_SQLITE
-    error = NULL;
-    if ((db = midori_history_initialize (history, config_file, &error)) == NULL)
+    katze_assign (config_file, build_config_filename ("history.db"));
+
+    errmsg = NULL;
+    if ((db = midori_history_initialize (history, config_file, &errmsg)) == NULL)
     {
         g_string_append_printf (error_messages,
-            _("The history couldn't be loaded: %s\n"), error->message);
-        g_error_free (error);
+            _("The history couldn't be loaded: %s\n"), errmsg);
+        g_free (errmsg);
     }
+    g_object_set_data (G_OBJECT (history), "db", db);
     #endif
+    midori_startup_timer ("History read: \t%f");
 
     /* In case of errors */
     if (error_messages->len)
@@ -2026,18 +1891,7 @@ main (int    argc,
         while (uri != NULL)
         {
             item = katze_item_new ();
-            /* Construct an absolute path if the file is relative */
-            if (g_path_is_absolute (uri))
-                uri_ready = g_strconcat ("file://", uri, NULL);
-            else if (g_file_test (uri, G_FILE_TEST_EXISTS | G_FILE_TEST_IS_REGULAR))
-            {
-                gchar* current_dir = g_get_current_dir ();
-                uri_ready = g_strconcat ("file://", current_dir,
-                                         G_DIR_SEPARATOR_S, uri, NULL);
-                g_free (current_dir);
-            }
-            else
-                uri_ready = sokoke_magic_uri (uri, NULL);
+            uri_ready = midori_prepare_uri (uri);
             katze_item_set_uri (item, uri_ready);
             g_free (uri_ready);
             katze_array_add_item (_session, item);
@@ -2047,10 +1901,6 @@ main (int    argc,
         i++;
     }
     }
-
-    katze_assign (config_file, build_config_filename ("config"));
-    g_signal_connect_after (settings, "notify",
-        G_CALLBACK (settings_notify_cb), app);
 
     katze_assign (config_file, build_config_filename ("search"));
     if (1)
@@ -2084,10 +1934,6 @@ main (int    argc,
         G_CALLBACK (midori_trash_remove_item_cb), NULL);
     #if HAVE_SQLITE
     katze_assign (config_file, build_config_filename ("history.db"));
-    g_signal_connect_after (history, "add-item",
-        G_CALLBACK (midori_history_add_item_cb), db);
-    g_signal_connect_after (history, "clear",
-        G_CALLBACK (midori_history_clear_cb), db);
     #endif
 
     katze_item_set_parent (KATZE_ITEM (_session), app);
@@ -2095,16 +1941,21 @@ main (int    argc,
     /* We test for the presence of a dummy file which is created once
        and deleted during normal runtime, but persists in case of a crash. */
     katze_assign (config_file, build_config_filename ("running"));
-    if (katze_object_get_boolean (settings, "show-crash-dialog")
-        && g_file_test (config_file, G_FILE_TEST_EXISTS))
+    if (g_access (config_file, F_OK) == 0)
+    {
+        if (katze_object_get_boolean (settings, "show-crash-dialog"))
+            diagnostic_dialog = TRUE;
+    }
+    else
+        g_file_set_contents (config_file, "RUNNING", -1, NULL);
+
+    if (diagnostic_dialog)
     {
         GtkWidget* dialog = midori_create_diagnostic_dialog (settings, _session);
         gtk_dialog_run (GTK_DIALOG (dialog));
         gtk_widget_destroy (dialog);
     }
-    else
-        g_file_set_contents (config_file, "RUNNING", -1, NULL);
-    g_signal_connect (app, "quit", G_CALLBACK (midori_app_quit_cb), NULL);
+    midori_startup_timer ("Signal setup: \t%f");
 
     g_object_set (app, "settings", settings,
                        "bookmarks", bookmarks,
@@ -2119,6 +1970,7 @@ main (int    argc,
     g_object_unref (settings);
     g_signal_connect (app, "add-browser",
         G_CALLBACK (midori_app_add_browser_cb), NULL);
+    midori_startup_timer ("App prepared: \t%f");
 
     g_idle_add (midori_load_cookie_jar, settings);
     g_idle_add (midori_load_extensions, app);

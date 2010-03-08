@@ -1,6 +1,7 @@
 /*
  Copyright (C) 2007-2009 Christian Dywan <christian@twotoasts.de>
  Copyright (C) 2009 Dale Whittaker <dayul@users.sf.net>
+ Copyright (C) 2009 Alexander Butenko <a.butenka@gmail.com>
 
  This library is free software; you can redistribute it and/or
  modify it under the terms of the GNU Lesser General Public
@@ -16,7 +17,6 @@
     #include <config.h>
 #endif
 
-#include "compat.h"
 #include "midori-stock.h"
 
 #if HAVE_UNISTD_H
@@ -51,6 +51,44 @@
     #include <hildon-uri.h>
 #endif
 
+#if !GTK_CHECK_VERSION(2, 12, 0)
+
+void
+gtk_widget_set_has_tooltip (GtkWidget* widget,
+                            gboolean   has_tooltip)
+{
+    /* Do nothing */
+}
+
+void
+gtk_widget_set_tooltip_text (GtkWidget*   widget,
+                             const gchar* text)
+{
+    if (text && *text)
+    {
+        static GtkTooltips* tooltips = NULL;
+        if (G_UNLIKELY (!tooltips))
+            tooltips = gtk_tooltips_new ();
+        gtk_tooltips_set_tip (tooltips, widget, text, NULL);
+    }
+}
+
+void
+gtk_tool_item_set_tooltip_text (GtkToolItem* toolitem,
+                                const gchar* text)
+{
+    if (text && *text)
+    {
+        static GtkTooltips* tooltips = NULL;
+        if (G_UNLIKELY (!tooltips))
+            tooltips = gtk_tooltips_new ();
+
+        gtk_tool_item_set_tooltip (toolitem, tooltips, text, NULL);
+    }
+}
+
+#endif
+
 static gchar*
 sokoke_js_string_utf8 (JSStringRef js_string)
 {
@@ -80,21 +118,36 @@ sokoke_js_script_eval (JSContextRef js_context,
     JSValueRef js_exception = NULL;
     JSValueRef js_value = JSEvaluateScript (js_context, js_script,
         JSContextGetGlobalObject (js_context), NULL, 0, &js_exception);
-    if (!js_value && exception)
+    JSStringRelease (js_script);
+
+    if (!js_value)
     {
         JSStringRef js_message = JSValueToStringCopy (js_context,
                                                       js_exception, NULL);
+        value = sokoke_js_string_utf8 (js_message);
         if (exception)
-            *exception = sokoke_js_string_utf8 (js_message);
+            *exception = value;
+        else
+        {
+            g_warning ("%s", value);
+            g_free (value);
+        }
         JSStringRelease (js_message);
-        js_value = JSValueMakeNull (js_context);
+        return NULL;
     }
-    JSStringRelease (js_script);
 
     js_value_string = JSValueToStringCopy (js_context, js_value, NULL);
     value = sokoke_js_string_utf8 (js_value_string);
     JSStringRelease (js_value_string);
     return value;
+}
+
+static void
+sokoke_message_dialog_response_cb (GtkWidget* dialog,
+                                   gint       response,
+                                   gpointer   data)
+{
+    gtk_widget_destroy (dialog);
 }
 
 void
@@ -112,8 +165,8 @@ sokoke_message_dialog (GtkMessageType message_type,
         "%s", short_message);
     gtk_message_dialog_format_secondary_text (GTK_MESSAGE_DIALOG (dialog),
                                               "%s", detailed_message);
-    g_signal_connect_swapped (dialog, "response",
-                              G_CALLBACK (gtk_widget_destroy), dialog);
+    g_signal_connect (dialog, "response",
+                      G_CALLBACK (sokoke_message_dialog_response_cb), NULL);
     gtk_widget_show (dialog);
 }
 
@@ -223,6 +276,73 @@ sokoke_show_uri (GdkScreen*   screen,
     #if HAVE_HILDON
     HildonURIAction* action = hildon_uri_get_default_action_by_uri (uri, NULL);
     return hildon_uri_open (uri, action, error);
+
+    #elif defined (G_OS_WIN32)
+
+    const gchar* fallbacks [] = { "explorer" };
+    gsize i;
+    GAppInfo *app_info;
+    GFile *file;
+    gchar *free_uri;
+
+    g_return_val_if_fail (uri != NULL, FALSE);
+    g_return_val_if_fail (!error || !*error, FALSE);
+    g_return_val_if_fail (GDK_IS_SCREEN (screen) || !screen, FALSE);
+
+    file = g_file_new_for_uri (uri);
+    app_info = g_file_query_default_handler (file, NULL, error);
+
+    if (app_info != NULL)
+    {
+        GdkAppLaunchContext *context;
+        gboolean result;
+        GList l;
+
+        context = gdk_app_launch_context_new ();
+        gdk_app_launch_context_set_screen (context, screen);
+        gdk_app_launch_context_set_timestamp (context, timestamp);
+
+        l.data = (char *)file;
+        l.next = l.prev = NULL;
+        result = g_app_info_launch (app_info, &l, (GAppLaunchContext*)context, error);
+
+        g_object_unref (context);
+        g_object_unref (app_info);
+        g_object_unref (file);
+
+        if (result)
+            return TRUE;
+    }
+    else
+        g_object_unref (file);
+
+    free_uri = g_filename_from_uri (uri, NULL, NULL);
+    if (free_uri)
+    {
+        gchar *quoted = g_shell_quote (free_uri);
+        uri = quoted;
+        g_free (free_uri);
+        free_uri = quoted;
+    }
+
+    for (i = 0; i < G_N_ELEMENTS (fallbacks); i++)
+    {
+        gchar* command = g_strconcat (fallbacks[i], " ", uri, NULL);
+        gboolean result = g_spawn_command_line_async (command, error);
+        g_free (command);
+        if (result)
+        {
+            g_free (free_uri);
+            return TRUE;
+        }
+        if (error)
+            *error = NULL;
+    }
+
+    g_free (free_uri);
+
+    return FALSE;
+
     #else
 
     const gchar* fallbacks [] = { "xdg-open", "exo-open", "gnome-open" };
@@ -232,8 +352,13 @@ sokoke_show_uri (GdkScreen*   screen,
     g_return_val_if_fail (uri != NULL, FALSE);
     g_return_val_if_fail (!error || !*error, FALSE);
 
+    #if GTK_CHECK_VERSION (2, 14, 0)
     if (gtk_show_uri (screen, uri, timestamp, error))
         return TRUE;
+    #else
+    if (g_app_info_launch_default_for_uri (uri, NULL, NULL))
+        return TRUE;
+    #endif
 
     for (i = 0; i < G_N_ELEMENTS (fallbacks); i++)
     {
@@ -320,8 +445,12 @@ sokoke_spawn_program (const gchar* command,
     else
     {
         /* FIXME: Implement Hildon specific version */
+        gchar* uri_format;
         gchar* command_ready;
         gchar** argv;
+
+        if ((uri_format = strstr (command, "%u")))
+            uri_format[1] = 's';
 
         if (strstr (command, "%s"))
             command_ready = g_strdup_printf (command, argument);
@@ -362,9 +491,9 @@ sokoke_spawn_program (const gchar* command,
  * @uri: an URI string
  * @path: location of a string pointer
  *
- * Returns the hostname of the specified URI,
- * and stores the path in @path.
- * @path is at least set to ""
+ * Returns the hostname of the specified URI.
+ *
+ * If there is a path, it is stored in @path.
  *
  * Return value: a newly allocated hostname
  **/
@@ -374,24 +503,17 @@ sokoke_hostname_from_uri (const gchar* uri,
 {
     gchar* hostname;
 
-    *path = "";
-    if ((hostname = g_utf8_strchr (uri, -1, '/')))
+    if ((hostname = strchr (uri, '/')))
     {
         if (hostname[1] == '/')
             hostname += 2;
-        if ((*path = g_utf8_strchr (hostname, -1, '/')))
-        {
-            gulong offset = g_utf8_pointer_to_offset (hostname, *path);
-            gchar* buffer = g_malloc0 (offset + 1);
-            g_utf8_strncpy (buffer, hostname, offset);
-            hostname = buffer;
-        }
+        if ((*path = strchr (hostname, '/')))
+            return g_strndup (hostname, *path - hostname);
         else
-            hostname = g_strdup (hostname);
+            return g_strdup (hostname);
     }
-    else
-        hostname = g_strdup (uri);
-    return hostname;
+
+    return g_strdup (uri);
 }
 
 /**
@@ -441,9 +563,12 @@ sokoke_hostname_to_ascii (const gchar* hostname)
 gchar*
 sokoke_uri_to_ascii (const gchar* uri)
 {
-    gchar* proto;
+    gchar* proto = NULL;
+    gchar* path = NULL;
+    gchar* hostname;
+    gchar* encoded;
 
-    if ((proto = g_utf8_strchr (uri, -1, ':')))
+    if (strchr (uri, '/') && (proto = strchr (uri, ':')))
     {
         gulong offset;
         gchar* buffer;
@@ -454,9 +579,8 @@ sokoke_uri_to_ascii (const gchar* uri)
         proto = buffer;
     }
 
-    gchar* path;
-    gchar* hostname = sokoke_hostname_from_uri (uri, &path);
-    gchar* encoded = sokoke_hostname_to_ascii (hostname);
+    hostname = sokoke_hostname_from_uri (uri, &path);
+    encoded = sokoke_hostname_to_ascii (hostname);
 
     if (encoded)
     {
@@ -499,8 +623,10 @@ gchar* sokoke_search_uri (const gchar* uri,
     gchar* escaped;
     gchar* search;
 
-    g_return_val_if_fail (uri != NULL, NULL);
     g_return_val_if_fail (keywords != NULL, NULL);
+
+    if (!uri)
+        return g_strdup (keywords);
 
     escaped = g_uri_escape_string (keywords, " :/", TRUE);
     if (strstr (uri, "%s"))
@@ -514,32 +640,29 @@ gchar* sokoke_search_uri (const gchar* uri,
 /**
  * sokoke_magic_uri:
  * @uri: a string typed by a user
- * @search_engines: search engines
  *
  * Takes a string that was typed by a user,
  * guesses what it is, and returns an URI.
  *
- * Return value: a newly allocated URI
+ * If it was a search, %NULL will be returned.
+ *
+ * Return value: a newly allocated URI, or %NULL
  **/
 gchar*
-sokoke_magic_uri (const gchar* uri,
-                  KatzeArray*  search_engines)
+sokoke_magic_uri (const gchar* uri)
 {
     gchar** parts;
     gchar* search;
-    const gchar* search_uri;
-    KatzeItem* item;
 
     g_return_val_if_fail (uri, NULL);
-    g_return_val_if_fail (!search_engines ||
-        katze_array_is_a (search_engines, KATZE_TYPE_ITEM), NULL);
 
     /* Just return if it's a javascript: or mailto: uri */
-    if (g_str_has_prefix (uri, "javascript:")
-     || g_str_has_prefix (uri, "mailto:")
-     || g_str_has_prefix (uri, "tel:")
-     || g_str_has_prefix (uri, "callto:")
-     || g_str_has_prefix (uri, "data:"))
+    if (!strncmp (uri, "javascript:", 11)
+     || !strncmp (uri, "mailto:", 7)
+     || !strncmp (uri, "tel:", 4)
+     || !strncmp (uri, "callto:", 7)
+     || !strncmp (uri, "data:", 5)
+     || !strncmp (uri, "about:", 6))
         return g_strdup (uri);
     /* Add file:// if we have a local path */
     if (g_path_is_absolute (uri))
@@ -556,37 +679,25 @@ sokoke_magic_uri (const gchar* uri,
         ((search = strchr (uri, ':')) || (search = strchr (uri, '@'))) &&
         search[0] && !g_ascii_isalpha (search[1]))
         return sokoke_idn_to_punycode (g_strconcat ("http://", uri, NULL));
-    if (!strcmp (uri, "localhost") || g_str_has_prefix (uri, "localhost/"))
+    if (!strncmp (uri, "localhost", 9) && (uri[9] == '\0' || uri[9] == '/'))
         return g_strconcat ("http://", uri, NULL);
-    parts = g_strsplit (uri, ".", 0);
-    if (!search && parts[0] && parts[1])
+    if (!search)
     {
-        if (!(parts[1][1] == '\0' && !g_ascii_isalpha (parts[1][0])))
-            if (!strchr (parts[0], ' ') && !strchr (parts[1], ' '))
-            {
-                search = g_strconcat ("http://", uri, NULL);
-                g_strfreev (parts);
-                return sokoke_idn_to_punycode (search);
-            }
-    }
-    g_strfreev (parts);
-    /* We don't want to search? So return early. */
-    if (!search_engines)
-        return g_strdup (uri);
-    search = NULL;
-    search_uri = NULL;
-    /* Do we have a keyword and a string? */
-    parts = g_strsplit (uri, " ", 2);
-    if (parts[0])
-        if ((item = katze_array_find_token (search_engines, parts[0])))
+        parts = g_strsplit (uri, ".", 0);
+        if (parts[0] && parts[1])
         {
-            search_uri = katze_item_get_uri (item);
-            search = sokoke_search_uri (search_uri, parts[1] ? parts[1] : "");
+            if (!(parts[1][1] == '\0' && !g_ascii_isalpha (parts[1][0])))
+                if (!strchr (parts[0], ' ') && !strchr (parts[1], ' '))
+                {
+                    search = g_strconcat ("http://", uri, NULL);
+                    g_strfreev (parts);
+                   return sokoke_idn_to_punycode (search);
+                }
         }
-    g_strfreev (parts);
-    return search;
+        g_strfreev (parts);
+    }
+    return NULL;
 }
-
 
 /**
  * sokoke_format_uri_for_display:
@@ -604,7 +715,7 @@ sokoke_format_uri_for_display (const gchar* uri)
     {
         gchar* unescaped = g_uri_unescape_string (uri, " +");
         #ifdef HAVE_LIBSOUP_2_27_90
-        gchar* path;
+        gchar* path = NULL;
         gchar* hostname;
         gchar* decoded;
 
@@ -1080,6 +1191,37 @@ sokoke_time_t_to_julian (const time_t* timestamp)
 }
 
 /**
+ * sokoke_days_between:
+ * @day1: a time_t timestamp value
+ * @day2: a time_t timestamp value
+ *
+ * Calculates the number of days between two timestamps.
+ *
+ * Return value: an integer.
+ **/
+gint
+sokoke_days_between (const time_t* day1,
+                     const time_t* day2)
+{
+    GDate* date1;
+    GDate* date2;
+    gint age;
+
+    date1 = g_date_new ();
+    date2 = g_date_new ();
+
+    g_date_set_time_t (date1, *day1);
+    g_date_set_time_t (date2, *day2);
+
+    age = g_date_days_between (date1, date2);
+
+    g_date_free (date1);
+    g_date_free (date2);
+
+    return age;
+}
+
+/**
  * sokoke_register_stock_items:
  *
  * Registers several custom stock items used throughout Midori.
@@ -1287,7 +1429,7 @@ sokoke_find_config_filename (const gchar* folder,
     while ((config_dir = config_dirs[i++]))
     {
         gchar* path = g_build_filename (config_dir, PACKAGE_NAME, folder, filename, NULL);
-        if (g_file_test (path, G_FILE_TEST_EXISTS))
+        if (g_access (path, F_OK) == 0)
             return path;
         g_free (path);
     }
@@ -1313,11 +1455,30 @@ sokoke_find_data_filename (const gchar* filename)
     while ((data_dir = data_dirs[i++]))
     {
         gchar* path = g_build_filename (data_dir, filename, NULL);
-        if (g_file_test (path, G_FILE_TEST_EXISTS))
+        if (g_access (path, F_OK) == 0)
             return path;
         g_free (path);
     }
     return g_build_filename (MDATADIR, filename, NULL);
+}
+
+/**
+ * sokoke_get_argv:
+ * @argument_vector: %NULL
+ *
+ * Retrieves the argument vector passed at program startup.
+ *
+ * Return value: the argument vector
+ **/
+gchar**
+sokoke_get_argv (gchar** argument_vector)
+{
+    static gchar** stored_argv = NULL;
+
+    if (!stored_argv)
+        stored_argv = g_strdupv (argument_vector);
+
+    return stored_argv;
 }
 
 #if !WEBKIT_CHECK_VERSION (1, 1, 14)
@@ -1463,6 +1624,10 @@ sokoke_window_activate_key (GtkWindow*   window,
     if (gtk_window_activate_key (window, event))
         return TRUE;
 
+    /* Hack to allow Ctrl + Shift + Tab */
+    if (event->keyval == 65056)
+        event->keyval = GDK_Tab;
+
     /* We don't use gtk_accel_groups_activate because it refuses to
         activate anything that gtk_accelerator_valid doesn't like. */
     accel_name = gtk_accelerator_name (event->keyval, (event->state & gtk_accelerator_get_default_mod_mask ()));
@@ -1510,4 +1675,153 @@ sokoke_file_chooser_dialog_new (const gchar*         title,
     gtk_window_set_icon_name (GTK_WINDOW (dialog), stock_id);
     #endif
     return dialog;
+}
+
+/**
+ * sokoke_prefetch_uri:
+ * @uri: an URI string
+ *
+ * Attempts to prefetch the specified URI, that is
+ * it tries to resolve the hostname in advance.
+ *
+ * Return value: %TRUE on success
+ **/
+gboolean
+sokoke_prefetch_uri (const char* uri)
+{
+    #define MAXHOSTS 50
+    static gchar* hosts = NULL;
+    static gint host_count = G_MAXINT;
+
+    SoupURI* s_uri;
+
+    if (!uri)
+        return FALSE;
+    s_uri = soup_uri_new (uri);
+    if (!s_uri || !s_uri->host)
+        return FALSE;
+
+    #if GLIB_CHECK_VERSION (2, 22, 0)
+    if (g_hostname_is_ip_address (s_uri->host))
+    #else
+    if (g_ascii_isdigit (s_uri->host[0]) && g_strstr_len (s_uri->host, 4, "."))
+    #endif
+    {
+        soup_uri_free (s_uri);
+        return FALSE;
+    }
+    if (!g_str_has_prefix (uri, "http"))
+    {
+        soup_uri_free (s_uri);
+        return FALSE;
+    }
+
+    if (!hosts ||
+        !g_regex_match_simple (s_uri->host, hosts,
+                               G_REGEX_CASELESS, G_REGEX_MATCH_NOTEMPTY))
+    {
+        SoupAddress* address;
+        gchar* new_hosts;
+
+        address = soup_address_new (s_uri->host, SOUP_ADDRESS_ANY_PORT);
+        soup_address_resolve_async (address, 0, 0, 0, 0);
+        g_object_unref (address);
+
+        if (host_count > MAXHOSTS)
+        {
+            katze_assign (hosts, g_strdup (""));
+            host_count = 0;
+        }
+        host_count++;
+        new_hosts = g_strdup_printf ("%s|%s", hosts, s_uri->host);
+        katze_assign (hosts, new_hosts);
+    }
+    soup_uri_free (s_uri);
+    return TRUE;
+}
+
+/* Provide a new way for SoupSession to assume an 'Accept-Language'
+   string automatically from the return value of g_get_language_names(),
+   properly formatted according to RFC2616.
+   Copyright (C) 2009 Mario Sanchez Prada <msanchez@igalia.com>
+   Copyright (C) 2009 Dan Winship <danw@gnome.org>
+   Mostly copied from libSoup 2.29, coding style adjusted */
+
+/* Converts a language in POSIX format and to be RFC2616 compliant    */
+/* Based on code from epiphany-webkit (ephy_langs_append_languages()) */
+static gchar *
+sokoke_posix_lang_to_rfc2616 (const gchar *language)
+{
+    if (!strchr (language, '.') && !strchr (language, '@') && language[0] != 'C')
+        /* change to lowercase and '_' to '-' */
+        return g_strdelimit (g_ascii_strdown (language, -1), "_", '-');
+
+    return NULL;
+}
+
+/* Adds a quality value to a string (any value between 0 and 1). */
+static gchar *
+sokoke_add_quality_value (const gchar *str,
+                          float        qvalue)
+{
+    if ((qvalue >= 0.0) && (qvalue <= 1.0))
+    {
+        int qv_int = (qvalue * 1000 + 0.5);
+        return g_strdup_printf ("%s;q=%d.%d",
+                                str, (int) (qv_int / 1000), qv_int % 1000);
+    }
+
+    return g_strdup (str);
+}
+
+/* Returns a RFC2616 compliant languages list from system locales */
+gchar *
+sokoke_accept_languages (const gchar* const * lang_names)
+{
+    GArray *langs_garray = NULL;
+    char *cur_lang = NULL;
+    char *prev_lang = NULL;
+    char **langs_array;
+    char *langs_str;
+    float delta;
+    int i, n_lang_names;
+
+    /* Calculate delta for setting the quality values */
+    n_lang_names = g_strv_length ((gchar **)lang_names);
+    delta = 0.999 / (n_lang_names - 1);
+
+    /* Build the array of languages */
+    langs_garray = g_array_new (TRUE, FALSE, sizeof (char*));
+    for (i = 0; lang_names[i] != NULL; i++)
+    {
+        cur_lang = sokoke_posix_lang_to_rfc2616 (lang_names[i]);
+
+        /* Apart from getting a valid RFC2616 compliant
+           language, also get rid of extra variants */
+        if (cur_lang && (!prev_lang ||
+           (!strcmp (prev_lang, cur_lang) || !strstr (prev_lang, cur_lang))))
+        {
+
+            gchar *qv_lang = NULL;
+
+            /* Save reference for further comparison */
+            prev_lang = cur_lang;
+
+            /* Add the quality value and append it */
+            qv_lang = sokoke_add_quality_value (cur_lang, 1 - i * delta);
+            g_array_append_val (langs_garray, qv_lang);
+        }
+    }
+
+    /* Fallback: add "en" if list is empty */
+    if (langs_garray->len == 0)
+    {
+        gchar* fallback = g_strdup ("en");
+        g_array_append_val (langs_garray, fallback);
+    }
+
+    langs_array = (char **) g_array_free (langs_garray, FALSE);
+    langs_str = g_strjoinv (", ", langs_array);
+
+    return langs_str;
 }
