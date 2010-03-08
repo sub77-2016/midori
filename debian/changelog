@@ -1,4 +1,4 @@
-midori (0.2.4-1) UNRELEASED; urgency=low
+midori (0.2.4-1) unstable; urgency=low
 
   * New Upstream Version
     - update d/copyright
@@ -6,7 +6,7 @@ midori (0.2.4-1) UNRELEASED; urgency=low
   * use bundled waf again (Closes: 571709)
   * set Standards-Version to 3.8.4
 
- -- Ryan Niebur <ryan@debian.org>  Sun, 07 Mar 2010 22:06:48 -0800
+ -- Ryan Niebur <ryan@debian.org>  Sun, 07 Mar 2010 22:28:54 -0800
 
 midori (0.2.2-1) unstable; urgency=low
 
