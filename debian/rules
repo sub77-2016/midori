@@ -19,7 +19,8 @@ override_dh_quilt_patch:
 	$(CMD)
 
 #WAF=/usr/bin/waf
-WAF=./waf
+BASE_WAF=./waf
+WAF=env WAFDIR=debian/ $(BASE_WAF)
 
 debian/presubj: debian/presubj.in
 	@echo "presubj parameters:"
@@ -33,20 +34,23 @@ debian/presubj: debian/presubj.in
 override_dh_install: debian/presubj
 	$(CMD)
 
-override_dh_auto_clean:
+WAFADMIN_FILE=debian/wafadmin/Runner.py
+WAFADMIN_APPEND=debian/runner-append
+
+override_dh_auto_clean: $(WAFADMIN_FILE)
 	$(WAF) --nocache distclean
 	rm -rf _build_
 
-override_dh_auto_configure:
+override_dh_auto_configure: $(WAFADMIN_FILE)
 	$(WAF) --nocache configure --prefix /usr
 
-override_dh_auto_build:
+override_dh_auto_build: $(WAFADMIN_FILE)
 	$(WAF) --nocache build --debug full
 
-override_dh_auto_test:
+override_dh_auto_test: $(WAFADMIN_FILE)
 	xvfb-run $(WAF) --nocache check
 
-override_dh_auto_install:
+override_dh_auto_install: $(WAFADMIN_FILE)
 	$(WAF) --nocache install --destdir debian/tmp
 	rm -f debian/tmp/usr/share/doc/midori/COPYING debian/tmp/usr/share/doc/midori/TRANSLATE
 	rm -f debian/tmp/usr/share/midori/res/mootools.js
@@ -57,8 +61,15 @@ PRIORITY=$(shell sed -r -e '/DEBIAN_WWW_ALTERNATIVES_PRIORITY/ !d' -e 's/.* ([^ 
 debian/midori.postinst: debian/midori.postinst.base
 	sed "s/DEBIAN_WWW_ALTERNATIVES_PRIORITY/$(PRIORITY)/g" debian/midori.postinst.base > debian/midori.postinst
 
+$(WAFADMIN_FILE): $(BASE_WAF) $(WAFADMIN_APPEND)
+	rm -fr debian/wafadmin/ .waf-*
+	$(BASE_WAF) --help >/dev/null
+	cp -a ./.waf-*/wafadmin debian/
+	rm -fr .waf-*
+	cat $(WAFADMIN_APPEND) >> $(WAFADMIN_FILE)
+
 override_dh_clean:
-	rm -fr .waf-1.5.3-575529c232c0559c3efb0adb3d077447/
+	rm -fr debian/wafadmin
 	$(CMD)
 
 override_dh_installdeb: debian/midori.postinst
