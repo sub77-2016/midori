@@ -17,7 +17,7 @@ Midori's user documentation.  This is similar to what Dillo did/does.
  
  #include "sokoke.h"
  
-@@ -602,7 +603,7 @@
+@@ -609,7 +610,7 @@
                                       "homepage",
                                       _("Homepage:"),
                                       _("The homepage"),
