@@ -183,14 +183,13 @@ midori_preferences_homepage_current_clicked_cb (GtkWidget*         button,
 
 #if !HAVE_HILDON
 static void
-midori_preferences_notify_auto_detect_proxy_cb (MidoriWebSettings* settings,
-                                                GParamSpec*        pspec,
-                                                GtkWidget*         entry)
+midori_preferences_notify_proxy_type_cb (MidoriWebSettings* settings,
+                                         GParamSpec*        pspec,
+                                         GtkWidget*         entry)
 {
-    MidoriIdentity auto_detect_proxy = katze_object_get_enum (settings,
-                                                              "auto-detect-proxy");
+    MidoriProxy proxy_type = katze_object_get_enum (settings, "proxy-type");
 
-    gtk_widget_set_sensitive (entry, !auto_detect_proxy);
+    gtk_widget_set_sensitive (entry, proxy_type == MIDORI_PROXY_HTTP);
 }
 #endif
 
@@ -410,6 +409,12 @@ midori_preferences_set_settings (MidoriPreferences* preferences,
     SPANNED_ADD (button);
     button = katze_property_proxy (settings, "zoom-text-and-images", NULL);
     INDENTED_ADD (button);
+    #if WEBKIT_CHECK_VERSION (1, 1, 11)
+    button = katze_property_proxy (settings, "javascript-can-open-windows-automatically", NULL);
+    gtk_button_set_label (GTK_BUTTON (button), _("Allow scripts to open popups"));
+    gtk_widget_set_tooltip_text (button, _("Whether scripts are allowed to open popup windows automatically"));
+    SPANNED_ADD (button);
+    #endif
     #if WEBKIT_CHECK_VERSION (1, 1, 6)
     FRAME_NEW (_("Spell Checking"));
     /* FIXME: Provide a nice dictionary selection */
@@ -480,16 +485,17 @@ midori_preferences_set_settings (MidoriPreferences* preferences,
     PAGE_NEW (GTK_STOCK_NETWORK, _("Network"));
     FRAME_NEW (_("Network"));
     #if !HAVE_HILDON
-    label = katze_property_label (settings, "http-proxy");
+    label = katze_property_label (settings, "proxy-type");
+    INDENTED_ADD (label);
+    button = katze_property_proxy (settings, "proxy-type", NULL);
+    SPANNED_ADD (button);
+    label = gtk_label_new (_("Hostname"));
     INDENTED_ADD (label);
     entry = katze_property_proxy (settings, "http-proxy", NULL);
     SPANNED_ADD (entry);
-    INDENTED_ADD (gtk_event_box_new ());
-    button = katze_property_proxy (settings, "auto-detect-proxy", NULL);
-    SPANNED_ADD (button);
-    g_signal_connect (settings, "notify::auto-detect-proxy",
-        G_CALLBACK (midori_preferences_notify_auto_detect_proxy_cb), entry);
-    midori_preferences_notify_auto_detect_proxy_cb (settings, NULL, entry);
+    g_signal_connect (settings, "notify::proxy-type",
+        G_CALLBACK (midori_preferences_notify_proxy_type_cb), entry);
+    midori_preferences_notify_proxy_type_cb (settings, NULL, entry);
     #endif
     label = katze_property_label (settings, "identify-as");
     INDENTED_ADD (label);

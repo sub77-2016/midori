@@ -18,14 +18,18 @@ import Options
 import Utils
 import pproc as subprocess
 import os
-import UnitTest
+try:
+    import UnitTest
+except:
+    import unittestw as UnitTest
 import Task
 from TaskGen import extension, feature, taskgen
 import misc
+from Configure import find_program_impl
 
 major = 0
 minor = 2
-micro = 4
+micro = 6
 
 APPNAME = 'midori'
 VERSION = str (major) + '.' + str (minor) + '.' + str (micro)
@@ -83,6 +87,11 @@ def configure (conf):
         return dirvalue
 
     conf.check_tool ('compiler_cc')
+    # Circumvent mandatory check for valac
+    if find_program_impl (conf.env, 'valac'):
+        conf.check_tool ('vala')
+    else:
+         conf.check_message ('program', 'valac', False, False)
     conf.check_tool ('glib2')
 
     if option_enabled ('userdocs'):
@@ -209,12 +218,17 @@ def configure (conf):
         args = '--define-variable=target=win32'
     elif sys.platform != 'darwin':
         check_pkg ('x11')
+        # Pass /usr/X11R6/include for OpenBSD
+        conf.check (header_name='X11/extensions/scrnsaver.h',
+                    includes='/usr/X11R6/include', mandatory=False)
+        conf.check (lib='Xss', libpath='/usr/X11R6/lib', mandatory=False)
     check_pkg ('gtk+-2.0', '2.10.0', var='GTK', args=args)
     check_pkg ('webkit-1.0', '1.1.1', args=args)
     check_pkg ('libsoup-2.4', '2.25.2')
     conf.define ('HAVE_LIBSOUP_2_25_2', 1)
     check_pkg ('libsoup-2.4', '2.27.90', False, var='LIBSOUP_2_27_90')
     check_pkg ('libsoup-2.4', '2.29.3', False, var='LIBSOUP_2_29_3')
+    check_pkg ('libsoup-2.4', '2.29.91', False, var='LIBSOUP_2_29_91')
     check_pkg ('libxml-2.0', '2.6')
 
     if conf.env['HAVE_LIBSOUP_2_27_90']:
@@ -245,6 +259,7 @@ def configure (conf):
     # Store options in env, since 'Options' is not persistent
     if 'CC' in os.environ: conf.env['CC'] = os.environ['CC'].split()
     conf.env['addons'] = option_enabled ('addons')
+    conf.env['tests'] = option_enabled ('tests')
     conf.env['docs'] = option_enabled ('docs')
     if 'LINGUAS' in os.environ: conf.env['LINGUAS'] = os.environ['LINGUAS']
 
@@ -279,13 +294,18 @@ def configure (conf):
     conf.env.append_value ('CCFLAGS', '-DHAVE_CONFIG_H')
     debug_level = Options.options.debug_level
     compiler = conf.env['CC_NAME']
-    if debug_level == '':
-        if compiler == 'gcc':
-            debug_level = 'debug'
-        else:
-            debug_level = 'none'
+    if debug_level != '' and compiler != 'gcc':
+        Utils.pprint ('RED', 'No debugging level support for ' + compiler)
+        sys.exit (1)
+    elif debug_level == '':
+        debug_level = 'debug'
     if compiler == 'gcc':
-        if debug_level == 'debug':
+        if debug_level == 'none':
+            if 'CCFLAGS' in os.environ:
+                conf.env.append_value ('CCFLAGS', os.environ['CCFLAGS'].split ())
+            else:
+                conf.env.append_value ('CCFLAGS', '-DG_DISABLE_CHECKS -DG_DISABLE_CAST_CHECKS -DG_DISABLE_ASSERT'.split ())
+        elif debug_level == 'debug':
             conf.env.append_value ('CCFLAGS', '-Wall -O0 -g'.split ())
         elif debug_level == 'full':
             # -Wdeclaration-after-statement
@@ -305,10 +325,10 @@ def configure (conf):
                 '-DGDK_PIXBUF_DISABLE_DEPRECATED -DGDK_DISABLE_DEPRECATED '
                 '-DGTK_DISABLE_DEPRECATED -DPANGO_DISABLE_DEPRECATED '
                 '-DGDK_MULTIHEAD_SAFE -DGTK_MULTIHEAD_SAFE'.split ())
-    elif debug_level != 'none':
-            Utils.pprint ('RED', 'No debugging level support for ' + compiler)
-            sys.exit (1)
-
+    if debug_level == 'full':
+        conf.env.append_value ('VALAFLAGS', '--enable-checking'.split ())
+    elif debug_level == 'none':
+        conf.env.append_value ('VALAFLAGS', '--disable-assert')
     print '''
         Localization:        %(nls)s (intltool)
         Icon optimizations:  %(icons)s (rsvg-convert)
@@ -364,6 +384,7 @@ def set_options (opt):
     add_enable_option ('sqlite', 'history database support', group)
     add_enable_option ('libnotify', 'notification support', group)
     add_enable_option ('addons', 'building of extensions', group)
+    add_enable_option ('tests', 'building of tests', group, disable=True)
     add_enable_option ('hildon', 'Maemo integration', group, disable=not is_maemo ())
 
     # Provided for compatibility
@@ -379,7 +400,10 @@ def write_linguas_file (self):
     else:
         podir = '../po'
     if 'LINGUAS' in Build.bld.env:
-        linguas = Build.bld.env['LINGUAS']
+        files = Build.bld.env['LINGUAS']
+        for f in files.split (' '):
+            if os.path.exists (podir + '/' + f + '.po'):
+                linguas += f + ' '
     else:
         files = os.listdir (podir)
         for f in files:
@@ -518,11 +542,15 @@ def build (bld):
                     bld.install_files ('${SYSCONFDIR}/xdg/' + APPNAME + \
                                        '/extensions/' + folder, source)
 
-    if Options.commands['check']:
+    if Options.commands['check'] or bld.env['tests']:
         bld.add_subdirs ('tests')
 
     if Options.commands['clean']:
         distclean ()
+
+def check (ctx):
+    # The real work happens in shutdown ()
+    pass
 
 def distclean ():
     if os.path.exists ('po/LINGUAS'):

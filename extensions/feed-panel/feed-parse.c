@@ -1,5 +1,5 @@
 /*
- Copyright (C) 2009 Dale Whittaker <dayul@users.sf.net>
+ Copyright (C) 2009-2010 Dale Whittaker <dayul@users.sf.net>
 
  This library is free software; you can redistribute it and/or
  modify it under the terms of the GNU Lesser General Public
@@ -13,16 +13,24 @@
 #include <time.h>
 
 gchar*
-feed_get_element_string (FeedParser* fparser)
+feed_get_element_markup (FeedParser* fparser)
 {
     xmlNodePtr node;
 
     node = fparser->node;
 
+    if (node->children &&
+        !xmlIsBlankNode (node->children) &&
+        node->children->type == XML_ELEMENT_NODE)
+    {
+        return ((gchar*) xmlNodeGetContent (node->children));
+    }
+
     if (!node->children ||
         xmlIsBlankNode (node->children) ||
-        node->children->type != XML_TEXT_NODE
-        )
+        (node->children->type != XML_TEXT_NODE &&
+         node->children->type != XML_CDATA_SECTION_NODE)
+       )
     {
         /* Some servers add required elements with no content,
          * create a dummy string to handle it.
@@ -70,19 +78,11 @@ feed_remove_markup (gchar* markup)
 }
 
 gchar*
-feed_get_element_markup (FeedParser* fparser)
+feed_get_element_string (FeedParser* fparser)
 {
     gchar* markup;
-    xmlNodePtr node = fparser->node;
 
-    if (node->children &&
-        !xmlIsBlankNode (node->children) &&
-        node->children->type == XML_ELEMENT_NODE)
-    {
-        return (gchar*) xmlNodeGetContent (node->children);
-    }
-
-    markup = feed_get_element_string (fparser);
+    markup = feed_get_element_markup (fparser);
     return feed_remove_markup (markup);
 }
 

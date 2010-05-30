@@ -18,6 +18,7 @@
 #endif
 
 #include <katze/katze.h>
+#include "midori-view.h"
 
 G_BEGIN_DECLS
 
@@ -129,9 +130,17 @@ midori_browser_get_nth_tab            (MidoriBrowser*     browser,
 void
 midori_browser_set_current_tab        (MidoriBrowser*     browser,
                                        GtkWidget*         widget);
+#define midori_browser_set_tab midori_browser_set_current_tab
 
 GtkWidget*
 midori_browser_get_current_tab        (MidoriBrowser*     browser);
+#define midori_browser_get_tab midori_browser_get_current_tab
+
+GList*
+midori_browser_get_tabs               (MidoriBrowser*     browser);
+
+KatzeArray*
+midori_browser_get_proxy_items        (MidoriBrowser*     browser);
 
 KatzeArray*
 midori_browser_get_proxy_array        (MidoriBrowser*     browser);
@@ -144,6 +153,9 @@ midori_browser_quit                   (MidoriBrowser*     browser);
 
 const gchar**
 midori_browser_get_toolbar_actions    (MidoriBrowser*     browser);
+
+MidoriWebSettings*
+midori_browser_get_settings           (MidoriBrowser*     browser);
 
 G_END_DECLS
 

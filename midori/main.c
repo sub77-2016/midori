@@ -15,7 +15,6 @@
 #endif
 
 #include "midori.h"
-#include "midori-addons.h"
 #include "midori-array.h"
 #include "midori-bookmarks.h"
 #include "midori-console.h"
@@ -52,6 +51,13 @@
     #define BOOKMARK_FILE "/home/user/.bookmarks/MyBookmarks.xml"
 #else
     #define BOOKMARK_FILE "bookmarks.xbel"
+#endif
+
+#ifdef HAVE_X11_EXTENSIONS_SCRNSAVER_H
+    #include <X11/Xlib.h>
+    #include <X11/Xutil.h>
+    #include <X11/extensions/scrnsaver.h>
+    #include <gdk/gdkx.h>
 #endif
 
 static gchar*
@@ -654,11 +660,6 @@ midori_app_add_browser_cb (MidoriApp*     app,
     gtk_widget_show (addon);
     midori_panel_append_page (MIDORI_PANEL (panel), MIDORI_VIEWABLE (addon));
 
-    /* Userscripts */
-    addon = midori_addons_new (MIDORI_ADDON_USER_SCRIPTS, GTK_WIDGET (browser));
-    gtk_widget_show (addon);
-    midori_panel_append_page (MIDORI_PANEL (panel), MIDORI_VIEWABLE (addon));
-
     /* Extensions */
     addon = g_object_new (MIDORI_TYPE_EXTENSIONS, NULL);
     gtk_widget_show (addon);
@@ -752,10 +753,10 @@ soup_session_settings_notify_http_proxy_cb (MidoriWebSettings* settings,
                                             GParamSpec*        pspec,
                                             SoupSession*       session)
 {
-    gboolean auto_detect_proxy;
+    MidoriProxy proxy_type;
 
-    auto_detect_proxy = katze_object_get_boolean (settings, "auto-detect-proxy");
-    if (auto_detect_proxy)
+    proxy_type = katze_object_get_enum (settings, "proxy-type");
+    if (proxy_type == MIDORI_PROXY_AUTOMATIC)
     {
         gboolean gnome_supported = FALSE;
         GModule* module;
@@ -773,12 +774,14 @@ soup_session_settings_notify_http_proxy_cb (MidoriWebSettings* settings,
         if (!gnome_supported)
             midori_soup_session_set_proxy_uri (session, g_getenv ("http_proxy"));
     }
-    else
+    else if (proxy_type == MIDORI_PROXY_HTTP)
     {
         gchar* http_proxy = katze_object_get_string (settings, "http-proxy");
         midori_soup_session_set_proxy_uri (session, http_proxy);
         g_free (http_proxy);
     }
+    else
+        midori_soup_session_set_proxy_uri (session, NULL);
 }
 
 #if !WEBKIT_CHECK_VERSION (1, 1, 11)
@@ -842,6 +845,29 @@ midori_soup_session_prepare (SoupSession*       session,
 {
     SoupSessionFeature* feature;
     gchar* config_file;
+
+    #if WEBKIT_CHECK_VERSION (1, 1, 14) && defined (HAVE_LIBSOUP_2_29_91)
+    const gchar* certificate_files[] =
+    {
+        "/etc/pki/tls/certs/ca-bundle.crt",
+        "/etc/ssl/certs/ca-certificates.crt",
+        NULL
+    };
+    guint i;
+
+    for (i = 0; i < G_N_ELEMENTS (certificate_files); i++)
+        if (g_access (certificate_files[i], F_OK) == 0)
+        {
+            g_object_set (session,
+                "ssl-ca-file", certificate_files[i],
+                "ssl-strict", FALSE,
+                NULL);
+            break;
+        }
+    if (i == G_N_ELEMENTS (certificate_files))
+        g_warning (_("No root certificate file is available. "
+                     "SSL certificates cannot be verified."));
+    #endif
 
     soup_session_settings_notify_http_proxy_cb (settings, NULL, session);
     g_signal_connect (settings, "notify::http-proxy",
@@ -1422,6 +1448,92 @@ signal_handler (int signal_id)
 }
 #endif
 
+static void
+midori_soup_session_block_uris_cb (SoupSession* session,
+                                   SoupMessage* msg,
+                                   gchar*       blocked_uris)
+{
+    static GRegex* regex = NULL;
+    SoupURI* soup_uri;
+    gchar* uri;
+    if (!regex)
+        regex = g_regex_new (blocked_uris, 0, 0, NULL);
+    soup_uri = soup_message_get_uri (msg);
+    uri = soup_uri_to_string (soup_uri, FALSE);
+    if (g_regex_match (regex, uri, 0, 0))
+    {
+        soup_uri = soup_uri_new ("http://.invalid");
+        soup_message_set_uri (msg, soup_uri);
+        soup_uri_free (soup_uri);
+    }
+    g_free (uri);
+}
+
+typedef struct {
+     MidoriBrowser* browser;
+     guint timeout;
+     gchar* uri;
+} MidoriInactivityTimeout;
+
+static gboolean
+midori_inactivity_timeout (gpointer data)
+{
+    #ifdef HAVE_X11_EXTENSIONS_SCRNSAVER_H
+    MidoriInactivityTimeout* mit = data;
+    static Display* xdisplay = NULL;
+    static XScreenSaverInfo* mit_info = NULL;
+    static int has_extension = -1;
+    int event_base, error_base;
+
+    if (has_extension == -1)
+    {
+        GdkDisplay* display = gtk_widget_get_display (GTK_WIDGET (mit->browser));
+        xdisplay = GDK_DISPLAY_XDISPLAY (display);
+        has_extension = XScreenSaverQueryExtension (xdisplay,
+                                                    &event_base, &error_base);
+    }
+
+    if (has_extension)
+    {
+        if (!mit_info)
+            mit_info = XScreenSaverAllocInfo ();
+
+        XScreenSaverQueryInfo (xdisplay, RootWindow (xdisplay, 0), mit_info);
+        if (mit_info->idle / 1000 > mit->timeout)
+        {
+            guint i = 0;
+            GtkWidget* view;
+
+            while ((view = midori_browser_get_nth_tab (mit->browser, i++)))
+                gtk_widget_destroy (view);
+            midori_browser_set_current_uri (mit->browser, mit->uri);
+            /* TODO: Re-run initial commands */
+
+        }
+    }
+    #else
+    /* TODO: Implement for other windowing systems */
+    #endif
+
+    return TRUE;
+}
+
+static void
+midori_setup_inactivity_reset (MidoriBrowser* browser,
+                               gint           inactivity_reset,
+                               const gchar*   uri)
+{
+    if (inactivity_reset > 0)
+    {
+        MidoriInactivityTimeout* mit = g_new (MidoriInactivityTimeout, 1);
+        mit->browser = browser;
+        mit->timeout = inactivity_reset;
+        mit->uri = g_strdup (uri);
+        g_timeout_add_seconds (inactivity_reset, midori_inactivity_timeout,
+                               mit);
+    }
+}
+
 int
 main (int    argc,
       char** argv)
@@ -1434,6 +1546,8 @@ main (int    argc,
     gboolean execute;
     gboolean version;
     gchar** uris;
+    gchar* block_uris;
+    gint inactivity_reset;
     MidoriApp* app;
     gboolean result;
     GError* error;
@@ -1459,6 +1573,13 @@ main (int    argc,
        N_("Display program version"), NULL },
        { G_OPTION_REMAINING, 0, 0, G_OPTION_ARG_STRING_ARRAY, &uris,
        N_("Addresses"), NULL },
+       { "block-uris", 'b', 0, G_OPTION_ARG_STRING, &block_uris,
+       N_("Block URIs according to regular expression PATTERN"), _("PATTERN") },
+       #ifdef HAVE_X11_EXTENSIONS_SCRNSAVER_H
+       { "inactivity-reset", 'i', 0, G_OPTION_ARG_INT, &inactivity_reset,
+       /* i18n: CLI: Close tabs, clear private data, open starting page */
+       N_("Reset Midori after SECONDS seconds of inactivity"), N_("SECONDS") },
+       #endif
      { NULL }
     };
     GString* error_messages;
@@ -1534,6 +1655,8 @@ main (int    argc,
     execute = FALSE;
     version = FALSE;
     uris = NULL;
+    block_uris = NULL;
+    inactivity_reset = 0;
     error = NULL;
     if (!gtk_init_with_args (&argc, &argv, _("[Addresses]"), entries,
                              GETTEXT_PACKAGE, &error))
@@ -1557,7 +1680,7 @@ main (int    argc,
     {
         g_print (
           "%s %s\n\n"
-          "Copyright (c) 2007-2009 Christian Dywan\n\n"
+          "Copyright (c) 2007-2010 Christian Dywan\n\n"
           "%s\n"
           "\t%s\n\n"
           "%s\n"
@@ -1642,10 +1765,19 @@ main (int    argc,
                 i++;
             }
         }
+        if (block_uris)
+            g_signal_connect (webkit_get_default_session (), "request-queued",
+                G_CALLBACK (midori_soup_session_block_uris_cb),
+                g_strdup (block_uris));
+        midori_setup_inactivity_reset (browser, inactivity_reset, webapp);
         midori_startup_timer ("App created: \t%f");
         gtk_main ();
         return 0;
     }
+
+    /* FIXME: Inactivity reset is only supported for app mode */
+    if (inactivity_reset > 0)
+        g_error ("--inactivity-reset is currently only supported with --app.");
 
     /* Standalone javascript support */
     if (run)
@@ -1978,6 +2110,11 @@ main (int    argc,
 
     if (execute)
         g_object_set_data (G_OBJECT (app), "execute-command", uris);
+    if (block_uris)
+            g_signal_connect (webkit_get_default_session (), "request-queued",
+                G_CALLBACK (midori_soup_session_block_uris_cb),
+                g_strdup (block_uris));
+
 
     gtk_main ();
 

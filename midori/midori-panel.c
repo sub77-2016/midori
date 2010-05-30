@@ -405,7 +405,6 @@ midori_panel_init (MidoriPanel* panel)
 
     /* Create the sidebar */
     panel->toolbar = gtk_toolbar_new ();
-    gtk_toolbar_set_style (GTK_TOOLBAR (panel->toolbar), GTK_TOOLBAR_ICONS);
     gtk_toolbar_set_icon_size (GTK_TOOLBAR (panel->toolbar), GTK_ICON_SIZE_BUTTON);
     gtk_toolbar_set_show_arrow (GTK_TOOLBAR (panel->toolbar), FALSE);
     gtk_widget_show_all (panel->toolbar);
@@ -657,7 +656,7 @@ midori_panel_construct_menu_item (MidoriPanel*    panel,
     menuitem = gtk_action_create_menu_item (action);
     g_object_set_data (G_OBJECT (menuitem), "page", viewable);
 
-    if (GTK_WIDGET_VISIBLE (viewable))
+    if (gtk_widget_get_visible (GTK_WIDGET (viewable)))
         gtk_widget_show (menuitem);
     return menuitem;
 }
@@ -841,7 +840,7 @@ midori_panel_append_page (MidoriPanel*    panel,
     g_signal_connect (viewable, "destroy",
                       G_CALLBACK (midori_panel_viewable_destroy_cb), panel);
 
-    if (!GTK_WIDGET_VISIBLE (viewable))
+    if (!gtk_widget_get_visible (GTK_WIDGET (viewable)))
     {
         gtk_widget_hide (scrolled);
         gtk_widget_hide (GTK_WIDGET (toolitem));
@@ -992,7 +991,7 @@ midori_panel_set_current_page (MidoriPanel* panel,
         GList* items;
         const gchar* label;
 
-        if (!GTK_WIDGET_VISIBLE (viewable))
+        if (!gtk_widget_get_visible (viewable))
             return;
 
         gtk_notebook_set_current_page (GTK_NOTEBOOK (panel->toolbook), n);
