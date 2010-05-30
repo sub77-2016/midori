@@ -2,7 +2,7 @@ fix building in Serial mode (on HPPA)
 
 --- a/wscript
 +++ b/wscript
-@@ -466,7 +466,7 @@
+@@ -490,7 +490,7 @@
              obj.source = 'data/' + APPNAME + '.desktop.in'
              obj.install_path = appdir
              obj.flags  = ['-d', '-c']
