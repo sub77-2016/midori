@@ -1,6 +1,6 @@
 /*
- Copyright (C) 2008-2009 Christian Dywan <christian@twotoasts.de>
- Copyright (C) 2008 Dale Whittaker <dayul@users.sf.net>
+ Copyright (C) 2008-2010 Christian Dywan <christian@twotoasts.de>
+ Copyright (C) 2008-2010 Dale Whittaker <dayul@users.sf.net>
 
  This library is free software; you can redistribute it and/or
  modify it under the terms of the GNU Lesser General Public
@@ -373,7 +373,8 @@ midori_location_action_popup_timeout_cb (gpointer data)
     result = sqlite3_step (stmt);
     if (result != SQLITE_ROW && !action->search_engines)
     {
-        g_print (_("Failed to select from history\n"));
+        if (result == SQLITE_ERROR)
+            g_print (_("Failed to select from history\n"));
         sqlite3_reset (stmt);
         sqlite3_clear_bindings (stmt);
         midori_location_action_popdown_completion (action);
@@ -384,6 +385,7 @@ midori_location_action_popup_timeout_cb (gpointer data)
     {
         GtkTreeModel* model = NULL;
         GtkWidget* popup;
+        GtkWidget* popup_frame;
         GtkWidget* scrolled;
         GtkWidget* treeview;
         GtkCellRenderer* renderer;
@@ -393,10 +395,13 @@ midori_location_action_popup_timeout_cb (gpointer data)
 
         popup = gtk_window_new (GTK_WINDOW_POPUP);
         gtk_window_set_type_hint (GTK_WINDOW (popup), GDK_WINDOW_TYPE_HINT_COMBO);
+        popup_frame = gtk_frame_new (NULL);
+        gtk_frame_set_shadow_type (GTK_FRAME (popup_frame), GTK_SHADOW_ETCHED_IN);
+        gtk_container_add (GTK_CONTAINER (popup), popup_frame);
         scrolled = g_object_new (GTK_TYPE_SCROLLED_WINDOW,
             "hscrollbar-policy", GTK_POLICY_NEVER,
             "vscrollbar-policy", GTK_POLICY_AUTOMATIC, NULL);
-        gtk_container_add (GTK_CONTAINER (popup), scrolled);
+        gtk_container_add (GTK_CONTAINER (popup_frame), scrolled);
         treeview = gtk_tree_view_new_with_model (model);
         gtk_tree_view_set_headers_visible (GTK_TREE_VIEW (treeview), FALSE);
         gtk_tree_view_set_hover_selection (GTK_TREE_VIEW (treeview), TRUE);
@@ -486,7 +491,7 @@ midori_location_action_popup_timeout_cb (gpointer data)
         searches += i;
     }
 
-    if (!GTK_WIDGET_VISIBLE (action->popup))
+    if (!gtk_widget_get_visible (action->popup))
     {
         GtkWidget* toplevel = gtk_widget_get_toplevel (action->entry);
         gtk_window_set_screen (GTK_WINDOW (action->popup),
@@ -831,7 +836,7 @@ midori_location_action_button_press_event_cb (GtkEntry*             entry,
                                               GdkEventKey*          event,
                                               MidoriLocationAction* action)
 {
-    if (action->popup && GTK_WIDGET_VISIBLE (action->popup))
+    if (action->popup && gtk_widget_get_visible (action->popup))
     {
         midori_location_action_popdown_completion (action);
 
@@ -863,7 +868,7 @@ midori_location_action_key_press_event_cb (GtkEntry*    entry,
     case GDK_Right:
     case GDK_KP_Right:
 
-        if (location_action->popup && GTK_WIDGET_VISIBLE (location_action->popup))
+        if (location_action->popup && gtk_widget_get_visible (location_action->popup))
         {
             GtkTreeModel* model = location_action->completion_model;
             GtkTreeIter iter;
@@ -892,7 +897,7 @@ midori_location_action_key_press_event_cb (GtkEntry*    entry,
         break;
     case GDK_Escape:
     {
-        if (location_action->popup && GTK_WIDGET_VISIBLE (location_action->popup))
+        if (location_action->popup && gtk_widget_get_visible (location_action->popup))
         {
             midori_location_action_popdown_completion (location_action);
             text = gtk_entry_get_text (entry);
@@ -906,7 +911,7 @@ midori_location_action_key_press_event_cb (GtkEntry*    entry,
     }
     case GDK_Page_Up:
     case GDK_Page_Down:
-        if (!(location_action->popup && GTK_WIDGET_VISIBLE (location_action->popup)))
+        if (!(location_action->popup && gtk_widget_get_visible (location_action->popup)))
             return TRUE;
     case GDK_Down:
     case GDK_KP_Down:
@@ -915,7 +920,7 @@ midori_location_action_key_press_event_cb (GtkEntry*    entry,
     {
         GtkWidget* parent;
 
-        if (location_action->popup && GTK_WIDGET_VISIBLE (location_action->popup))
+        if (location_action->popup && gtk_widget_get_visible (location_action->popup))
         {
             GtkTreeModel* model = location_action->completion_model;
             gint matches = gtk_tree_model_iter_n_children (model, NULL);
@@ -1679,4 +1684,61 @@ midori_location_action_clear (MidoriLocationAction* location_action)
     g_return_if_fail (MIDORI_IS_LOCATION_ACTION (location_action));
 
     midori_location_action_toggle_arrow (location_action);
+}
+
+/**
+ * midori_location_action_set_security_hint:
+ * @location_action: a #MidoriLocationAction
+ * @hint: a security hint
+ *
+ * Sets a security hint on the action, so that the security status
+ * can be reflected visually.
+ *
+ * Since: 0.2.5
+ **/
+void
+midori_location_action_set_security_hint (MidoriLocationAction* location_action,
+                                          MidoriSecurity        hint)
+{
+    GSList* proxies;
+    GtkWidget* entry;
+    GtkWidget* child;
+
+    g_return_if_fail (MIDORI_IS_LOCATION_ACTION (location_action));
+
+    proxies = gtk_action_get_proxies (GTK_ACTION (location_action));
+
+    for (; proxies != NULL; proxies = g_slist_next (proxies))
+    if (GTK_IS_TOOL_ITEM (proxies->data))
+    {
+        GdkColor bg_color = { 0, 1 };
+        GdkColor fg_color = { 0, 1 };
+
+        entry = midori_location_action_entry_for_proxy (proxies->data);
+        child = gtk_bin_get_child (GTK_BIN (entry));
+
+        if (hint == MIDORI_SECURITY_UNKNOWN)
+        {
+            gdk_color_parse ("#ef7070", &bg_color);
+            gdk_color_parse ("#000", &fg_color);
+            #if !HAVE_HILDON
+            gtk_icon_entry_set_icon_from_stock (GTK_ICON_ENTRY (child),
+                GTK_ICON_ENTRY_SECONDARY, GTK_STOCK_INFO);
+            #endif
+        }
+        else if (hint == MIDORI_SECURITY_TRUSTED)
+        {
+            gdk_color_parse ("#fcf19a", &bg_color);
+            gdk_color_parse ("#000", &fg_color);
+            #if !HAVE_HILDON
+            gtk_icon_entry_set_icon_from_stock (GTK_ICON_ENTRY (child),
+                GTK_ICON_ENTRY_SECONDARY, GTK_STOCK_DIALOG_AUTHENTICATION);
+            #endif
+        }
+
+        gtk_widget_modify_base (child, GTK_STATE_NORMAL,
+            bg_color.red == 1 ? NULL : &bg_color);
+        gtk_widget_modify_text (child, GTK_STATE_NORMAL,
+            bg_color.red == 1 ? NULL : &fg_color);
+    }
 }

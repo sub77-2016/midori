@@ -1,0 +1,7 @@
+argv = ['./waf', '--nocache', 'configure', '--prefix', '/usr']
+blddir = '/server/home/ryan52/projects/deb/midori/midori/_build_'
+commands = {'dist': 0, 'configure': True, 'distcheck': 0, 'install': 0, 'build': 0, 'clean': 0, 'distclean': 0, 'check': 0, 'uninstall': 0}
+files = []
+hash = 0
+options = {'enable_apidocs': False, 'disable_hildon': True, 'force': False, 'verbose': 0, 'SHAREDSTATEDIR': '', 'destdir': '', 'disable_libidn': False, 'zones': '', 'enable_libidn': False, 'prefix': '/usr', 'run': False, 'enable_libnotify': False, 'disable_sqlite': False, 'enable_addons': False, 'blddir': '', 'compile_targets': '', 'INFODIR': '', 'nocache': True, 'progress_bar': 0, 'EXEC_PREFIX': '', 'disable_apidocs': True, 'LOCALSTATEDIR': '', 'disable_libnotify': False, 'datadir': '', 'INCLUDEDIR': '', 'build': None, 'LIBEXECDIR': '', 'MANDIR': '', 'PSDIR': '', 'BINDIR': '', 'enable_hildon': False, 'enable_unique': False, 'DOCDIR': '', 'SYSCONFDIR': '', 'jobs': 2, 'DATAROOTDIR': '', 'disable_userdocs': False, 'PDFDIR': '', 'DATADIR': '', 'LIBDIR': '', 'SBINDIR': '', 'disable_docs': False, 'enable_sqlite': False, 'srcdir': '', 'enable_nls': False, 'want_rpath': 1, 'disable_unique': False, 'enable_userdocs': False, 'disable_addons': False, 'disable_maintainer_mode': None, 'debug_level': '', 'HTMLDIR': '', 'LOCALEDIR': '', 'keep': False, 'disable_nls': False, 'enable_docs': False, 'update_po': False, 'DVIDIR': '', 'check_c_compiler': 'gcc icc suncc', 'OLDINCLUDEDIR': ''}
+srcdir = '/server/home/ryan52/projects/deb/midori/midori'

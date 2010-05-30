@@ -224,12 +224,7 @@ sokoke_show_uri_with_mime_type (GdkScreen*   screen,
     GList* files;
     gpointer context;
 
-    #if GLIB_CHECK_VERSION (2, 18, 0)
     content_type = g_content_type_from_mime_type (mime_type);
-    #else
-    content_type = g_strdup (mime_type);
-    #endif
-
     app_info = g_app_info_get_default_for_type (content_type,
         !g_str_has_prefix (uri, "file://"));
     g_free (content_type);
@@ -273,6 +268,7 @@ sokoke_show_uri (GdkScreen*   screen,
                  guint32      timestamp,
                  GError**     error)
 {
+
     #if HAVE_HILDON
     HildonURIAction* action = hildon_uri_get_default_action_by_uri (uri, NULL);
     return hildon_uri_open (uri, action, error);
@@ -351,6 +347,8 @@ sokoke_show_uri (GdkScreen*   screen,
     g_return_val_if_fail (GDK_IS_SCREEN (screen) || !screen, FALSE);
     g_return_val_if_fail (uri != NULL, FALSE);
     g_return_val_if_fail (!error || !*error, FALSE);
+
+    sokoke_recursive_fork_protection (uri, TRUE);
 
     #if GTK_CHECK_VERSION (2, 14, 0)
     if (gtk_show_uri (screen, uri, timestamp, error))
@@ -637,6 +635,45 @@ gchar* sokoke_search_uri (const gchar* uri,
     return search;
 }
 
+static void
+sokoke_resolve_hostname_cb (SoupAddress *address,
+                            guint        status,
+                            gpointer     data)
+{
+    if (status == SOUP_STATUS_OK)
+        *(gint *)data = 1;
+    else
+        *(gint *)data = 2;
+}
+
+/**
+ * sokoke_resolve_hostname
+ * @hostname: a string typed by a user
+ *
+ * Takes a string that was typed by a user,
+ * resolves the hostname, and returns the status.
+ *
+ * Return value: %TRUE if is a valid host, else %FALSE
+ **/
+gboolean
+sokoke_resolve_hostname (const gchar* hostname)
+{
+    gchar* uri;
+    gint host_resolved = 0;
+
+    uri = g_strconcat ("http://", hostname, NULL);
+    if (sokoke_prefetch_uri (uri, sokoke_resolve_hostname_cb,
+                             &host_resolved))
+    {
+        GTimer* timer = g_timer_new ();
+        while (!host_resolved && g_timer_elapsed (timer, NULL) < 10)
+            g_main_context_iteration (NULL, FALSE);
+        g_timer_destroy (timer);
+    }
+    g_free (uri);
+    return host_resolved == 1 ? TRUE : FALSE;
+}
+
 /**
  * sokoke_magic_uri:
  * @uri: a string typed by a user
@@ -679,7 +716,8 @@ sokoke_magic_uri (const gchar* uri)
         ((search = strchr (uri, ':')) || (search = strchr (uri, '@'))) &&
         search[0] && !g_ascii_isalpha (search[1]))
         return sokoke_idn_to_punycode (g_strconcat ("http://", uri, NULL));
-    if (!strncmp (uri, "localhost", 9) && (uri[9] == '\0' || uri[9] == '/'))
+    if ((!strcmp (uri, "localhost") || strchr (uri, '/'))
+      && sokoke_resolve_hostname (uri))
         return g_strconcat ("http://", uri, NULL);
     if (!search)
     {
@@ -816,7 +854,8 @@ sokoke_get_desktop (void)
         GdkDisplay* display = gdk_display_get_default ();
         Display* xdisplay = GDK_DISPLAY_XDISPLAY (display);
         Window root_window = RootWindow (xdisplay, 0);
-        Atom save_mode_atom = gdk_x11_get_xatom_by_name ("_DT_SAVE_MODE");
+        Atom save_mode_atom = gdk_x11_get_xatom_by_name_for_display (
+            display, "_DT_SAVE_MODE");
         Atom actual_type;
         int actual_format;
         unsigned long n_items, bytes;
@@ -973,7 +1012,7 @@ sokoke_entry_set_default_text (GtkEntry*    entry,
                                             PANGO_STYLE_ITALIC);
         gtk_entry_set_text (entry, default_text);
     }
-    else if (!GTK_WIDGET_HAS_FOCUS (GTK_WIDGET (entry)))
+    else if (!gtk_widget_has_focus (GTK_WIDGET (entry)))
     {
         gint has_default = GPOINTER_TO_INT (
             g_object_get_data (G_OBJECT (entry), "sokoke_has_default"));
@@ -1265,6 +1304,7 @@ sokoke_register_stock_items (void)
         { STOCK_PLUGINS,        N_("Netscape p_lugins"), 0, 0, GTK_STOCK_CONVERT },
         { STOCK_USER_TRASH,     N_("_Closed Tabs"), 0, 0, "gtk-undo-ltr" },
         { STOCK_WINDOW_NEW,     N_("New _Window"), 0, 0, GTK_STOCK_ADD },
+        { GTK_STOCK_DIRECTORY,  N_("New _Folder"), 0, 0, NULL },
     };
 
     factory = gtk_icon_factory_new ();
@@ -1443,7 +1483,7 @@ sokoke_find_config_filename (const gchar* folder,
  * Looks for the specified filename in the system data
  * directories, depending on the platform.
  *
- * Return value: a full path
+ * Return value: a newly allocated full path
  **/
 gchar*
 sokoke_find_data_filename (const gchar* filename)
@@ -1451,10 +1491,16 @@ sokoke_find_data_filename (const gchar* filename)
     const gchar* const* data_dirs = g_get_system_data_dirs ();
     guint i = 0;
     const gchar* data_dir;
+    gchar* path;
+
+    path = g_build_filename (g_get_user_data_dir (), filename, NULL);
+    if (g_access (path, F_OK) == 0)
+        return path;
+    g_free (path);
 
     while ((data_dir = data_dirs[i++]))
     {
-        gchar* path = g_build_filename (data_dir, filename, NULL);
+        path = g_build_filename (data_dir, filename, NULL);
         if (g_access (path, F_OK) == 0)
             return path;
         g_free (path);
@@ -1687,7 +1733,9 @@ sokoke_file_chooser_dialog_new (const gchar*         title,
  * Return value: %TRUE on success
  **/
 gboolean
-sokoke_prefetch_uri (const char* uri)
+sokoke_prefetch_uri (const char*         uri,
+                     SoupAddressCallback callback,
+                     gpointer            user_data)
 {
     #define MAXHOSTS 50
     static gchar* hosts = NULL;
@@ -1724,7 +1772,7 @@ sokoke_prefetch_uri (const char* uri)
         gchar* new_hosts;
 
         address = soup_address_new (s_uri->host, SOUP_ADDRESS_ANY_PORT);
-        soup_address_resolve_async (address, 0, 0, 0, 0);
+        soup_address_resolve_async (address, 0, 0, callback, user_data);
         g_object_unref (address);
 
         if (host_count > MAXHOSTS)
@@ -1736,8 +1784,40 @@ sokoke_prefetch_uri (const char* uri)
         new_hosts = g_strdup_printf ("%s|%s", hosts, s_uri->host);
         katze_assign (hosts, new_hosts);
     }
+    else if (callback)
+        callback (NULL, SOUP_STATUS_OK, user_data);
     soup_uri_free (s_uri);
     return TRUE;
+}
+
+/**
+ * sokoke_recursive_fork_protection
+ * @uri: the URI to check
+ * @set_uri: if TRUE the URI will be saved
+ *
+ * Protects against recursive invokations of the Midori executable
+ * with the same URI.
+ *
+ * As an example, consider having an URI starting with 'tel://'. You
+ * could attempt to open it with sokoke_show_uri. In turn, 'exo-open'
+ * might be called. Now quite possibly 'exo-open' is unable to handle
+ * 'tel://' and might well fall back to 'midori' as default browser.
+ *
+ * To protect against this scenario, call this function with the
+ * URI and %TRUE before calling any external tool.
+ * #MidoriApp calls sokoke_recursive_fork_protection() with %FALSE
+ * and bails out if %FALSE is returned.
+ *
+ * Return value: %TRUE if @uri is new, %FALSE on recursion
+ **/
+gboolean
+sokoke_recursive_fork_protection (const gchar* uri,
+                                  gboolean     set_uri)
+{
+    static gchar* fork_uri = NULL;
+    if (set_uri)
+        katze_assign (fork_uri, g_strdup (uri));
+    return g_strcmp0 (fork_uri, uri) == 0 ? FALSE : TRUE;
 }
 
 /* Provide a new way for SoupSession to assume an 'Accept-Language'

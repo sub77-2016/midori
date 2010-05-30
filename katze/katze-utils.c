@@ -29,6 +29,9 @@
     #include <hildon/hildon.h>
 #endif
 
+#if !GTK_CHECK_VERSION (2, 14, 0)
+    #define gtk_widget_get_window(wdgt) wdgt->window
+#endif
 #if !GTK_CHECK_VERSION (2, 18, 0)
     #define gtk_widget_get_has_window(wdgt) !GTK_WIDGET_NO_WINDOW (wdgt)
     #define gtk_widget_get_allocation(wdgt, alloc) *alloc = wdgt->allocation
@@ -85,6 +88,7 @@ proxy_combo_box_text_changed_cb (GtkComboBox* button,
     gchar* text = gtk_combo_box_get_active_text (button);
     const gchar* property = g_object_get_data (G_OBJECT (button), "property");
     g_object_set (object, property, text, NULL);
+    g_free (text);
 }
 
 static const gchar*
@@ -1457,7 +1461,7 @@ katze_load_cached_icon (const gchar* uri,
 {
     GdkPixbuf* icon = NULL;
 
-    if (g_str_has_prefix (uri, "http://"))
+    if (g_str_has_prefix (uri, "http://") || g_str_has_prefix (uri,"https://"))
     {
         guint i;
         gchar* icon_uri;

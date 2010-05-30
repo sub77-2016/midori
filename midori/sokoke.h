@@ -27,6 +27,13 @@
 #if !GLIB_CHECK_VERSION (2, 14, 0)
     #define G_PARAM_STATIC_STRINGS \
     (G_PARAM_STATIC_NAME | G_PARAM_STATIC_NICK | G_PARAM_STATIC_BLURB)
+#endif
+
+#if !GLIB_CHECK_VERSION (2, 18, 0)
+    #define g_content_type_from_mime_type(mtp) g_strdup (mtp)
+#endif
+
+#if !GTK_CHECK_VERSION (2, 14, 0)
     #define gtk_dialog_get_content_area(dlg) dlg->vbox
 #endif
 
@@ -38,6 +45,12 @@
 #if !GTK_CHECK_VERSION (2, 18, 0)
     #define gtk_widget_is_toplevel(widget) GTK_WIDGET_TOPLEVEL (widget)
     #define gtk_widget_has_focus(widget) GTK_WIDGET_HAS_FOCUS (widget)
+    #define gtk_widget_get_visible(widget) GTK_WIDGET_VISIBLE (widget)
+    #define gtk_widget_get_sensitive(widget) GTK_WIDGET_IS_SENSITIVE (widget)
+#endif
+
+#if !GTK_CHECK_VERSION (2, 20, 0)
+    #define gtk_widget_get_realized(widget) GTK_WIDGET_REALIZED (widget)
 #endif
 
 #if !GTK_CHECK_VERSION(2, 12, 0)
@@ -221,9 +234,18 @@ sokoke_file_chooser_dialog_new          (const gchar*         title,
                                          GtkFileChooserAction action);
 
 gboolean
-sokoke_prefetch_uri                     (const char* uri);
+sokoke_prefetch_uri                     (const char*         uri,
+                                         SoupAddressCallback callback,
+                                         gpointer            user_data);
+
+gboolean
+sokoke_resolve_hostname                 (const gchar*        hostname);
 
 gchar *
 sokoke_accept_languages                 (const gchar* const * lang_names);
+
+gboolean
+sokoke_recursive_fork_protection        (const gchar*         uri,
+                                         gboolean             set_uri);
 
 #endif /* !__SOKOKE_H__ */

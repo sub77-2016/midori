@@ -1,5 +1,5 @@
 /*
- Copyright (C) 2008-2009 Christian Dywan <christian@twotoasts.de>
+ Copyright (C) 2008-2010 Christian Dywan <christian@twotoasts.de>
 
  This library is free software; you can redistribute it and/or
  modify it under the terms of the GNU Lesser General Public
@@ -227,6 +227,14 @@ midori_app_class_init (MidoriAppClass* class)
 {
     GObjectClass* gobject_class;
 
+    /**
+     * MidoriApp::add-browser:
+     * @app: the object on which the signal is emitted
+     * @browser: a #MidoriBrowser
+     *
+     * A new browser is being added to the app,
+     * see midori_app_add_browser().
+     */
     signals[ADD_BROWSER] = g_signal_new (
         "add-browser",
         G_TYPE_FROM_CLASS (class),
@@ -243,7 +251,8 @@ midori_app_class_init (MidoriAppClass* class)
      * @app: the object on which the signal is emitted
      * @browser: a #MidoriBrowser
      *
-     * A new browser is being added to the app.
+     * A browser is being removed from the app because it
+     * was destroyed.
      *
      * Since: 0.1.7
      */
@@ -258,6 +267,13 @@ midori_app_class_init (MidoriAppClass* class)
         G_TYPE_NONE, 1,
         MIDORI_TYPE_BROWSER);
 
+    /**
+     * MidoriApp::quit:
+     * @app: the object on which the signal is emitted
+     * @browser: a #MidoriBrowser
+     *
+     * The app is being quit, see midori_app_quit().
+     */
     signals[QUIT] = g_signal_new (
         "quit",
         G_TYPE_FROM_CLASS (class),
@@ -470,14 +486,17 @@ midori_app_command_received (MidoriApp*   app,
                 gchar* fixed_uri = sokoke_magic_uri (*uris);
                 if (!fixed_uri)
                     fixed_uri = g_strdup (*uris);
-                if (first)
+                if (sokoke_recursive_fork_protection (fixed_uri, FALSE))
                 {
-                    midori_browser_set_current_uri (browser, fixed_uri);
-                    first = FALSE;
+                    if (first)
+                    {
+                        midori_browser_set_current_uri (browser, fixed_uri);
+                        first = FALSE;
+                    }
+                    else
+                        midori_browser_set_current_page (browser,
+                            midori_browser_add_uri (browser, fixed_uri));
                 }
-                else
-                    midori_browser_set_current_page (browser,
-                        midori_browser_add_uri (browser, fixed_uri));
                 g_free (fixed_uri);
                 uris++;
             }
@@ -1129,10 +1148,47 @@ midori_app_create_browser (MidoriApp* app)
 }
 
 /**
+ * midori_app_get_browsers:
+ * @app: a #MidoriApp
+ *
+ * Retrieves the browsers as a list.
+ *
+ * Return value: a newly allocated #Glist of #MidoriBrowser
+ *
+ * Since: 0.2.5
+ **/
+GList*
+midori_app_get_browsers (MidoriApp* app)
+{
+    g_return_val_if_fail (MIDORI_IS_APP (app), NULL);
+
+    return katze_array_get_items (app->browsers);
+}
+
+/**
+ * midori_app_get_browser:
+ * @app: a #MidoriApp
+ *
+ * Determines the current browser, which is the one that was
+ * last focussed.
+ *
+ * Return value: the current #MidoriBrowser
+ *
+ * Since: 0.2.5
+ **/
+MidoriBrowser*
+midori_app_get_browser (MidoriApp* app)
+{
+    g_return_val_if_fail (MIDORI_IS_APP (app), NULL);
+
+    return app->browser;
+}
+
+/**
  * midori_app_quit:
  * @app: a #MidoriApp
  *
- * Quits the #MidoriApp singleton.
+ * Quits the #MidoriApp.
  *
  * Since 0.1.2 the "quit" signal is always emitted before quitting.
  **/
