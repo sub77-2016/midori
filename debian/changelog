@@ -5,8 +5,10 @@ midori (0.2.6-1) UNRELEASED; urgency=low
     - correct link to FAQ (Closes: #582512)
   * refresh patches
   * update copyright
+  * use dpkg-maintscript-helper to remove old config file
+    /etc/midori/extensions/libadblock.so (Closes: #573208)
 
- -- Ryan Niebur <ryan@debian.org>  Sun, 30 May 2010 11:26:13 -0700
+ -- Ryan Niebur <ryan@debian.org>  Tue, 01 Jun 2010 21:23:35 -0700
 
 midori (0.2.4-3) unstable; urgency=low
 
