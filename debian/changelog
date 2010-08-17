@@ -1,4 +1,6 @@
-midori (0.2.7-1.1) UNRELEASED; urgency=low
+midori (0.2.7-1.1) unstable; urgency=low
+
+  * Non-maintainer upload.
 
   [Ryan Niebur]
   * New Upstream Version (Closes: #582213)
@@ -10,7 +12,6 @@ midori (0.2.7-1.1) UNRELEASED; urgency=low
     /etc/midori/extensions/libadblock.so (Closes: #573208)
 
   [Yves-Alexis Perez]
-  * Non-maintainer upload.
   * New 2.7 upstream release.
   * debian/watch edited to correctly track upstream versions.
   * debian/rules:
@@ -19,7 +20,7 @@ midori (0.2.7-1.1) UNRELEASED; urgency=low
     - add build-dep on valac to build certain extensions.
     - update standards version to 3.9.1
 
- -- Yves-Alexis Perez <corsac@debian.org>  Tue, 17 Aug 2010 08:44:46 +0200
+ -- Yves-Alexis Perez <corsac@debian.org>  Tue, 17 Aug 2010 22:11:21 +0200
 
 midori (0.2.4-3) unstable; urgency=low
 
