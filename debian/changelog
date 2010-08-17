@@ -1,5 +1,6 @@
-midori (0.2.6-1) UNRELEASED; urgency=low
+midori (0.2.7-1.1) UNRELEASED; urgency=low
 
+  [Ryan Niebur]
   * New Upstream Version (Closes: #582213)
     - fixes segfault (Closes: #579118)
     - correct link to FAQ (Closes: #582512)
@@ -8,7 +9,13 @@ midori (0.2.6-1) UNRELEASED; urgency=low
   * use dpkg-maintscript-helper to remove old config file
     /etc/midori/extensions/libadblock.so (Closes: #573208)
 
- -- Ryan Niebur <ryan@debian.org>  Tue, 01 Jun 2010 21:23:35 -0700
+  [Yves-Alexis Perez]
+  * New 2.7 upstream release.
+  * debian/watch edited to correctly track upstream versions.
+  * debian/rules:
+    - use --fail-missing in dh_install
+
+ -- Yves-Alexis Perez <corsac@debian.org>  Tue, 17 Aug 2010 08:16:58 +0200
 
 midori (0.2.4-3) unstable; urgency=low
 

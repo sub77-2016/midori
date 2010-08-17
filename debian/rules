@@ -32,7 +32,7 @@ debian/presubj: debian/presubj.in
 	sed -e "s,%LIBWEBKIT_PKG%,$(LIBWEBKIT_PKG),g" -e "s,%GTKLAUNCHER%,$(GTKLAUNCHER),g" $@.in > $@
 
 override_dh_install: debian/presubj
-	$(CMD)
+	$(CMD) --fail-missing
 
 WAFADMIN_FILE=debian/wafadmin/Runner.py
 WAFADMIN_APPEND=debian/runner-append
