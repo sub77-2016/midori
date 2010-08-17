@@ -10,7 +10,7 @@ midori (0.2.7-1.1) UNRELEASED; urgency=low
     /etc/midori/extensions/libadblock.so (Closes: #573208)
 
   [Yves-Alexis Perez]
-  * Non maintainer upload.
+  * Non-maintainer upload.
   * New 2.7 upstream release.
   * debian/watch edited to correctly track upstream versions.
   * debian/rules:
