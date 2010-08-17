@@ -10,12 +10,15 @@ midori (0.2.7-1.1) UNRELEASED; urgency=low
     /etc/midori/extensions/libadblock.so (Closes: #573208)
 
   [Yves-Alexis Perez]
+  * Non maintainer upload.
   * New 2.7 upstream release.
   * debian/watch edited to correctly track upstream versions.
   * debian/rules:
     - use --fail-missing in dh_install
+  * debian/control:
+    - add build-dep on valac to build certain extensions.
 
- -- Yves-Alexis Perez <corsac@debian.org>  Tue, 17 Aug 2010 08:16:58 +0200
+ -- Yves-Alexis Perez <corsac@debian.org>  Tue, 17 Aug 2010 08:44:10 +0200
 
 midori (0.2.4-3) unstable; urgency=low
 

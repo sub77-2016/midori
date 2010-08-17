@@ -20,6 +20,7 @@ Build-Depends: debhelper (>= 7.0.50),
  python-docutils,
  libsoup2.4-dev (>= 2.25.2),
  libnotify-dev,
+ valac,
 # For testing under xvfb:
  xvfb,
  xauth,
