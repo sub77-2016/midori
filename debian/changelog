@@ -17,8 +17,9 @@ midori (0.2.7-1.1) UNRELEASED; urgency=low
     - use --fail-missing in dh_install
   * debian/control:
     - add build-dep on valac to build certain extensions.
+    - update standards version to 3.9.1
 
- -- Yves-Alexis Perez <corsac@debian.org>  Tue, 17 Aug 2010 08:44:10 +0200
+ -- Yves-Alexis Perez <corsac@debian.org>  Tue, 17 Aug 2010 08:44:46 +0200
 
 midori (0.2.4-3) unstable; urgency=low
 
