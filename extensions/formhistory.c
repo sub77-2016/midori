@@ -21,9 +21,7 @@
     #include <unistd.h>
 #endif
 
-#if HAVE_SQLITE
-    #include <sqlite3.h>
-#endif
+#include <sqlite3.h>
 
 static GHashTable* global_keys;
 static gchar* jsforms;
@@ -64,7 +62,8 @@ formhistory_prepare_js ()
         "function () {"
         "   if (document.getElementById('formhistory'))"
         "       return;"
-        "   initSuggestions ();"
+        "   if (!initSuggestions ())"
+        "       return;"
         "   var mystyle = document.createElement('style');"
         "   mystyle.setAttribute('type', 'text/css');"
         "   mystyle.setAttribute('id', 'formhistory');"
@@ -129,7 +128,6 @@ formhistory_update_database (gpointer     db,
                              const gchar* key,
                              const gchar* value)
 {
-    #if HAVE_SQLITE
     gchar* sqlcmd;
     gchar* errmsg;
     gint success;
@@ -145,7 +143,6 @@ formhistory_update_database (gpointer     db,
         g_free (errmsg);
         return;
     }
-    #endif
 }
 
 static gboolean
@@ -161,20 +158,24 @@ formhistory_update_main_hash (gchar* key,
     if (length > MAXCHARS || length < MINCHARS)
         return FALSE;
 
+    formhistory_fixup_value (key);
     formhistory_fixup_value (value);
     if ((tmp = g_hash_table_lookup (global_keys, (gpointer)key)))
     {
         gchar* rvalue = g_strdup_printf ("\"%s\"",value);
-        if (!g_regex_match_simple (rvalue, tmp,
+        gchar* patt = g_regex_escape_string (rvalue, -1);
+        if (!g_regex_match_simple (patt, tmp,
                                    G_REGEX_CASELESS, G_REGEX_MATCH_NOTEMPTY))
         {
             gchar* new_value = g_strdup_printf ("%s%s,", tmp, rvalue);
             g_hash_table_insert (global_keys, g_strdup (key), new_value);
             g_free (rvalue);
+            g_free (patt);
         }
         else
         {
             g_free (rvalue);
+            g_free (patt);
             return FALSE;
         }
     }
@@ -201,6 +202,8 @@ formhistory_navigation_decision_cb (WebKitWebView*             web_view,
     const gchar* script = "function dumpForm (inputs) {"
                  "  var out = '';"
                  "  for (i=0;i<inputs.length;i++) {"
+                 "    if (inputs[i].getAttribute('autocomplete') == 'off')"
+                 "        continue;"
                  "    if (inputs[i].value && (inputs[i].type == 'text' || inputs[i].type == 'password')) {"
                  "        var ename = inputs[i].getAttribute('name');"
                  "        var eid = inputs[i].getAttribute('id');"
@@ -365,9 +368,7 @@ formhistory_deactivate_cb (MidoriExtension* extension,
                        MidoriBrowser*   browser)
 {
     MidoriApp* app = midori_extension_get_app (extension);
-    #if HAVE_SQLITE
     sqlite3* db;
-    #endif
 
     g_signal_handlers_disconnect_by_func (
        browser, formhistory_add_tab_cb, extension);
@@ -382,13 +383,10 @@ formhistory_deactivate_cb (MidoriExtension* extension,
     if (global_keys)
         g_hash_table_destroy (global_keys);
 
-    #if HAVE_SQLITE
     if ((db = g_object_get_data (G_OBJECT (extension), "formhistory-db")))
         sqlite3_close (db);
-    #endif
 }
 
-#if HAVE_SQLITE
 static int
 formhistory_add_field (gpointer  data,
                        int       argc,
@@ -416,18 +414,15 @@ formhistory_add_field (gpointer  data,
     }
     return 0;
 }
-#endif
 
 static void
 formhistory_activate_cb (MidoriExtension* extension,
                          MidoriApp*       app)
 {
-    #if HAVE_SQLITE
     const gchar* config_dir;
     gchar* filename;
     sqlite3* db;
     char* errmsg = NULL, *errmsg2 = NULL;
-    #endif
     KatzeArray* browsers;
     MidoriBrowser* browser;
     guint i;
@@ -437,7 +432,6 @@ formhistory_activate_cb (MidoriExtension* extension,
                                (GDestroyNotify)g_free);
     if(!jsforms)
         formhistory_prepare_js ();
-    #if HAVE_SQLITE
     config_dir = midori_extension_get_config_dir (extension);
     katze_mkdir_with_parents (config_dir, 0700);
     filename = g_build_filename (config_dir, "forms.db", NULL);
@@ -468,7 +462,6 @@ formhistory_activate_cb (MidoriExtension* extension,
         }
         sqlite3_close (db);
     }
-    #endif
 
     browsers = katze_object_get_object (app, "browsers");
     i = 0;

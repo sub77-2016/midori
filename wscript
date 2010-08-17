@@ -29,15 +29,15 @@ from Configure import find_program_impl
 
 major = 0
 minor = 2
-micro = 6
+micro = 7
 
 APPNAME = 'midori'
 VERSION = str (major) + '.' + str (minor) + '.' + str (micro)
 
 try:
-    git = Utils.cmd_output (['git', 'rev-parse', '--short', 'HEAD'], silent=True)
+    git = Utils.cmd_output (['git', 'describe'], silent=True)
     if git:
-        VERSION = (VERSION + '-' + git).strip ()
+        VERSION = git.strip ()
 except:
     pass
 
@@ -87,11 +87,14 @@ def configure (conf):
         return dirvalue
 
     conf.check_tool ('compiler_cc')
-    # Circumvent mandatory check for valac
-    if find_program_impl (conf.env, 'valac'):
-        conf.check_tool ('vala')
-    else:
-         conf.check_message ('program', 'valac', False, False)
+    if option_enabled ('vala'):
+        if find_program_impl (conf.env, 'valac'):
+            conf.check_tool ('vala')
+        else:
+            conf.check_message ('program', 'valac', False, False)
+            Utils.pprint ('RED', 'Vala is required for some extensions.')
+            Utils.pprint ('RED', 'Pass --disable-vala to not build with Vala.')
+            sys.exit (1)
     conf.check_tool ('glib2')
 
     if option_enabled ('userdocs'):
@@ -124,8 +127,6 @@ def configure (conf):
         icons = 'no '
 
     if is_mingw (conf.env) or Options.platform == 'win32':
-        if not conf.find_program ('convert', var='CONVERT'):
-            Utils.pprint ('YELLOW', 'midori.ico won\'t be created')
         conf.find_program ('windres', var='WINRC')
         conf.env['platform'] = 'win32'
 
@@ -146,9 +147,6 @@ def configure (conf):
         conf.env['staticlib_LINKFLAGS'] = []
 
         Utils.pprint ('BLUE', 'Mingw recognized, assuming cross compile.')
-
-    if conf.env['CONVERT'] and not conf.env['WINRC']:
-        Utils.pprint ('YELLOW', 'midori.ico won\'t be created')
 
     dirname_default ('LIBDIR', os.path.join (conf.env['PREFIX'], 'lib'))
     if conf.env['PREFIX'] == '/usr':
@@ -191,15 +189,6 @@ def configure (conf):
         unique = 'no '
     conf.define ('HAVE_UNIQUE', [0,1][unique == 'yes'])
 
-    if option_enabled ('sqlite'):
-        check_pkg ('sqlite3', '3.0', False, var='SQLITE')
-        sqlite = ['N/A','yes'][conf.env['HAVE_SQLITE'] == 1]
-        if sqlite != 'yes':
-            option_checkfatal ('sqlite', 'history database')
-    else:
-        sqlite = 'no '
-    conf.define ('HAVE_SQLITE', [0,1][sqlite == 'yes'])
-
     if option_enabled ('libnotify'):
         check_pkg ('libnotify', mandatory=False)
         libnotify = ['N/A','yes'][conf.env['HAVE_LIBNOTIFY'] == 1]
@@ -230,6 +219,7 @@ def configure (conf):
     check_pkg ('libsoup-2.4', '2.29.3', False, var='LIBSOUP_2_29_3')
     check_pkg ('libsoup-2.4', '2.29.91', False, var='LIBSOUP_2_29_91')
     check_pkg ('libxml-2.0', '2.6')
+    check_pkg ('sqlite3', '3.0', True, var='SQLITE')
 
     if conf.env['HAVE_LIBSOUP_2_27_90']:
        idn = 'yes'
@@ -291,7 +281,7 @@ def configure (conf):
     conf.define ('MIDORI_MICRO_VERSION', micro)
 
     conf.write_config_header ('config.h')
-    conf.env.append_value ('CCFLAGS', '-DHAVE_CONFIG_H')
+    conf.env.append_value ('CCFLAGS', '-DHAVE_CONFIG_H -include config.h'.split ())
     debug_level = Options.options.debug_level
     compiler = conf.env['CC_NAME']
     if debug_level != '' and compiler != 'gcc':
@@ -332,7 +322,6 @@ def configure (conf):
     print '''
         Localization:        %(nls)s (intltool)
         Icon optimizations:  %(icons)s (rsvg-convert)
-        History:             %(sqlite)s (sqlite3)
         Notifications:       %(libnotify)s (libnotify)
 
         IDN support:         %(idn)s (libidn or libsoup 2.27.90)
@@ -380,8 +369,8 @@ def set_options (opt):
 
     group = opt.add_option_group ('Optional features', '')
     add_enable_option ('unique', 'single instance support', group)
+    add_enable_option ('vala', 'Vala support', group)
     add_enable_option ('libidn', 'international domain name support', group)
-    add_enable_option ('sqlite', 'history database support', group)
     add_enable_option ('libnotify', 'notification support', group)
     add_enable_option ('addons', 'building of extensions', group)
     add_enable_option ('tests', 'building of tests', group, disable=True)
@@ -415,31 +404,6 @@ def write_linguas_file (self):
 write_linguas_file = feature ('intltool_po')(write_linguas_file)
 
 def build (bld):
-    def image_to_win32ico (task):
-        'Converts an image to a Win32 ico'
-
-        if not os.path.exists (bld.env['CONVERT']):
-            return 1
-
-        infile = task.inputs[0].abspath (task.env)
-        outfile = task.outputs[0].abspath (task.env)
-        command = bld.env['CONVERT'] + ' -background transparent \
-            -geometry 16x16 -extent 16x16 ' + \
-            infile + ' ' + outfile
-        if Utils.exec_command (command):
-            return 1
-
-        if task.chmod:
-            os.chmod (outfile, task.chmod)
-        return 0
-
-    if bld.env['WINRC']:
-        obj = bld.new_task_gen ('copy',
-            fun = image_to_win32ico,
-            source = 'icons/16x16/midori.png',
-            target = 'data/midori.ico',
-            before = 'cc')
-
     bld.add_group ()
 
     bld.add_subdirs ('midori icons')
@@ -533,7 +497,15 @@ def build (bld):
         bld.install_files ('${MDATADIR}/' + APPNAME + '/res', 'data/autosuggestcontrol.css')
 
         # FIXME: Determine the library naming for other platforms
-        if Options.platform == 'linux':
+        if bld.env['platform'] == 'win32':
+            extensions = os.listdir ('data/extensions')
+            for extension in extensions:
+                folder = 'lib' + extension + '.dll'
+                source = 'data/extensions/' + extension +  '/config'
+                if os.path.exists (source):
+                    bld.install_files ('${SYSCONFDIR}/xdg/' + APPNAME + \
+                                       '/extensions/' + folder, source)
+        elif Options.platform == 'linux':
             extensions = os.listdir ('data/extensions')
             for extension in extensions:
                 folder = 'lib' + extension + '.so'

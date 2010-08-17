@@ -40,6 +40,9 @@
 #if !GTK_CHECK_VERSION (2, 16, 0)
     #define GTK_ACTIVATABLE GTK_WIDGET
     #define gtk_activatable_get_related_action gtk_widget_get_action
+    #define gtk_menu_item_set_label(menuitem, label) \
+        gtk_label_set_label (GTK_LABEL (GTK_BIN (menuitem)->child), \
+                             label ? label : "");
 #endif
 
 #if !GTK_CHECK_VERSION (2, 18, 0)
@@ -109,6 +112,9 @@ sokoke_uri_to_ascii                     (const gchar*    uri);
 
 gchar*
 sokoke_magic_uri                        (const gchar*    uri);
+
+gchar*
+sokoke_uri_unescape_string              (const gchar*    uri);
 
 gchar*
 sokoke_format_uri_for_display           (const gchar*    uri);
@@ -227,6 +233,8 @@ sokoke_replace_variables                (const gchar* template,
 gboolean
 sokoke_window_activate_key              (GtkWindow*      window,
                                          GdkEventKey*    event);
+guint
+sokoke_gtk_action_count_modifiers       (GtkAction* action);
 
 GtkWidget*
 sokoke_file_chooser_dialog_new          (const gchar*         title,

@@ -591,7 +591,7 @@ adblock_browser_populate_tool_menu_cb (MidoriBrowser*   browser,
     gtk_menu_shell_append (GTK_MENU_SHELL (menu), menuitem);
 }
 
-static gboolean
+static inline gboolean
 adblock_check_filter_options (GRegex*       regex,
                               const gchar*  opts,
                               const gchar*  req_uri,
@@ -607,7 +607,7 @@ adblock_check_filter_options (GRegex*       regex,
     return FALSE;
 }
 
-static gboolean
+static inline gboolean
 adblock_is_matched_by_pattern (const gchar*  req_uri,
                                const gchar*  page_uri)
 {
@@ -634,7 +634,7 @@ adblock_is_matched_by_pattern (const gchar*  req_uri,
     return FALSE;
 }
 
-static gboolean
+static inline gboolean
 adblock_is_matched_by_key (const gchar*  opts,
                            const gchar*  req_uri,
                            const gchar*  page_uri)
@@ -1059,6 +1059,8 @@ adblock_fixup_regexp (gchar* src)
         case '^':
             g_string_append (str, "");
             break;
+        case '+':
+            break;
         default:
             g_string_append_printf (str,"%c", *src);
             break;
@@ -1347,6 +1349,8 @@ adblock_deactivate_cb (MidoriExtension* extension,
         extension, adblock_deactivate_cb, browser);
     g_signal_handlers_disconnect_by_func (
         app, adblock_app_add_browser_cb, extension);
+    g_signal_handlers_disconnect_by_func (
+        browser, adblock_add_tab_cb, extension);
     midori_browser_foreach (browser, (GtkCallback)adblock_deactivate_tabs, browser);
 
     katze_assign (blockcss, NULL);
@@ -1407,6 +1411,7 @@ test_adblock_parse (void)
     g_assert (!adblock_parse_line ("##"));
     g_assert (!adblock_parse_line ("["));
 
+    g_assert_cmpstr (adblock_parse_line ("+advert/"), ==, "advert/");
     g_assert_cmpstr (adblock_parse_line ("*foo"), ==, "foo");
     g_assert_cmpstr (adblock_parse_line ("f*oo"), ==, "f.*oo");
     g_assert_cmpstr (adblock_parse_line ("?foo"), ==, "\\?foo");

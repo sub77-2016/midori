@@ -91,3 +91,10 @@ TODO:
  . Draw rectangle with the mouse, x/y/x2/y2 in the statusbar (extension)
  . Shared bookmarks and config
  . Prevent dead tabs: download, aborted page
+
+BOOKMARK ISSUES:
+ . Bookmark menu is not populated
+ . Bookmark toolbar is broken
+ . Import is broken
+ . Integration with locationbar search
+ . Remove separator from submenu before showing it

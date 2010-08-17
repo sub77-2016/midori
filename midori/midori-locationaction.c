@@ -21,11 +21,9 @@
 #include <glib/gi18n.h>
 #include <gdk/gdkkeysyms.h>
 
-#if HAVE_SQLITE
-    #include <sqlite3.h>
-#endif
+#include <sqlite3.h>
 
-#define COMPLETION_DELAY 150
+#define COMPLETION_DELAY 200
 #define MAX_ITEMS 25
 
 struct _MidoriLocationAction
@@ -274,7 +272,6 @@ midori_location_action_create_model (void)
     return model;
 }
 
-#if HAVE_SQLITE
 static void
 midori_location_action_popup_position (GtkWidget* popup,
                                        GtkWidget* widget)
@@ -339,6 +336,8 @@ midori_location_action_popup_timeout_cb (gpointer data)
     MidoriLocationAction* action = data;
     GtkTreeViewColumn* column;
     GtkListStore* store;
+    gchar* effective_key;
+    gint i;
     gint result;
     static sqlite3_stmt* stmt;
     const gchar* sqlcmd;
@@ -359,15 +358,29 @@ midori_location_action_popup_timeout_cb (gpointer data)
     {
         sqlite3* db;
         db = g_object_get_data (G_OBJECT (action->history), "db");
-        sqlcmd = "SELECT type, uri, title, count() AS ct FROM history_view "
-                 "WHERE uri LIKE ?1 OR title LIKE ?1 GROUP BY uri "
-                 "UNION ALL "
-                 "SELECT type, replace(uri, '%s', title) AS uri, title, count() AS ct FROM search_view "
-                 "WHERE title LIKE ?1 GROUP BY uri "
-                 "ORDER BY ct DESC LIMIT ?2";
+        sqlcmd = "SELECT type, uri, title FROM ("
+                 "  SELECT 1 AS type, uri, title, count() AS ct FROM history "
+                 "      WHERE uri LIKE ?1 OR title LIKE ?1 GROUP BY uri "
+                 "  UNION ALL "
+                 "  SELECT 2 AS type, replace(uri, '%s', keywords) AS uri, "
+                 "      keywords AS title, count() AS ct FROM search "
+                 "      WHERE uri LIKE ?1 OR title LIKE ?1 GROUP BY uri "
+                 "  UNION ALL "
+                 "  SELECT 1 AS type, uri, title, 50 AS ct FROM bookmarks "
+                 "      WHERE title LIKE ?1 OR uri LIKE ?1 AND uri !='' "
+                 ") GROUP BY uri ORDER BY ct DESC LIMIT ?2";
         sqlite3_prepare_v2 (db, sqlcmd, strlen (sqlcmd) + 1, &stmt, NULL);
     }
-    sqlite3_bind_text (stmt, 1, g_strdup_printf ("%%%s%%", action->key), -1, g_free);
+    effective_key = g_strdup_printf ("%%%s%%", action->key);
+    i = 0;
+    do
+    {
+        if (effective_key[i] == ' ')
+            effective_key[i] = '%';
+        i++;
+    }
+    while (effective_key[i] != '\0');
+    sqlite3_bind_text (stmt, 1, effective_key, -1, g_free);
     sqlite3_bind_int64 (stmt, 2, MAX_ITEMS);
 
     result = sqlite3_step (stmt);
@@ -444,6 +457,7 @@ midori_location_action_popup_timeout_cb (gpointer data)
     style = gtk_widget_get_style (action->treeview);
     while (result == SQLITE_ROW)
     {
+        gchar* unescaped_uri;
         sqlite3_int64 type = sqlite3_column_int64 (stmt, 0);
         const unsigned char* uri = sqlite3_column_text (stmt, 1);
         const unsigned char* title = sqlite3_column_text (stmt, 2);
@@ -451,9 +465,14 @@ midori_location_action_popup_timeout_cb (gpointer data)
         if (!icon)
             icon = action->default_icon;
         if (type == 1 /* history_view */)
+        {
+            unescaped_uri = sokoke_uri_unescape_string ((const char*)uri);
+
             gtk_list_store_insert_with_values (store, NULL, matches,
-                URI_COL, uri, TITLE_COL, title, YALIGN_COL, 0.25,
+                URI_COL, unescaped_uri, TITLE_COL, title, YALIGN_COL, 0.25,
                 FAVICON_COL, icon, -1);
+            g_free (unescaped_uri);
+        }
         else if (type == 2 /* search_view */)
         {
             gchar* search_title = g_strdup_printf (_("Search for %s"), title);
@@ -516,7 +535,6 @@ midori_location_action_popup_timeout_cb (gpointer data)
 
     return FALSE;
 }
-#endif
 
 static void
 midori_location_action_popup_completion (MidoriLocationAction* action,
@@ -529,11 +547,9 @@ midori_location_action_popup_completion (MidoriLocationAction* action,
     action->entry = entry;
     g_signal_connect (entry, "destroy",
         G_CALLBACK (gtk_widget_destroyed), &action->entry);
-    #if HAVE_SQLITE
     action->completion_timeout = g_timeout_add (COMPLETION_DELAY,
         midori_location_action_popup_timeout_cb, action);
     /* TODO: Inline completion */
-    #endif
 }
 
 static void
@@ -561,34 +577,6 @@ midori_location_action_entry_for_proxy (GtkWidget* proxy)
     GtkWidget* alignment = gtk_bin_get_child (GTK_BIN (proxy));
     GtkWidget* entry = gtk_bin_get_child (GTK_BIN (alignment));
     return entry;
-}
-
-/**
- * midori_location_action_freeze:
- * @location_action: a #MidoriLocationAction
- *
- * Freezing of the action doesn't do anything.
- *
- * Deprecated: 0.2.3
- **/
-void
-midori_location_action_freeze (MidoriLocationAction* location_action)
-{
-    /* Nothing to do */
-}
-
-/**
- * midori_location_action_thaw:
- * @location_action: a #MidoriLocationAction
- *
- * Thawing of the action doesn't do anything.
- *
- * Deprecated: 0.2.3
- **/
-void
-midori_location_action_thaw (MidoriLocationAction* location_action)
-{
-    /* Nothing to do */
 }
 
 static void
@@ -633,17 +621,14 @@ midori_location_action_toggle_arrow_cb (GtkWidget*            widget,
                                         MidoriLocationAction* location_action)
 {    gboolean show = FALSE;
 
-    #if HAVE_SQLITE
     sqlite3* db;
     const gchar* sqlcmd;
     sqlite3_stmt* statement;
     gint result;
-    #endif
 
     if (!GTK_IS_BUTTON (widget))
         return;
 
-    #if HAVE_SQLITE
     db = g_object_get_data (G_OBJECT (location_action->history), "db");
     sqlcmd = "SELECT uri FROM history LIMIT 1";
     sqlite3_prepare_v2 (db, sqlcmd, -1, &statement, NULL);
@@ -651,7 +636,6 @@ midori_location_action_toggle_arrow_cb (GtkWidget*            widget,
     if (result == SQLITE_ROW)
         show = TRUE;
     sqlite3_finalize (statement);
-    #endif
     sokoke_widget_set_visible (widget, show);
     gtk_widget_set_size_request (widget, show ? -1 : 1, show ? -1 : 1);
 }
@@ -1046,14 +1030,21 @@ midori_location_entry_render_text_cb (GtkCellLayout*   layout,
     gboolean style;
     gchar* desc;
     gchar* desc_uri;
+    gchar* desc_iter;
+    gchar* temp_iter;
     gchar* desc_title;
     const gchar* str;
     gchar* key;
+    gchar** keys;
+    gint key_idx;
     gchar* start;
     gchar* skey;
     gchar* temp;
+    gchar* temp_concat;
+    gchar* temp_markup;
     gchar** parts;
     size_t len;
+    size_t offset;
 
     gtk_tree_model_get (model, iter, URI_COL, &uri, TITLE_COL, &title,
         BACKGROUND_COL, &background, STYLE_COL, &style, -1);
@@ -1074,40 +1065,121 @@ midori_location_entry_render_text_cb (GtkCellLayout*   layout,
         str = "";
 
     key = g_utf8_strdown (str, -1);
-    len = strlen (key);
+    keys = g_strsplit_set (key, " %", -1);
+    g_free (key);
 
     if (G_LIKELY (uri))
     {
-        temp = g_utf8_strdown (uri, -1);
-        if ((start = strstr (temp, key)) && (start - temp))
+        temp_iter = temp = g_utf8_strdown (uri, -1);
+        desc_iter = uri;
+        key_idx = 0;
+        key = keys[key_idx];
+        len = strlen (key);
+        offset = 0;
+        while ((start = strstr (temp_iter, key)) && start)
         {
-            skey = g_strndup (uri + (start - temp), len);
-            parts = g_strsplit (uri, skey, 2);
-            if (parts[0] && parts[1])
-                desc_uri = g_markup_printf_escaped ("%s<b>%s</b>%s",
-                    parts[0], skey, parts[1]);
-            g_strfreev (parts);
-            g_free (skey);
+            if (len)
+            {
+                offset = (start - temp_iter);
+                skey = g_strndup (desc_iter + offset, len);
+                parts = g_strsplit (desc_iter, skey, 2);
+                if (parts[0] && parts[1])
+                {
+                    if (desc_uri)
+                    {
+                        temp_markup = g_markup_printf_escaped ("%s<b>%s</b>",
+                            parts[0], skey);
+                        temp_concat = g_strconcat (desc_uri, temp_markup, NULL);
+                        g_free (temp_markup);
+                        katze_assign (desc_uri, temp_concat);
+                    }
+                    else
+                    {
+                        desc_uri = g_markup_printf_escaped ("%s<b>%s</b>",
+                            parts[0], skey);
+                    }
+                }
+                g_strfreev (parts);
+                g_free (skey);
+
+                offset += len;
+                temp_iter += offset;
+                desc_iter += offset;
+            }
+            key_idx++;
+            key = keys[key_idx];
+            if (key == NULL)
+                break;
+            len = strlen (key);
         }
-        if (!desc_uri)
+        if (key)
+            katze_assign (desc_uri, NULL);
+        if (desc_uri)
+        {
+            temp_markup = g_markup_escape_text (desc_iter, -1);
+            temp_concat = g_strconcat (desc_uri, temp_markup, NULL);
+            g_free (temp_markup);
+            katze_assign (desc_uri, temp_concat);
+        }
+        else
             desc_uri = g_markup_escape_text (uri, -1);
         g_free (temp);
     }
 
     if (G_LIKELY (title))
     {
-        temp = g_utf8_strdown (title, -1);
-        if ((start = strstr (temp, key)) && (start - temp))
+        temp_iter = temp = g_utf8_strdown (title, -1);
+        desc_iter = title;
+        key_idx = 0;
+        key = keys[key_idx];
+        len = strlen (key);
+        offset = 0;
+        while ((start = strstr (temp_iter, key)) && start)
         {
-            skey = g_strndup (title + (start - temp), len);
-            parts = g_strsplit (title, skey, 2);
-            if (parts[0] && parts[1])
-                desc_title = g_markup_printf_escaped ("%s<b>%s</b>%s",
-                    parts[0], skey, parts[1]);
-            g_strfreev (parts);
-            g_free (skey);
+            if (len)
+            {
+                offset = (start - temp_iter);
+                skey = g_strndup (desc_iter + offset, len);
+                parts = g_strsplit (desc_iter, skey, 2);
+                if (parts[0] && parts[1])
+                {
+                    if (desc_title)
+                    {
+                        temp_markup = g_markup_printf_escaped ("%s<b>%s</b>",
+                            parts[0], skey);
+                        temp_concat = g_strconcat (desc_title, temp_markup, NULL);
+                        g_free (temp_markup);
+                        katze_assign (desc_title, temp_concat);
+                    }
+                    else
+                    {
+                        desc_title = g_markup_printf_escaped ("%s<b>%s</b>",
+                            parts[0], skey);
+                    }
+                }
+                g_strfreev (parts);
+                g_free (skey);
+
+                offset += len;
+                temp_iter += offset;
+                desc_iter += offset;
+            }
+            key_idx++;
+            key = keys[key_idx];
+            if (key == NULL)
+                break;
+            len = strlen (key);
         }
-        if (!desc_title)
+        if (key)
+            katze_assign (desc_title, NULL);
+        if (desc_title)
+        {
+            temp_markup = g_markup_escape_text (desc_iter, -1);
+            temp_concat = g_strconcat (desc_title, temp_markup, NULL);
+            g_free (temp_markup);
+            katze_assign (desc_title, temp_concat);
+        }
+        else
             desc_title = g_markup_escape_text (title, -1);
         g_free (temp);
     }
@@ -1127,7 +1199,7 @@ midori_location_entry_render_text_cb (GtkCellLayout*   layout,
 
     g_free (uri);
     g_free (title);
-    g_free (key);
+    g_strfreev (keys);
     g_free (desc);
 }
 
@@ -1171,7 +1243,6 @@ static void
 midori_location_action_entry_popup_cb (GtkComboBox*          combo_box,
                                        MidoriLocationAction* location_action)
 {
-    #if HAVE_SQLITE
     GtkListStore* store;
     gint result;
     const gchar* sqlcmd;
@@ -1217,7 +1288,6 @@ midori_location_action_entry_popup_cb (GtkComboBox*          combo_box,
     while (result == SQLITE_ROW);
     sqlite3_reset (stmt);
     sqlite3_clear_bindings (stmt);
-    #endif
 }
 
 static void
@@ -1432,27 +1502,6 @@ midori_location_action_set_text (MidoriLocationAction* location_action,
     }
 
     g_object_unref (icon);
-}
-
-/**
- * midori_location_action_set_uri:
- * @location_action: a #MidoriLocationAction
- * @uri: an URI string
- *
- * Sets the entry URI to @uri and, if applicable, updates the icon.
- *
- * Deprecated: 0.2.0
- **/
-void
-midori_location_action_set_uri (MidoriLocationAction* location_action,
-                                const gchar*          uri)
-{
-    g_return_if_fail (MIDORI_IS_LOCATION_ACTION (location_action));
-    g_return_if_fail (uri != NULL);
-
-    katze_assign (location_action->uri, g_strdup (uri));
-
-    midori_location_action_set_text (location_action, uri);
 }
 
 /**

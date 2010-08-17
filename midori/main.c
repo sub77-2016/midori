@@ -33,10 +33,7 @@
 #include <string.h>
 #include <glib/gstdio.h>
 #include <webkit/webkit.h>
-
-#if HAVE_SQLITE
-    #include <sqlite3.h>
-#endif
+#include <sqlite3.h>
 
 #if ENABLE_NLS
     #include <libintl.h>
@@ -351,16 +348,17 @@ search_engines_save_to_file (KatzeArray*  search_engines,
     return saved;
 }
 
-#if HAVE_SQLITE
 static sqlite3*
 midori_history_initialize (KatzeArray*  array,
                            const gchar* filename,
+                           const gchar* bookmarks_filename,
                            char**       errmsg)
 {
     sqlite3* db;
     gboolean has_day;
     sqlite3_stmt* stmt;
     gint result;
+    gchar* sql;
 
     has_day = FALSE;
 
@@ -377,11 +375,7 @@ midori_history_initialize (KatzeArray*  array,
                       "CREATE TABLE IF NOT EXISTS "
                       "history (uri text, title text, date integer, day integer);"
                       "CREATE TABLE IF NOT EXISTS "
-                      "search (keywords text, uri text, day integer);"
-                      "CREATE TEMP VIEW history_view AS SELECT "
-                      "1 AS type, uri, title, day FROM history;"
-                      "CREATE TEMP VIEW search_view AS SELECT "
-                      "2 AS type, uri, keywords AS title, day FROM search;",
+                      "search (keywords text, uri text, day integer);",
                       NULL, NULL, errmsg) != SQLITE_OK)
         return NULL;
 
@@ -405,6 +399,11 @@ midori_history_initialize (KatzeArray*  array,
                       "DROP TABLE backup;"
                       "COMMIT;",
                       NULL, NULL, errmsg);
+
+    sql = g_strdup_printf ("ATTACH DATABASE '%s' AS bookmarks", bookmarks_filename);
+    sqlite3_exec (db, sql, NULL, NULL, errmsg);
+    g_free (sql);
+
     return db;
 }
 
@@ -428,7 +427,94 @@ midori_history_terminate (sqlite3* db,
     g_free (sqlcmd);
     sqlite3_close (db);
 }
-#endif
+
+static void
+midori_bookmarks_remove_item_cb (KatzeArray* array,
+                                 KatzeItem*  item,
+                                 sqlite3*    db)
+{
+    gchar* sqlcmd;
+    char* errmsg = NULL;
+
+    if (KATZE_ITEM_IS_BOOKMARK (item))
+        sqlcmd = sqlite3_mprintf (
+            "DELETE FROM bookmarks WHERE uri = '%q' "
+            " AND folder = '%q'",
+            katze_item_get_uri (item),
+            katze_item_get_meta_string (item, "folder"));
+
+    else
+       sqlcmd = sqlite3_mprintf (
+            "DELETE FROM bookmarks WHERE title = '%q'"
+            " AND folder = '%q'",
+            katze_item_get_name (item),
+            katze_item_get_meta_string (item, "folder"));
+
+    if (sqlite3_exec (db, sqlcmd, NULL, NULL, &errmsg) != SQLITE_OK)
+    {
+        g_printerr (_("Failed to remove history item: %s\n"), errmsg);
+        sqlite3_free (errmsg);
+    }
+
+    sqlite3_free (sqlcmd);
+}
+
+static sqlite3*
+midori_bookmarks_initialize (KatzeArray*  array,
+                             const gchar* filename,
+                             char**       errmsg)
+{
+    sqlite3* db;
+
+    if (sqlite3_open (filename, &db) != SQLITE_OK)
+    {
+        if (errmsg)
+            *errmsg = g_strdup_printf (_("Failed to open database: %s\n"),
+                                       sqlite3_errmsg (db));
+        sqlite3_close (db);
+        return NULL;
+    }
+
+    if (sqlite3_exec (db,
+                      "CREATE TABLE IF NOT EXISTS "
+                      "bookmarks (uri text, title text, folder text, "
+                      "desc text, app integer, toolbar integer);",
+                      NULL, NULL, errmsg) != SQLITE_OK)
+        return NULL;
+    g_signal_connect (array, "remove-item",
+                      G_CALLBACK (midori_bookmarks_remove_item_cb), db);
+    return db;
+}
+
+static void
+midori_bookmarks_import (const gchar* filename,
+                         sqlite3*     db)
+{
+    KatzeArray* bookmarks;
+    GError* error = NULL;
+
+    bookmarks = katze_array_new (KATZE_TYPE_ARRAY);
+
+    if (!midori_array_from_file (bookmarks, filename, "xbel", &error))
+    {
+        g_warning (_("The bookmarks couldn't be saved. %s"), error->message);
+        g_error_free (error);
+        return;
+    }
+    midori_bookmarks_import_array_db (db, bookmarks, "");
+}
+
+static void
+midori_session_add_delay (KatzeArray* session)
+{
+    KatzeItem* item;
+    gint i = 0;
+    while ((item = katze_array_get_nth_item (session, i++)))
+    {
+        if (katze_item_get_meta_integer (item, "delay") < 0)
+            katze_item_set_meta_integer (item, "delay", 1);
+    }
+}
 
 static void
 settings_notify_cb (MidoriWebSettings* settings,
@@ -485,105 +571,6 @@ midori_search_engines_modify_cb (KatzeArray* array,
         g_error_free (error);
     }
     g_free (config_file);
-}
-
-static void
-midori_bookmarks_notify_item_cb (KatzeArray* folder,
-                                 GParamSpec* pspec,
-                                 KatzeArray* bookmarks)
-{
-    gchar* config_file;
-    GError* error;
-
-    config_file = build_config_filename (BOOKMARK_FILE);
-    error = NULL;
-    if (!midori_array_to_file (bookmarks, config_file, "xbel", &error))
-    {
-        g_warning (_("The bookmarks couldn't be saved. %s"), error->message);
-        g_error_free (error);
-    }
-    g_free (config_file);
-}
-
-static void
-midori_bookmarks_add_item_cb (KatzeArray* folder,
-                              KatzeItem*  item,
-                              KatzeArray* bookmarks);
-
-static void
-midori_bookmarks_remove_item_cb (KatzeArray* folder,
-                                 GObject*    item,
-                                 KatzeArray* bookmarks);
-
-static void
-midori_bookmarks_connect_item (KatzeArray* folder,
-                               KatzeItem*  item,
-                               KatzeArray* bookmarks)
-{
-    if (KATZE_IS_ARRAY (item))
-    {
-        KatzeItem* child;
-        guint i = 0;
-        while ((child = katze_array_get_nth_item ((KatzeArray*)item, i++)))
-            midori_bookmarks_connect_item ((KatzeArray*)item, child, bookmarks);
-
-        g_signal_connect_after (item, "add-item",
-            G_CALLBACK (midori_bookmarks_add_item_cb), bookmarks);
-        g_signal_connect_after (item, "remove-item",
-            G_CALLBACK (midori_bookmarks_remove_item_cb), bookmarks);
-    }
-
-    g_signal_connect_after (item, "notify",
-        G_CALLBACK (midori_bookmarks_notify_item_cb), bookmarks);
-}
-
-static void
-midori_bookmarks_add_item_cb (KatzeArray* folder,
-                              KatzeItem*  item,
-                              KatzeArray* bookmarks)
-{
-    gchar* config_file;
-    GError* error;
-
-    config_file = build_config_filename (BOOKMARK_FILE);
-    error = NULL;
-    if (!midori_array_to_file (bookmarks, config_file, "xbel", &error))
-    {
-        g_warning (_("The bookmarks couldn't be saved. %s"), error->message);
-        g_error_free (error);
-    }
-    g_free (config_file);
-
-    midori_bookmarks_connect_item (folder, item, bookmarks);
-}
-
-static void
-midori_bookmarks_remove_item_cb (KatzeArray* folder,
-                                 GObject*    item,
-                                 KatzeArray* bookmarks)
-{
-    gchar* config_file;
-    GError* error;
-
-    config_file = build_config_filename (BOOKMARK_FILE);
-    error = NULL;
-    if (!midori_array_to_file (bookmarks, config_file, "xbel", &error))
-    {
-        g_warning (_("The bookmarks couldn't be saved. %s"), error->message);
-        g_error_free (error);
-    }
-    g_free (config_file);
-
-    if (KATZE_IS_ARRAY (item))
-    {
-        g_signal_handlers_disconnect_by_func (item,
-            midori_bookmarks_add_item_cb, bookmarks);
-        g_signal_handlers_disconnect_by_func (item,
-            midori_bookmarks_remove_item_cb, bookmarks);
-    }
-
-    g_signal_handlers_disconnect_by_func (item,
-        midori_bookmarks_notify_item_cb, bookmarks);
 }
 
 static void
@@ -872,7 +859,7 @@ midori_soup_session_prepare (SoupSession*       session,
     soup_session_settings_notify_http_proxy_cb (settings, NULL, session);
     g_signal_connect (settings, "notify::http-proxy",
         G_CALLBACK (soup_session_settings_notify_http_proxy_cb), session);
-    g_signal_connect (settings, "notify::auto-detect-proxy",
+    g_signal_connect (settings, "notify::proxy-type",
         G_CALLBACK (soup_session_settings_notify_http_proxy_cb), session);
 
     #if !WEBKIT_CHECK_VERSION (1, 1, 11)
@@ -1153,13 +1140,17 @@ midori_load_extensions (gpointer data)
                                                (gpointer) &extension_init))
                 {
                     extension = extension_init ();
-                    /* Signal that we want the extension to load and save */
-                    g_object_set_data_full (G_OBJECT (extension), "filename",
-                                            g_strdup (filename), g_free);
-                    if (midori_extension_is_prepared (extension))
-                        midori_extension_get_config_dir (extension);
+                    if (extension != NULL)
+                    {
+                        /* Signal that we want the extension to load and save */
+                        g_object_set_data_full (G_OBJECT (extension), "filename",
+                                                g_strdup (filename), g_free);
+                        if (midori_extension_is_prepared (extension))
+                            midori_extension_get_config_dir (extension);
+                    }
                 }
-                else
+
+                if (!extension)
                 {
                     extension = g_object_new (MIDORI_TYPE_EXTENSION,
                                               "name", filename,
@@ -1188,7 +1179,8 @@ midori_load_extensions (gpointer data)
     }
     g_strfreev (active_extensions);
 
-    g_idle_add (midori_load_netscape_plugins, app);
+    if (g_getenv ("MIDORI_UNARMED") == NULL)
+        g_idle_add (midori_load_netscape_plugins, app);
 
     #ifdef G_ENABLE_DEBUG
     if (startup_timer)
@@ -1230,11 +1222,13 @@ midori_load_session (gpointer data)
     KatzeArray* _session = KATZE_ARRAY (data);
     MidoriBrowser* browser;
     MidoriApp* app = katze_item_get_parent (KATZE_ITEM (_session));
+    MidoriWebSettings* settings = katze_object_get_object (app, "settings");
     gchar* config_file;
     KatzeArray* session;
     KatzeItem* item;
     guint i;
     gint64 current;
+    MidoriStartup load_on_startup;
     gchar** command = g_object_get_data (G_OBJECT (app), "execute-command");
     #ifdef G_ENABLE_DEBUG
     gboolean startup_timer = g_getenv ("MIDORI_STARTTIME") != NULL;
@@ -1263,14 +1257,13 @@ midori_load_session (gpointer data)
     g_signal_connect_after (gtk_accel_map_get (), "changed",
         G_CALLBACK (accel_map_changed_cb), NULL);
 
+    g_object_get (settings, "load-on-startup", &load_on_startup, NULL);
+
     if (katze_array_is_empty (_session))
     {
-        MidoriWebSettings* settings = katze_object_get_object (app, "settings");
-        MidoriStartup load_on_startup;
         gchar* homepage;
         item = katze_item_new ();
 
-        g_object_get (settings, "load-on-startup", &load_on_startup, NULL);
         if (load_on_startup == MIDORI_STARTUP_BLANK_PAGE)
             katze_item_set_uri (item, "");
         else
@@ -1279,10 +1272,12 @@ midori_load_session (gpointer data)
             katze_item_set_uri (item, homepage);
             g_free (homepage);
         }
-        g_object_unref (settings);
         katze_array_add_item (_session, item);
         g_object_unref (item);
     }
+
+    if (load_on_startup == MIDORI_STARTUP_DELAYED_PAGES)
+        midori_session_add_delay (_session);
 
     session = midori_browser_get_proxy_array (browser);
     i = 0;
@@ -1297,13 +1292,13 @@ midori_load_session (gpointer data)
     midori_browser_set_current_page (browser, current);
     if (!(item = katze_array_get_nth_item (_session, current)))
         item = katze_array_get_nth_item (_session, 0);
-    if (!strcmp (katze_item_get_uri (item), ""))
+    if (!g_strcmp0 (katze_item_get_uri (item), ""))
         midori_browser_activate_action (browser, "Location");
+
+    g_object_unref (settings);
     g_object_unref (_session);
 
     katze_assign (config_file, build_config_filename ("session.xbel"));
-    g_signal_connect_after (browser, "notify::uri",
-        G_CALLBACK (midori_browser_session_cb), session);
     g_signal_connect_after (browser, "add-tab",
         G_CALLBACK (midori_browser_session_cb), session);
     g_signal_connect_after (browser, "remove-tab",
@@ -1541,6 +1536,7 @@ main (int    argc,
     gchar* webapp;
     gchar* config;
     gboolean diagnostic_dialog;
+    gboolean back_from_crash;
     gboolean run;
     gchar* snapshot;
     gboolean execute;
@@ -1586,6 +1582,7 @@ main (int    argc,
     gchar** extensions;
     MidoriWebSettings* settings;
     gchar* config_file;
+    gchar* bookmarks_file;
     MidoriStartup load_on_startup;
     KatzeArray* search_engines;
     KatzeArray* bookmarks;
@@ -1596,11 +1593,9 @@ main (int    argc,
     gchar* uri;
     KatzeItem* item;
     gchar* uri_ready;
-    #if HAVE_SQLITE
     gchar* errmsg;
     sqlite3* db;
     gint max_history_age;
-    #endif
     gint clear_prefs = MIDORI_CLEAR_NONE;
     #ifdef G_ENABLE_DEBUG
         gboolean startup_timer = g_getenv ("MIDORI_STARTTIME") != NULL;
@@ -1649,6 +1644,7 @@ main (int    argc,
     /* Parse cli options */
     webapp = NULL;
     config = NULL;
+    back_from_crash = FALSE;
     diagnostic_dialog = FALSE;
     run = FALSE;
     snapshot = NULL;
@@ -1733,10 +1729,30 @@ main (int    argc,
         gchar* tmp_uri = midori_prepare_uri (webapp);
         katze_assign (webapp, tmp_uri);
         midori_startup_timer ("Browser: \t%f");
-        settings = katze_object_get_object (browser, "settings");
+        if (config)
+        {
+            SoupSession* session;
+            SoupCookieJar* jar;
+
+            config_file = g_build_filename (config, "config", NULL);
+            settings = settings_new_from_file (config_file, &extensions);
+            g_free (config_file);
+            g_strfreev (extensions);
+
+            session = webkit_get_default_session ();
+            config_file = g_build_filename (config, "cookies.txt", NULL);
+            jar = soup_cookie_jar_text_new (config_file, TRUE);
+            g_free (config_file);
+            soup_session_add_feature (session, SOUP_SESSION_FEATURE (jar));
+            g_object_unref (jar);
+
+        }
+        else
+            settings = katze_object_get_object (browser, "settings");
         g_object_set (settings,
                       "show-menubar", FALSE,
                       "show-navigationbar", TRUE,
+                      "show-panel", FALSE,
                       "toolbar-items", "Back,Forward,ReloadStop,Location",
                       "homepage", NULL,
                       "show-statusbar", TRUE,
@@ -1904,29 +1920,31 @@ main (int    argc,
     midori_startup_timer ("Search read: \t%f");
 
     bookmarks = katze_array_new (KATZE_TYPE_ARRAY);
-    #if HAVE_LIBXML
-    katze_assign (config_file, build_config_filename (BOOKMARK_FILE));
-    error = NULL;
-    if (!midori_array_from_file (bookmarks, config_file, "xbel", &error))
+    bookmarks_file = build_config_filename ("bookmarks.db");
+    errmsg = NULL;
+    if ((db = midori_bookmarks_initialize (bookmarks, bookmarks_file, &errmsg)) == NULL)
     {
-        if (error->code == G_FILE_ERROR_NOENT)
-        {
-            katze_assign (config_file,
-                sokoke_find_config_filename (NULL, "bookmarks.xbel"));
-            midori_array_from_file (bookmarks, config_file, "xbel", NULL);
-        }
-        else
-            g_string_append_printf (error_messages,
-                _("The bookmarks couldn't be loaded: %s\n"), error->message);
-        g_error_free (error);
+        g_string_append_printf (error_messages,
+            _("Bookmarks couldn't be loaded: %s\n"), errmsg);
+        g_free (errmsg);
     }
-    #endif
-    midori_startup_timer ("Bkmarks read: \t%f");
+    else
+    {
+        gchar* old_bookmarks = build_config_filename (BOOKMARK_FILE);
+        if (g_access (old_bookmarks, F_OK) == 0)
+        {
+            midori_bookmarks_import (old_bookmarks, db);
+            g_unlink(old_bookmarks);
+        }
+        g_free (old_bookmarks);
+        g_object_set_data (G_OBJECT (bookmarks), "db", db);
+    }
+    midori_startup_timer ("Bookmarks read: \t%f");
 
     _session = katze_array_new (KATZE_TYPE_ITEM);
     #if HAVE_LIBXML
     g_object_get (settings, "load-on-startup", &load_on_startup, NULL);
-    if (load_on_startup == MIDORI_STARTUP_LAST_OPEN_PAGES)
+    if (load_on_startup >= MIDORI_STARTUP_LAST_OPEN_PAGES)
     {
         katze_assign (config_file, build_config_filename ("session.xbel"));
         error = NULL;
@@ -1956,18 +1974,17 @@ main (int    argc,
 
     midori_startup_timer ("Trash read: \t%f");
     history = katze_array_new (KATZE_TYPE_ARRAY);
-    #if HAVE_SQLITE
     katze_assign (config_file, build_config_filename ("history.db"));
 
     errmsg = NULL;
-    if ((db = midori_history_initialize (history, config_file, &errmsg)) == NULL)
+    if ((db = midori_history_initialize (history, config_file, bookmarks_file ,&errmsg)) == NULL)
     {
         g_string_append_printf (error_messages,
             _("The history couldn't be loaded: %s\n"), errmsg);
         g_free (errmsg);
     }
+    g_free (bookmarks_file);
     g_object_set_data (G_OBJECT (history), "db", db);
-    #endif
     midori_startup_timer ("History read: \t%f");
 
     /* In case of errors */
@@ -2026,6 +2043,7 @@ main (int    argc,
             uri_ready = midori_prepare_uri (uri);
             katze_item_set_uri (item, uri_ready);
             g_free (uri_ready);
+            katze_item_set_meta_integer (item, "delay", 0);
             katze_array_add_item (_session, item);
             uri = strtok (NULL, "|");
         }
@@ -2034,7 +2052,6 @@ main (int    argc,
     }
     }
 
-    katze_assign (config_file, build_config_filename ("search"));
     if (1)
     {
         g_signal_connect_after (search_engines, "add-item",
@@ -2049,24 +2066,10 @@ main (int    argc,
                     G_CALLBACK (midori_search_engines_modify_cb), search_engines);
         }
     }
-    katze_assign (config_file, build_config_filename (BOOKMARK_FILE));
-    /* Don't save bookmarks if they are not our own */
-    if (!g_path_is_absolute (BOOKMARK_FILE))
-    {
-        midori_bookmarks_connect_item (NULL, (KatzeItem*)bookmarks, bookmarks);
-        g_signal_connect_after (bookmarks, "add-item",
-            G_CALLBACK (midori_bookmarks_add_item_cb), bookmarks);
-        g_signal_connect_after (bookmarks, "remove-item",
-            G_CALLBACK (midori_bookmarks_remove_item_cb), bookmarks);
-    }
-    katze_assign (config_file, build_config_filename ("tabtrash.xbel"));
     g_signal_connect_after (trash, "add-item",
         G_CALLBACK (midori_trash_add_item_cb), NULL);
     g_signal_connect_after (trash, "remove-item",
         G_CALLBACK (midori_trash_remove_item_cb), NULL);
-    #if HAVE_SQLITE
-    katze_assign (config_file, build_config_filename ("history.db"));
-    #endif
 
     katze_item_set_parent (KATZE_ITEM (_session), app);
     g_object_set_data (G_OBJECT (app), "extensions", extensions);
@@ -2075,11 +2078,20 @@ main (int    argc,
     katze_assign (config_file, build_config_filename ("running"));
     if (g_access (config_file, F_OK) == 0)
     {
-        if (katze_object_get_boolean (settings, "show-crash-dialog"))
-            diagnostic_dialog = TRUE;
+        back_from_crash = TRUE;
     }
     else
         g_file_set_contents (config_file, "RUNNING", -1, NULL);
+
+    if (back_from_crash)
+    {
+        if (katze_object_get_int (settings, "load-on-startup")
+            >= MIDORI_STARTUP_LAST_OPEN_PAGES)
+            midori_session_add_delay (_session);
+
+        if (katze_object_get_boolean (settings, "show-crash-dialog"))
+            diagnostic_dialog = TRUE;
+    }
 
     if (diagnostic_dialog)
     {
@@ -2119,18 +2131,14 @@ main (int    argc,
     gtk_main ();
 
     settings = katze_object_get_object (app, "settings");
-    #if HAVE_SQLITE
     g_object_get (settings, "maximum-history-age", &max_history_age, NULL);
     midori_history_terminate (db, max_history_age);
-    #endif
 
     /* Clear data on quit, according to the Clear private data dialog */
     g_object_get (settings, "clear-private-data", &clear_prefs, NULL);
     if (clear_prefs & MIDORI_CLEAR_ON_QUIT)
     {
-        #if HAVE_SQLITE
         midori_remove_config_file (clear_prefs, MIDORI_CLEAR_HISTORY, "history.db");
-        #endif
         midori_remove_config_file (clear_prefs, MIDORI_CLEAR_COOKIES, "cookies.txt");
         if ((clear_prefs & MIDORI_CLEAR_FLASH_COOKIES) == MIDORI_CLEAR_FLASH_COOKIES)
         {
@@ -2156,8 +2164,8 @@ main (int    argc,
         }
     }
 
-    if (katze_object_get_boolean (settings, "load-on-startup")
-        != MIDORI_STARTUP_LAST_OPEN_PAGES)
+    if (katze_object_get_int (settings, "load-on-startup")
+        < MIDORI_STARTUP_LAST_OPEN_PAGES)
     {
         katze_assign (config_file, build_config_filename ("session.xbel"));
         g_unlink (config_file);

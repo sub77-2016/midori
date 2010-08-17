@@ -109,10 +109,10 @@ namespace Midori {
         public View (GLib.Object net);
         public void set_uri (string uri);
         public bool is_blank ();
-        public string get_display_uri ();
-        public string get_display_title ();
-        public string get_icon_uri ();
-        public string get_link_uri ();
+        public unowned string get_display_uri ();
+        public unowned string get_display_title ();
+        public unowned string get_icon_uri ();
+        public unowned string get_link_uri ();
         public bool has_selection ();
         public string get_selected_text ();
         public Gtk.MenuItem get_proxy_menu_item ();
@@ -148,6 +148,11 @@ namespace Midori {
 
     public class WebSettings : WebKit.WebSettings {
         public WebSettings ();
+    }
+
+    [CCode (cheader_filename = "midori/sokoke.h", lower_case_cprefix = "sokoke_")]
+    namespace Sokoke {
+        public static uint gtk_action_count_modifiers (Gtk.Action action);
     }
 }
 

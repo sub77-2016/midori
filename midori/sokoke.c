@@ -626,7 +626,7 @@ gchar* sokoke_search_uri (const gchar* uri,
     if (!uri)
         return g_strdup (keywords);
 
-    escaped = g_uri_escape_string (keywords, " :/", TRUE);
+    escaped = g_uri_escape_string (keywords, ":/", TRUE);
     if (strstr (uri, "%s"))
         search = g_strdup_printf (uri, escaped);
     else
@@ -738,6 +738,22 @@ sokoke_magic_uri (const gchar* uri)
 }
 
 /**
+ * sokoke_uri_unescape_string:
+ * @uri: an URI string
+ *
+ * Unescape @uri if needed, and pass through '+'.
+ *
+ * Return value: a newly allocated URI
+ **/
+gchar*
+sokoke_uri_unescape_string (const gchar* uri)
+{
+    if (strchr (uri,'%'))
+        return g_uri_unescape_string (uri, "+");
+    return g_strdup (uri);
+}
+
+/**
  * sokoke_format_uri_for_display:
  * @uri: an URI string
  *
@@ -751,7 +767,7 @@ sokoke_format_uri_for_display (const gchar* uri)
 {
     if (uri && g_str_has_prefix (uri, "http://"))
     {
-        gchar* unescaped = g_uri_unescape_string (uri, " +");
+        gchar* unescaped = sokoke_uri_unescape_string (uri);
         #ifdef HAVE_LIBSOUP_2_27_90
         gchar* path = NULL;
         gchar* hostname;
@@ -1103,22 +1119,15 @@ sokoke_key_file_save_to_file (GKeyFile*    key_file,
                               GError**     error)
 {
     gchar* data;
-    FILE* fp;
+    gboolean success = FALSE;
 
     data = g_key_file_to_data (key_file, NULL, error);
     if (!data)
         return FALSE;
 
-    if (!(fp = fopen (filename, "w")))
-    {
-        *error = g_error_new (G_FILE_ERROR, G_FILE_ERROR_ACCES,
-                              _("Writing failed."));
-        return FALSE;
-    }
-    fputs (data, fp);
-    fclose (fp);
+    success = g_file_set_contents (filename, data, -1, error);
     g_free (data);
-    return TRUE;
+    return success;
 }
 
 void
@@ -1296,11 +1305,11 @@ sokoke_register_stock_items (void)
         { STOCK_BOOKMARK_ADD,   N_("Add Boo_kmark"), 0, 0, GTK_STOCK_ADD },
         { STOCK_CONSOLE,        N_("_Console"), 0, 0, GTK_STOCK_DIALOG_WARNING },
         { STOCK_EXTENSIONS,     N_("_Extensions"), 0, 0, GTK_STOCK_CONVERT },
-        { STOCK_HISTORY,        N_("_History"), 0, 0, GTK_STOCK_SORT_ASCENDING },
+        { STOCK_HISTORY,        N_("_History"), 0, GDK_H, GTK_STOCK_SORT_ASCENDING },
         { STOCK_HOMEPAGE,       N_("_Homepage"), 0, 0, GTK_STOCK_HOME },
         { STOCK_SCRIPTS,        N_("_Userscripts"), 0, 0, GTK_STOCK_EXECUTE },
         { STOCK_TAB_NEW,        N_("New _Tab"), 0, 0, GTK_STOCK_ADD },
-        { STOCK_TRANSFERS,      N_("_Transfers"), 0, 0, GTK_STOCK_SAVE },
+        { STOCK_TRANSFERS,      N_("_Transfers"), 0, GDK_J, GTK_STOCK_SAVE },
         { STOCK_PLUGINS,        N_("Netscape p_lugins"), 0, 0, GTK_STOCK_CONVERT },
         { STOCK_USER_TRASH,     N_("_Closed Tabs"), 0, 0, "gtk-undo-ltr" },
         { STOCK_WINDOW_NEW,     N_("New _Window"), 0, 0, GTK_STOCK_ADD },
@@ -1462,17 +1471,27 @@ sokoke_find_config_filename (const gchar* folder,
     const gchar* const* config_dirs = g_get_system_config_dirs ();
     guint i = 0;
     const gchar* config_dir;
+    gchar* path;
 
     if (!folder)
         folder = "";
 
     while ((config_dir = config_dirs[i++]))
     {
-        gchar* path = g_build_filename (config_dir, PACKAGE_NAME, folder, filename, NULL);
+        path = g_build_filename (config_dir, PACKAGE_NAME, folder, filename, NULL);
         if (g_access (path, F_OK) == 0)
             return path;
         g_free (path);
     }
+
+    #ifdef G_OS_WIN32
+    config_dir = g_win32_get_package_installation_directory_of_module (NULL);
+    path = g_build_filename (config_dir, "etc", "xdg", PACKAGE_NAME, folder, filename, NULL);
+    if (g_access (path, F_OK) == 0)
+        return path;
+    g_free (path);
+    #endif
+
     return g_build_filename (SYSCONFDIR, "xdg", PACKAGE_NAME, folder, filename, NULL);
 }
 
@@ -1687,6 +1706,39 @@ sokoke_window_activate_key (GtkWindow*   window,
             return TRUE;
 
     return FALSE;
+}
+
+/**
+ * sokoke_gtk_action_count_modifiers:
+ * @action: a #GtkAction
+ *
+ * Counts the number of modifiers in the accelerator
+ * belonging to the action.
+ *
+ * Return value: the number of modifiers
+ **/
+guint
+sokoke_gtk_action_count_modifiers (GtkAction* action)
+{
+    GtkAccelKey key;
+    gint mods, cmods = 0;
+    const gchar* accel_path;
+
+    g_return_val_if_fail (GTK_IS_ACTION (action), 0);
+
+    accel_path = gtk_action_get_accel_path (action);
+    if (accel_path)
+        if (gtk_accel_map_lookup_entry (accel_path, &key))
+        {
+            mods = key.accel_mods;
+            while (mods)
+            {
+                if (1 & mods >> 0)
+                    cmods++;
+                mods = mods >> 1;
+            }
+        }
+    return cmods;
 }
 
 /**
