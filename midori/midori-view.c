@@ -1053,7 +1053,6 @@ webkit_web_view_progress_changed_cb (WebKitWebView* web_view,
     g_object_notify (G_OBJECT (view), "progress");
 }
 
-#if WEBKIT_CHECK_VERSION (1, 1, 6)
 #if WEBKIT_CHECK_VERSION (1, 1, 14)
 static void
 midori_view_web_view_resource_request_cb (WebKitWebView*         web_view,
@@ -1158,6 +1157,7 @@ midori_view_load_alternate_string (MidoriView*     view,
     #endif
 }
 
+#if WEBKIT_CHECK_VERSION (1, 1, 6)
 static gboolean
 midori_view_display_error (MidoriView*     view,
                            const gchar*    uri,
@@ -1669,7 +1669,6 @@ static void
 midori_web_view_menu_web_app_activate_cb (GtkWidget*  widget,
                                           MidoriView* view)
 {
-    /* FIXME: Use the same binary that is running right now */
     sokoke_spawn_program ("midori -a", view->link_uri, FALSE);
 }
 
@@ -2226,7 +2225,7 @@ midori_view_populate_popup (MidoriView* view,
             gtk_menu_shell_insert (menu_shell, menuitem, 1);
 
             search_engines = katze_object_get_object (window, "search-engines");
-            while ((item = katze_array_get_nth_item (search_engines, i++)))
+            KATZE_ARRAY_FOREACH_ITEM (item, search_engines)
             {
                 GdkPixbuf* pixbuf;
                 const gchar* icon_name;
@@ -2246,11 +2245,12 @@ midori_view_populate_popup (MidoriView* view,
                 gtk_image_menu_item_set_always_show_image (
                     GTK_IMAGE_MENU_ITEM (menuitem), TRUE);
                 #endif
-                gtk_menu_shell_insert (GTK_MENU_SHELL (sub_menu), menuitem, i - 1);
+                gtk_menu_shell_insert (GTK_MENU_SHELL (sub_menu), menuitem, i);
                 g_object_set_data (G_OBJECT (menuitem), "search",
                                    (gchar*)katze_item_get_uri (item));
                 g_signal_connect (menuitem, "activate",
                     G_CALLBACK (midori_web_view_menu_search_web_activate_cb), view);
+                i++;
             }
             g_object_unref (search_engines);
         }
@@ -2526,9 +2526,8 @@ webkit_web_view_create_web_view_cb (GtkWidget*      web_view,
         new_view = view;
     else
     {
-        new_view = g_object_new (MIDORI_TYPE_VIEW,
-            "settings", view->settings,
-            NULL);
+        new_view = (MidoriView*)midori_view_new_with_uri (NULL, NULL,
+                                                          view->settings);
         midori_view_construct_web_view (new_view);
         g_signal_connect (new_view->web_view, "web-view-ready",
                           G_CALLBACK (webkit_web_view_web_view_ready_cb), view);
@@ -2971,11 +2970,13 @@ midori_view_focus_in_event (GtkWidget*     widget,
 
 /**
  * midori_view_new:
- * @net: a #KatzeNet, or %NULL
+ * @net: %NULL
  *
  * Creates a new view.
  *
  * Return value: a new #MidoriView
+ *
+ * Deprecated: 0.2.8: Use midori_view_new_with_uri() instead.
  **/
 GtkWidget*
 midori_view_new (KatzeNet* net)
@@ -3006,6 +3007,41 @@ _midori_view_update_settings (MidoriView* view)
         g_object_set (view->web_view,
                       "full-content-zoom", zoom_text_and_images, NULL);
     g_object_set (view->scrolled_window, "kinetic-scrolling", kinetic_scrolling, NULL);
+}
+
+/**
+ * midori_view_new_with_uri:
+ * @uri: an URI string, or %NULL
+ * @title: a title, or %NULL
+ * @settings: a #MidoriWebSettings, or %NULL
+ *
+ * Creates a new view with the specified parameters that
+ * is visible by default.
+ *
+ * Return value: a new #MidoriView
+ *
+ * Since: 0.2.8
+ **/
+GtkWidget*
+midori_view_new_with_uri (const gchar*       uri,
+                          const gchar*       title,
+                          MidoriWebSettings* settings)
+{
+    MidoriView* view = g_object_new (MIDORI_TYPE_VIEW, NULL);
+    view->title = g_strdup (title);
+    if (title != NULL)
+        midori_view_update_title (view);
+    if (settings)
+    {
+        view->settings = g_object_ref (settings);
+        _midori_view_update_settings (view);
+        g_signal_connect (settings, "notify",
+                          G_CALLBACK (midori_view_settings_notify_cb), view);
+    }
+    if (uri != NULL)
+        midori_view_set_uri (view, uri);
+    gtk_widget_show ((GtkWidget*)view);
+    return (GtkWidget*)view;
 }
 
 static void
@@ -3606,6 +3642,7 @@ midori_view_set_uri (MidoriView*  view,
             g_object_notify (G_OBJECT (view), "uri");
             return;
         }
+        #if WEBKIT_CHECK_VERSION (1, 1, 6)
         else if (g_str_has_prefix (uri, "pause:"))
         {
             gchar* title;
@@ -3622,6 +3659,7 @@ midori_view_set_uri (MidoriView*  view,
             katze_item_set_uri (view->item, uri);
             g_object_notify (G_OBJECT (view), "uri");
         }
+        #endif
         else if (g_str_has_prefix (uri, "javascript:"))
         {
             gboolean result;
@@ -3644,6 +3682,7 @@ midori_view_set_uri (MidoriView*  view,
         {
             katze_assign (view->uri, sokoke_format_uri_for_display (uri));
             katze_item_set_uri (view->item, uri);
+            katze_item_set_meta_integer (view->item, "delay", -1);
             g_object_notify (G_OBJECT (view), "uri");
             webkit_web_view_open (WEBKIT_WEB_VIEW (view->web_view), uri);
         }
@@ -3931,11 +3970,9 @@ midori_view_tab_label_menu_duplicate_tab_cb (GtkWidget*  menuitem,
                                              MidoriView* view)
 {
     MidoriNewView where = MIDORI_NEW_VIEW_TAB;
-    GtkWidget* new_view = g_object_new (MIDORI_TYPE_VIEW,
-        "settings", view->settings, NULL);
-    midori_view_set_uri (MIDORI_VIEW (new_view),
-        midori_view_get_display_uri (view));
-    gtk_widget_show (new_view);
+    GtkWidget* new_view = midori_view_new_with_uri (
+        midori_view_get_display_uri (view),
+        NULL, view->settings);
     g_signal_emit (view, signals[NEW_VIEW], 0, new_view, where);
 }
 
@@ -4017,7 +4054,7 @@ midori_view_get_tab_menu (MidoriView* view)
     g_signal_connect (menuitem, "activate",
         G_CALLBACK (midori_view_tab_label_menu_duplicate_tab_cb), view);
     menuitem = gtk_menu_item_new_with_mnemonic (
-        view->minimized ? _("_Restore Tab") : _("_Minimize Tab"));
+        view->minimized ? _("Show Tab _Label") : _("Show Tab _Icon Only"));
     gtk_menu_shell_append (GTK_MENU_SHELL (menu), menuitem);
     g_signal_connect (menuitem, "activate",
         G_CALLBACK (midori_view_tab_label_menu_minimize_tab_cb), view);
@@ -4454,6 +4491,7 @@ midori_view_reload (MidoriView* view,
         webkit_web_view_reload (WEBKIT_WEB_VIEW (view->web_view));
     else
         webkit_web_view_reload_bypass_cache (WEBKIT_WEB_VIEW (view->web_view));
+    katze_item_set_meta_integer (view->item, "delay", -1);
 
     g_free (title);
 }

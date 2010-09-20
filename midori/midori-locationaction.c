@@ -457,7 +457,6 @@ midori_location_action_popup_timeout_cb (gpointer data)
     style = gtk_widget_get_style (action->treeview);
     while (result == SQLITE_ROW)
     {
-        gchar* unescaped_uri;
         sqlite3_int64 type = sqlite3_column_int64 (stmt, 0);
         const unsigned char* uri = sqlite3_column_text (stmt, 1);
         const unsigned char* title = sqlite3_column_text (stmt, 2);
@@ -466,12 +465,9 @@ midori_location_action_popup_timeout_cb (gpointer data)
             icon = action->default_icon;
         if (type == 1 /* history_view */)
         {
-            unescaped_uri = sokoke_uri_unescape_string ((const char*)uri);
-
             gtk_list_store_insert_with_values (store, NULL, matches,
-                URI_COL, unescaped_uri, TITLE_COL, title, YALIGN_COL, 0.25,
+                URI_COL, uri, TITLE_COL, title, YALIGN_COL, 0.25,
                 FAVICON_COL, icon, -1);
-            g_free (unescaped_uri);
         }
         else if (type == 2 /* search_view */)
         {
@@ -490,9 +486,9 @@ midori_location_action_popup_timeout_cb (gpointer data)
 
     if (action->search_engines)
     {
-        gint i = 0;
         KatzeItem* item;
-        while ((item = katze_array_get_nth_item (action->search_engines, i)))
+        i = 0;
+        KATZE_ARRAY_FOREACH_ITEM (item, action->search_engines)
         {
             gchar* uri;
             gchar* title;
@@ -549,7 +545,6 @@ midori_location_action_popup_completion (MidoriLocationAction* action,
         G_CALLBACK (gtk_widget_destroyed), &action->entry);
     action->completion_timeout = g_timeout_add (COMPLETION_DELAY,
         midori_location_action_popup_timeout_cb, action);
-    /* TODO: Inline completion */
 }
 
 static void
@@ -897,6 +892,48 @@ midori_location_action_key_press_event_cb (GtkEntry*    entry,
     case GDK_Page_Down:
         if (!(location_action->popup && gtk_widget_get_visible (location_action->popup)))
             return TRUE;
+    case GDK_Delete:
+    case GDK_KP_Delete:
+    {
+        gint selected = location_action->completion_index;
+        GtkTreeModel* model = location_action->completion_model;
+        GtkTreeIter iter;
+
+        if (selected > -1 &&
+            gtk_tree_model_iter_nth_child (model, &iter, NULL, selected))
+            {
+                gchar* uri;
+                gchar* sqlcmd;
+                sqlite3* db;
+                gchar* errmsg;
+                gint result;
+
+                gtk_tree_model_get (model, &iter, URI_COL, &uri, -1);
+                sqlcmd = sqlite3_mprintf ("DELETE FROM history "
+                                          "WHERE uri = '%q'", uri);
+                g_free (uri);
+                db = g_object_get_data (G_OBJECT (location_action->history), "db");
+                result = sqlite3_exec (db, sqlcmd, NULL, NULL, &errmsg);
+                sqlite3_free (sqlcmd);
+                if (result == SQLITE_ERROR)
+                {
+                    gtk_list_store_set (GTK_LIST_STORE (model), &iter,
+                                        URI_COL, errmsg, -1);
+                    sqlite3_free (errmsg);
+                    break;
+                }
+                if (result != SQLITE_OK || sqlite3_changes (db) == 0)
+                    break;
+                if (!gtk_list_store_remove (GTK_LIST_STORE (model), &iter))
+                {
+                    midori_location_action_popdown_completion (location_action);
+                    break;
+                }
+                /* Fall through to advance the selection */
+            }
+        else
+            break;
+    }
     case GDK_Down:
     case GDK_KP_Down:
     case GDK_Up:
@@ -1024,9 +1061,9 @@ midori_location_entry_render_text_cb (GtkCellLayout*   layout,
                                       gpointer         data)
 {
     MidoriLocationAction* action = data;
+    gchar* uri_escaped;
     gchar* uri;
     gchar* title;
-    GdkColor* background;
     gboolean style;
     gchar* desc;
     gchar* desc_uri;
@@ -1043,17 +1080,16 @@ midori_location_entry_render_text_cb (GtkCellLayout*   layout,
     gchar* temp_concat;
     gchar* temp_markup;
     gchar** parts;
-    size_t len;
     size_t offset;
 
-    gtk_tree_model_get (model, iter, URI_COL, &uri, TITLE_COL, &title,
-        BACKGROUND_COL, &background, STYLE_COL, &style, -1);
+    gtk_tree_model_get (model, iter, URI_COL, &uri_escaped, TITLE_COL, &title,
+        STYLE_COL, &style, -1);
 
     if (style) /* A search engine action */
     {
         g_object_set (renderer, "text", title,
             "ellipsize-set", TRUE, "ellipsize", PANGO_ELLIPSIZE_END, NULL);
-        g_free (uri);
+        g_free (uri_escaped);
         g_free (title);
         return;
     }
@@ -1068,16 +1104,19 @@ midori_location_entry_render_text_cb (GtkCellLayout*   layout,
     keys = g_strsplit_set (key, " %", -1);
     g_free (key);
 
+    uri = sokoke_uri_unescape_string (uri_escaped);
+    g_free (uri_escaped);
+
     if (G_LIKELY (uri))
     {
         temp_iter = temp = g_utf8_strdown (uri, -1);
         desc_iter = uri;
         key_idx = 0;
         key = keys[key_idx];
-        len = strlen (key);
         offset = 0;
-        while ((start = strstr (temp_iter, key)) && start)
+        while (key && (start = strstr (temp_iter, key)) && start)
         {
+            gsize len = strlen (key);
             if (len)
             {
                 offset = (start - temp_iter);
@@ -1110,7 +1149,6 @@ midori_location_entry_render_text_cb (GtkCellLayout*   layout,
             key = keys[key_idx];
             if (key == NULL)
                 break;
-            len = strlen (key);
         }
         if (key)
             katze_assign (desc_uri, NULL);
@@ -1132,10 +1170,10 @@ midori_location_entry_render_text_cb (GtkCellLayout*   layout,
         desc_iter = title;
         key_idx = 0;
         key = keys[key_idx];
-        len = strlen (key);
         offset = 0;
-        while ((start = strstr (temp_iter, key)) && start)
+        while (key && (start = strstr (temp_iter, key)) && start)
         {
+            gsize len = strlen (key);
             if (len)
             {
                 offset = (start - temp_iter);
@@ -1168,7 +1206,6 @@ midori_location_entry_render_text_cb (GtkCellLayout*   layout,
             key = keys[key_idx];
             if (key == NULL)
                 break;
-            len = strlen (key);
         }
         if (key)
             katze_assign (desc_title, NULL);

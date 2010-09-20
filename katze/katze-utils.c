@@ -247,10 +247,14 @@ proxy_combo_box_changed_cb (GtkComboBox* button,
         }
         else if (value != custom_value && GTK_IS_ENTRY (child))
         {
+            g_signal_handlers_block_by_func (
+                button, proxy_combo_box_changed_cb, object);
             /* Force the combo to change the item again */
             gtk_widget_destroy (child);
             gtk_combo_box_set_active (button, value + 1);
             gtk_combo_box_set_active (button, value);
+            g_signal_handlers_unblock_by_func (
+                button, proxy_combo_box_changed_cb, object);
         }
     }
 
@@ -1132,9 +1136,8 @@ katze_bookmark_populate_tree_view (KatzeArray*   array,
     KatzeItem* child;
     GtkTreeIter iter;
     GtkTreeIter root_iter;
-    guint i = 0;
 
-    while ((child = katze_array_get_nth_item (KATZE_ARRAY (array), i)))
+    KATZE_ARRAY_FOREACH_ITEM (child, array)
     {
         if (KATZE_ITEM_IS_BOOKMARK (child))
         {
@@ -1151,7 +1154,6 @@ katze_bookmark_populate_tree_view (KatzeArray*   array,
             gtk_tree_store_insert_with_values (model, &iter, &root_iter,
                                                0, 0, NULL, -1);
         }
-        i++;
     }
 }
 
@@ -1493,6 +1495,8 @@ katze_load_cached_icon (const gchar* uri,
 {
     GdkPixbuf* icon = NULL;
 
+    g_return_val_if_fail (uri != NULL, NULL);
+
     if (g_str_has_prefix (uri, "http://") || g_str_has_prefix (uri,"https://"))
     {
         guint i;
@@ -1522,6 +1526,7 @@ katze_load_cached_icon (const gchar* uri,
         g_free (checksum);
         path = g_build_filename (g_get_user_cache_dir (), PACKAGE_NAME,
                                  "icons", filename, NULL);
+        g_free (filename);
         if ((icon = gdk_pixbuf_new_from_file_at_size (path, 16, 16, NULL)))
         {
             g_free (path);
@@ -1534,95 +1539,3 @@ katze_load_cached_icon (const gchar* uri,
         GTK_STOCK_FILE, GTK_ICON_SIZE_MENU, NULL);
 }
 
-/**
- * katze_collfold:
- * @str: a non-NULL UTF-8 string
- *
- * Computes a string without case and decomposited so
- * it can be used for comparison.
- *
- * Return value: a normalized string
- *
- * Since: 0.2.3
- **/
-gchar*
-katze_collfold (const gchar* str)
-{
-    GString* result = g_string_new (NULL);
-    const gchar* p = str;
-
-    while (*p)
-    {
-        gunichar ch = g_unichar_tolower (g_utf8_get_char (p));
-        gsize len;
-        gunichar* sch = g_unicode_canonical_decomposition (ch, &len);
-        guint i = 0;
-        while (i < len)
-            g_string_append_unichar (result, sch[i++]);
-
-        p = g_utf8_next_char (p);
-    }
-
-    return g_string_free (result, FALSE);
-}
-
-/**
- * katze_utf8_stristr:
- * @haystack: a non-NULL UTF-8 string
- * @needle: a normalized non-NULL UTF-8 string
- *
- * Determines whether @needle is in @haystack, disregarding
- * differences in case.
- *
- * Return value: %TRUE if @needle is found in @haystack
- *
- * Since: 0.2.3
- **/
-gboolean
-katze_utf8_stristr (const gchar* haystack,
-                    const gchar* needle)
-{
-    #if 0 /* 0,000159 seconds */
-    /* Too slow for use in completion */
-    gchar* nhaystack = g_utf8_normalize (haystack, -1, G_NORMALIZE_DEFAULT);
-    const gchar *p = nhaystack;
-    gsize len = strlen (needle);
-    gsize i;
-
-    while (*p)
-    {
-        for (i = 0; i < len; i++)
-            if (g_unichar_tolower (g_utf8_get_char (p + i))
-             != g_unichar_tolower (g_utf8_get_char (needle + i)))
-                goto next;
-
-        g_free (nhaystack);
-        return TRUE;
-
-        next:
-            p = g_utf8_next_char (p);
-    }
-
-    g_free (nhaystack);
-    return FALSE;
-    #else /* 0,000044 seconds */
-    /* No unicode matching */
-    const gchar *p = haystack;
-    gsize len = strlen (needle);
-    gsize i;
-
-    while (*p)
-    {
-        for (i = 0; i < len; i++)
-            if (g_ascii_tolower (p[i]) != g_ascii_tolower (needle[i]))
-                goto next;
-
-        return TRUE;
-
-        next:
-            p++;
-    }
-
-    return FALSE;
-    #endif
-}

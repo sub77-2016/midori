@@ -99,6 +99,7 @@ midori_addons_button_add_clicked_cb (GtkToolItem* toolitem,
     gchar* addons_type;
     gchar* path;
     GtkWidget* dialog;
+    GtkFileFilter* filter;
 
     if (addons->kind == ADDONS_USER_SCRIPTS)
     {
@@ -115,15 +116,308 @@ midori_addons_button_add_clicked_cb (GtkToolItem* toolitem,
     else
         g_assert_not_reached ();
 
-    dialog = gtk_message_dialog_new (
+    dialog = gtk_file_chooser_dialog_new (_("Choose file"),
         GTK_WINDOW (gtk_widget_get_toplevel (GTK_WIDGET (addons))),
-        GTK_DIALOG_DESTROY_WITH_PARENT,
-        GTK_MESSAGE_INFO, GTK_BUTTONS_CLOSE,
-        _("Copy %s to the folder %s."), addons_type, path);
+        GTK_FILE_CHOOSER_ACTION_OPEN, GTK_STOCK_CANCEL,
+        GTK_RESPONSE_CANCEL, GTK_STOCK_OPEN, GTK_RESPONSE_ACCEPT, NULL);
+
+    gtk_file_chooser_set_select_multiple (GTK_FILE_CHOOSER (dialog), TRUE);
+
+    filter = gtk_file_filter_new ();
+
+    if (addons->kind == ADDONS_USER_SCRIPTS)
+    {
+        gtk_file_filter_set_name (filter, _("Userscripts"));
+        gtk_file_filter_add_pattern (filter, "*.js");
+    }
+    else if (addons->kind == ADDONS_USER_STYLES)
+    {
+        gtk_file_filter_set_name (filter, _("Userstyles"));
+        gtk_file_filter_add_pattern (filter, "*.css");
+    }
+    else
+        g_assert_not_reached ();
+
+    gtk_file_chooser_add_filter (GTK_FILE_CHOOSER (dialog), filter);
+
+    if (gtk_dialog_run (GTK_DIALOG (dialog)) == GTK_RESPONSE_ACCEPT)
+    {
+        GSList* files;
+
+        if (!g_file_test (path, G_FILE_TEST_EXISTS))
+            katze_mkdir_with_parents (path, 0700);
+
+        #if !GTK_CHECK_VERSION (2, 14, 0)
+        files = gtk_file_chooser_get_filenames (GTK_FILE_CHOOSER (dialog));
+        #else
+        files = gtk_file_chooser_get_files (GTK_FILE_CHOOSER (dialog));
+        #endif
+
+        while (files)
+        {
+            GFile* src_file;
+            GError* error = NULL;
+
+            #if !GTK_CHECK_VERSION (2, 14, 0)
+            src_file = g_file_new_for_path (files);
+            #else
+            src_file = files->data;
+            #endif
+
+            if (G_IS_FILE (src_file))
+            {
+                GFile* dest_file;
+                gchar* dest_file_path;
+
+                dest_file_path = g_build_path (G_DIR_SEPARATOR_S, path,
+                    g_file_get_basename (src_file), NULL);
+
+                dest_file = g_file_new_for_path (dest_file_path);
+
+                g_file_copy (src_file, dest_file,
+                    G_FILE_COPY_OVERWRITE | G_FILE_COPY_BACKUP,
+                    NULL, NULL, NULL, &error);
+
+                if (error)
+                {
+                    GtkWidget* msg_box;
+                    msg_box = gtk_message_dialog_new (
+                        GTK_WINDOW (gtk_widget_get_toplevel (GTK_WIDGET (addons))),
+                        GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT,
+                        GTK_MESSAGE_ERROR,
+                        GTK_BUTTONS_OK,
+                        "%s", error->message);
+
+                    gtk_window_set_title (GTK_WINDOW (msg_box), _("Error"));
+                    gtk_dialog_run (GTK_DIALOG (msg_box));
+                    gtk_widget_destroy (msg_box);
+                    g_error_free (error);
+                }
+
+                g_object_unref (src_file);
+                g_object_unref (dest_file);
+                g_free (dest_file_path);
+            }
+            files = g_slist_next (files);
+        }
+        g_slist_free (files);
+    }
+
     g_free (addons_type);
     g_free (path);
-    gtk_dialog_run (GTK_DIALOG (dialog));
     gtk_widget_destroy (dialog);
+}
+
+static void
+midori_addons_button_delete_clicked_cb (GtkWidget* toolitem,
+                                        Addons*    addons)
+{
+    GtkTreeModel* model;
+    GtkTreeIter iter;
+
+    if (katze_tree_view_get_selected_iter (GTK_TREE_VIEW (addons->treeview),
+                                                          &model, &iter))
+    {
+        struct AddonElement* element;
+        gint delete_response;
+        GtkWidget* dialog;
+
+        gtk_tree_model_get (model, &iter, 0, &element, -1);
+        dialog = gtk_message_dialog_new (
+            GTK_WINDOW (gtk_widget_get_toplevel (GTK_WIDGET (addons))),
+            GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT,
+            GTK_MESSAGE_QUESTION,
+            GTK_BUTTONS_CANCEL,
+            _("Do you want to delete '%s'?"),
+            element->displayname);
+        gtk_dialog_add_button (GTK_DIALOG (dialog), GTK_STOCK_DELETE, GTK_RESPONSE_YES);
+
+        gtk_window_set_title (GTK_WINDOW (dialog),
+            addons->kind == ADDONS_USER_SCRIPTS
+            ? _("Delete user script")
+            : _("Delete user style"));
+
+        gtk_message_dialog_format_secondary_markup (
+            GTK_MESSAGE_DIALOG (dialog),
+            _("The file <b>%s</b> will be permanently deleted."),
+            element->fullpath);
+
+        delete_response = gtk_dialog_run (GTK_DIALOG (dialog));
+        gtk_widget_destroy (GTK_WIDGET (dialog));
+
+        if (delete_response == GTK_RESPONSE_YES)
+        {
+            GError* error = NULL;
+            GFile* file;
+            gboolean result;
+
+            file = g_file_new_for_path (element->fullpath);
+            result = g_file_delete (file, NULL, &error);
+
+            if (!result && error)
+            {
+                GtkWidget* msg_box;
+                msg_box = gtk_message_dialog_new (
+                    GTK_WINDOW (gtk_widget_get_toplevel (GTK_WIDGET (addons))),
+                    GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT,
+                    GTK_MESSAGE_ERROR,
+                    GTK_BUTTONS_OK,
+                    "%s", error->message);
+
+                    gtk_window_set_title (GTK_WINDOW (msg_box), _("Error"));
+                    gtk_dialog_run (GTK_DIALOG (msg_box));
+                    gtk_widget_destroy (msg_box);
+                    g_error_free (error);
+            }
+
+            if (result)
+                gtk_list_store_remove (GTK_LIST_STORE (model), &iter);
+
+            g_object_unref (file);
+        }
+    }
+}
+static void
+midori_addons_open_in_editor_clicked_cb (GtkWidget* toolitem,
+                                         Addons*    addons)
+{
+    GtkTreeModel* model;
+    GtkTreeIter iter;
+
+    if (katze_tree_view_get_selected_iter (GTK_TREE_VIEW (addons->treeview),
+                                                          &model, &iter))
+    {
+        struct AddonElement* element;
+        MidoriWebSettings* settings;
+        MidoriBrowser* browser;
+        gchar* text_editor;
+        gchar* element_uri;
+
+        browser = midori_browser_get_for_widget (GTK_WIDGET (addons->treeview));
+        settings = katze_object_get_object (browser, "settings");
+
+        gtk_tree_model_get (model, &iter, 0, &element, -1);
+        element_uri = g_filename_to_uri (element->fullpath, NULL, NULL);
+
+        g_object_get (settings, "text-editor", &text_editor, NULL);
+        if (text_editor && *text_editor)
+            sokoke_spawn_program (text_editor, element_uri, TRUE);
+        else
+            sokoke_show_uri (NULL, element_uri,
+                             gtk_get_current_event_time (), NULL);
+
+        g_free (element_uri);
+        g_free (text_editor);
+    }
+}
+
+static void
+midori_addons_open_target_folder_clicked_cb (GtkWidget* toolitem,
+                                             Addons*    addons)
+{
+    GtkTreeModel* model;
+    GtkTreeIter iter;
+    gchar* folder;
+    gchar* folder_uri;
+
+    if (katze_tree_view_get_selected_iter (GTK_TREE_VIEW (addons->treeview),
+                                            &model, &iter))
+    {
+        struct AddonElement* element;
+
+        gtk_tree_model_get (model, &iter, 0, &element, -1);
+        folder = g_path_get_dirname (element->fullpath);
+    }
+    else
+        folder = g_build_path (G_DIR_SEPARATOR_S, g_get_user_data_dir (),
+                               PACKAGE_NAME,
+                               addons->kind == ADDONS_USER_SCRIPTS
+                               ? "scripts" : "styles", NULL);
+    folder_uri = g_filename_to_uri (folder, NULL, NULL);
+    g_free (folder);
+
+    sokoke_show_uri (gtk_widget_get_screen (GTK_WIDGET (addons->treeview)),
+                     folder_uri, gtk_get_current_event_time (), NULL);
+    g_free (folder_uri);
+}
+
+static void
+midori_addons_popup_item (GtkMenu*             menu,
+                          const gchar*         stock_id,
+                          const gchar*         label,
+                          struct AddonElement* element,
+                          gpointer             callback,
+                          Addons*              addons)
+{
+    GtkWidget* menuitem;
+
+    menuitem = gtk_image_menu_item_new_from_stock (stock_id, NULL);
+    if (label)
+        gtk_label_set_text_with_mnemonic (GTK_LABEL (gtk_bin_get_child (
+            GTK_BIN (menuitem))), label);
+    if (!strcmp (stock_id, GTK_STOCK_EDIT))
+        gtk_widget_set_sensitive (menuitem, element->fullpath !=NULL);
+    else if (strcmp (stock_id, GTK_STOCK_DELETE))
+        gtk_widget_set_sensitive (menuitem, element->fullpath !=NULL);
+    g_object_set_data (G_OBJECT (menuitem), "AddonElement", &element);
+    g_signal_connect (menuitem, "activate", G_CALLBACK(callback), addons);
+    gtk_menu_shell_append (GTK_MENU_SHELL (menu), menuitem);
+    gtk_widget_show (menuitem);
+}
+
+static void
+midori_addons_popup (GtkWidget*           widget,
+                     GdkEventButton*      event,
+                     struct AddonElement* element,
+                     Addons*              addons)
+{
+    GtkWidget* menu;
+
+    menu = gtk_menu_new ();
+    midori_addons_popup_item (GTK_MENU (menu), GTK_STOCK_EDIT, _("Open in Text Editor"),
+        element, midori_addons_open_in_editor_clicked_cb, addons);
+    midori_addons_popup_item (GTK_MENU (menu), GTK_STOCK_OPEN, _("Open Target Folder"),
+        element, midori_addons_open_target_folder_clicked_cb, addons);
+    midori_addons_popup_item (GTK_MENU (menu), GTK_STOCK_DELETE, NULL,
+         element, midori_addons_button_delete_clicked_cb, addons);
+   katze_widget_popup (widget, GTK_MENU (menu), event, KATZE_MENU_POSITION_CURSOR);
+}
+
+static gboolean
+midori_addons_popup_menu_cb (GtkWidget *widget,
+                             Addons*    addons)
+{
+    GtkTreeModel* model;
+    GtkTreeIter iter;
+
+    if (katze_tree_view_get_selected_iter (GTK_TREE_VIEW (widget), &model, &iter))
+    {
+        struct AddonElement* element;
+        gtk_tree_model_get (model, &iter, 0, &element, -1);
+        midori_addons_popup (widget, NULL, element, addons);
+        return TRUE;
+    }
+    return FALSE;
+}
+
+static gboolean
+midori_addons_button_release_event_cb (GtkWidget*       widget,
+                                       GdkEventButton*  event,
+                                       Addons*          addons)
+{
+    GtkTreeModel* model;
+    GtkTreeIter iter;
+
+    if (event->button != 3)
+        return FALSE;
+    if (katze_tree_view_get_selected_iter (GTK_TREE_VIEW (widget), &model, &iter))
+    {
+        struct AddonElement* element;
+        gtk_tree_model_get (model, &iter, 0, &element, -1);
+        midori_addons_popup (widget, NULL, element, addons);
+        return TRUE;
+    }
+    return FALSE;
 }
 
 GtkWidget*
@@ -137,17 +431,8 @@ addons_get_toolbar (MidoriViewable* viewable)
     if (!ADDONS (viewable)->toolbar)
     {
         toolbar = gtk_toolbar_new ();
-        gtk_toolbar_set_style (GTK_TOOLBAR (toolbar), GTK_TOOLBAR_BOTH_HORIZ);
         gtk_toolbar_set_icon_size (GTK_TOOLBAR (toolbar), GTK_ICON_SIZE_BUTTON);
         toolitem = gtk_tool_item_new ();
-        gtk_toolbar_insert (GTK_TOOLBAR (toolbar), toolitem, -1);
-        gtk_widget_show (GTK_WIDGET (toolitem));
-
-        /* separator */
-        toolitem = gtk_separator_tool_item_new ();
-        gtk_separator_tool_item_set_draw (GTK_SEPARATOR_TOOL_ITEM (toolitem),
-                                          FALSE);
-        gtk_tool_item_set_expand (toolitem, TRUE);
         gtk_toolbar_insert (GTK_TOOLBAR (toolbar), toolitem, -1);
         gtk_widget_show (GTK_WIDGET (toolitem));
 
@@ -157,7 +442,35 @@ addons_get_toolbar (MidoriViewable* viewable)
         g_signal_connect (toolitem, "clicked",
             G_CALLBACK (midori_addons_button_add_clicked_cb), viewable);
         gtk_toolbar_insert (GTK_TOOLBAR (toolbar), toolitem, -1);
+        gtk_widget_set_tooltip_text (GTK_WIDGET (toolitem), _("Add new addon"));
+        gtk_widget_show (GTK_WIDGET (toolitem));
 
+        /* Text editor button */
+        toolitem = gtk_tool_button_new_from_stock (GTK_STOCK_EDIT);
+        g_signal_connect (toolitem, "clicked",
+            G_CALLBACK (midori_addons_open_in_editor_clicked_cb), viewable);
+        gtk_toolbar_insert (GTK_TOOLBAR (toolbar), toolitem, -1);
+        gtk_widget_set_tooltip_text (GTK_WIDGET (toolitem),
+                                    _("Open in Text Editor"));
+        gtk_widget_show (GTK_WIDGET (toolitem));
+
+        /* Target folder button */
+        toolitem = gtk_tool_button_new_from_stock (GTK_STOCK_DIRECTORY);
+        g_signal_connect (toolitem, "clicked",
+            G_CALLBACK (midori_addons_open_target_folder_clicked_cb), viewable);
+        gtk_toolbar_insert (GTK_TOOLBAR (toolbar), toolitem, -1);
+        gtk_widget_set_tooltip_text (GTK_WIDGET (toolitem),
+                                    _("Open Target Folder"));
+        gtk_widget_show (GTK_WIDGET (toolitem));
+
+        /* Delete button */
+        toolitem = gtk_tool_button_new_from_stock (GTK_STOCK_DELETE);
+        g_signal_connect (toolitem, "clicked",
+            G_CALLBACK (midori_addons_button_delete_clicked_cb), viewable);
+        gtk_toolbar_insert (GTK_TOOLBAR (toolbar), toolitem, -1);
+        gtk_widget_set_tooltip_text (GTK_WIDGET (toolitem),
+                                    _("Open target folder for selected addon"));
+        gtk_widget_set_tooltip_text (GTK_WIDGET (toolitem), _("Remove selected addon"));
         gtk_widget_show (GTK_WIDGET (toolitem));
         ADDONS (viewable)->toolbar = toolbar;
 
@@ -358,7 +671,6 @@ addons_get_files (AddonsKind kind)
 {
     GSList* files;
     GDir* addon_dir;
-    GSList* list;
     GSList* directories;
     const gchar* filename;
     gchar* dirname;
@@ -375,7 +687,6 @@ addons_get_files (AddonsKind kind)
     files = NULL;
 
     directories = addons_get_directories (kind);
-    list = directories;
     while (directories)
     {
         dirname = directories->data;
@@ -395,7 +706,6 @@ addons_get_files (AddonsKind kind)
         directories = g_slist_next (directories);
     }
 
-    g_slist_free (list);
     g_free (file_extension);
 
     return files;
@@ -671,8 +981,9 @@ addons_update_elements (MidoriExtension* extension,
     if (liststore)
         gtk_list_store_clear (liststore);
     else
-        liststore = gtk_list_store_new (3, G_TYPE_POINTER,
+        liststore = gtk_list_store_new (4, G_TYPE_POINTER,
                                         G_TYPE_INT,
+                                        G_TYPE_STRING,
                                         G_TYPE_STRING);
 
     keyfile = g_key_file_new ();
@@ -686,6 +997,9 @@ addons_update_elements (MidoriExtension* extension,
     elements = NULL;
     while (addon_files)
     {
+        gchar* filename;
+        gchar* tooltip;
+
         fullpath = addon_files->data;
         element = g_new (struct AddonElement, 1);
         element->displayname = g_filename_display_basename (fullpath);
@@ -732,10 +1046,22 @@ addons_update_elements (MidoriExtension* extension,
                 element->enabled = FALSE;
         }
 
+        filename = g_path_get_basename (element->fullpath);
+        if (element->description)
+        {
+            tooltip = g_strdup_printf ("%s\n\n%s",
+                                       filename, element->description);
+            g_free (filename);
+        }
+        else
+            tooltip = filename;
+
         gtk_list_store_append (liststore, &iter);
         gtk_list_store_set (liststore, &iter,
-                0, element, 1, 0, 2, "", -1);
+                0, element, 1, 0, 2, element->fullpath,
+                3, tooltip, -1);
 
+        g_free (tooltip);
         addon_files = g_slist_next (addon_files);
         elements = g_slist_prepend (elements, element);
     }
@@ -780,8 +1106,15 @@ addons_init (Addons* addons)
         (GtkTreeCellDataFunc)addons_treeview_render_text_cb,
         addons->treeview, NULL);
     gtk_tree_view_append_column (GTK_TREE_VIEW (addons->treeview), column);
+    gtk_tree_view_set_tooltip_column (GTK_TREE_VIEW (addons->treeview), 3);
     g_signal_connect (addons->treeview, "row-activated",
                       G_CALLBACK (addons_treeview_row_activated_cb),
+                      addons);
+    g_signal_connect (addons->treeview, "button-release-event",
+                      G_CALLBACK (midori_addons_button_release_event_cb),
+                      addons);
+    g_signal_connect (addons->treeview, "popup-menu",
+                      G_CALLBACK (midori_addons_popup_menu_cb),
                       addons);
     gtk_widget_show (addons->treeview);
     gtk_box_pack_start (GTK_BOX (addons), addons->treeview, TRUE, TRUE, 0);
@@ -907,6 +1240,7 @@ addons_context_ready_cb (WebKitWebView*   web_view,
     GSList* scripts, *styles;
     struct AddonElement* script, *style;
     struct AddonsList* scripts_list, *styles_list;
+
     uri = katze_object_get_string (web_view, "uri");
     /* Don't run scripts or styles on blank or special pages */
     if (!(uri && *uri && strncmp (uri, "about:", 6)))
@@ -944,6 +1278,7 @@ addons_context_ready_cb (WebKitWebView*   web_view,
             webkit_web_view_execute_script (web_view, style->script_content);
         styles = g_slist_next (styles);
     }
+    g_free (uri);
 }
 
 static void
@@ -1112,13 +1447,12 @@ addons_deactivate_cb (MidoriExtension* extension,
     KatzeArray* browsers;
     MidoriBrowser* browser;
     GSource* source;
-    guint i = 0;
 
     addons_disable_monitors (extension);
     addons_save_settings (NULL, extension);
 
     browsers = katze_object_get_object (app, "browsers");
-    while ((browser = katze_array_get_nth_item (browsers, i++)))
+    KATZE_ARRAY_FOREACH_ITEM (browser, browsers)
         addons_browser_destroy (browser, extension);
 
     source = g_object_get_data (G_OBJECT (extension), "monitor-timer");
@@ -1179,7 +1513,6 @@ addons_monitor_directories (MidoriExtension* extension,
                             AddonsKind kind)
 {
     GSList* directories;
-    GSList* list;
     GError* error;
     GSList* monitors;
     GFileMonitor* monitor;
@@ -1190,7 +1523,6 @@ addons_monitor_directories (MidoriExtension* extension,
     monitors = g_object_get_data (G_OBJECT (extension), "monitors");
 
     directories = addons_get_directories (kind);
-    list = directories;
     while (directories)
     {
         directory = g_file_new_for_path (directories->data);
@@ -1223,16 +1555,14 @@ addons_activate_cb (MidoriExtension* extension,
 {
     KatzeArray* browsers;
     MidoriBrowser* browser;
-    guint i;
 
     browsers = katze_object_get_object (app, "browsers");
     addons_update_elements (extension, ADDONS_USER_STYLES);
     addons_monitor_directories (extension, ADDONS_USER_STYLES);
     addons_update_elements (extension, ADDONS_USER_SCRIPTS);
-    addons_monitor_directories (extension, ADDONS_USER_STYLES);
+    addons_monitor_directories (extension, ADDONS_USER_SCRIPTS);
 
-    i = 0;
-    while ((browser = katze_array_get_nth_item (browsers, i++)))
+    KATZE_ARRAY_FOREACH_ITEM (browser, browsers)
         addons_app_add_browser_cb (app, browser, extension);
     g_object_unref (browsers);
 

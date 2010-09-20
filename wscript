@@ -29,15 +29,16 @@ from Configure import find_program_impl
 
 major = 0
 minor = 2
-micro = 7
+micro = 8
 
 APPNAME = 'midori'
 VERSION = str (major) + '.' + str (minor) + '.' + str (micro)
 
 try:
-    git = Utils.cmd_output (['git', 'describe'], silent=True)
-    if git:
-        VERSION = git.strip ()
+    if os.path.isdir ('.git'):
+        git = Utils.cmd_output (['git', 'describe'], silent=True)
+        if git:
+            VERSION = git.strip ()
 except:
     pass
 

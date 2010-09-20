@@ -61,11 +61,9 @@ tabs_minimized_activate_cb (MidoriExtension* extension,
 {
     KatzeArray* browsers;
     MidoriBrowser* browser;
-    guint i;
 
     browsers = katze_object_get_object (app, "browsers");
-    i = 0;
-    while ((browser = katze_array_get_nth_item (browsers, i++)))
+    KATZE_ARRAY_FOREACH_ITEM (browser, browsers)
         tabs_minimized_app_add_browser_cb (app, browser, extension);
     g_object_unref (browsers);
     g_signal_connect (app, "add-browser",
@@ -76,8 +74,8 @@ MidoriExtension*
 extension_init (void)
 {
     MidoriExtension* extension = g_object_new (MIDORI_TYPE_EXTENSION,
-        "name", _("Minimize new Tabs"),
-        "description", _("New tabs open minimized"),
+        "name", _("Only Icons on Tabs by default"),
+        "description", _("New tabs have no label by default"),
         "version", "0.1",
         "authors", "MonkeyOfDoom <pixelmonkey@ensellitis.com>",
         NULL);

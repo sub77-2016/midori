@@ -498,6 +498,7 @@ tab_panel_app_add_browser_cb (MidoriApp*       app,
     GtkCellRenderer* renderer_text;
     GtkWidget* panel;
     GtkWidget* toolbar;
+    gint i;
     /* GtkToolItem* toolitem; */
 
     g_object_set (browser, "show-tabs", FALSE, NULL);
@@ -564,8 +565,10 @@ tab_panel_app_add_browser_cb (MidoriApp*       app,
     gtk_widget_show (GTK_WIDGET (toolitem));
     gtk_toolbar_insert (GTK_TOOLBAR (toolbar), toolitem, -1); */
 
-    midori_panel_append_widget (MIDORI_PANEL (panel), treeview,
-                                STOCK_TAB_PANEL, _("Tab Panel"), toolbar);
+    i = midori_panel_append_widget (MIDORI_PANEL (panel), treeview,
+                                    STOCK_TAB_PANEL, _("Tab Panel"), toolbar);
+    if (gtk_widget_get_visible (GTK_WIDGET (browser)))
+        midori_panel_set_current_page (MIDORI_PANEL (panel), i);
     g_object_unref (panel);
 
     midori_browser_foreach (browser,
@@ -587,11 +590,9 @@ tab_panel_activate_cb (MidoriExtension* extension,
 {
     KatzeArray* browsers;
     MidoriBrowser* browser;
-    guint i;
 
     browsers = katze_object_get_object (app, "browsers");
-    i = 0;
-    while ((browser = katze_array_get_nth_item (browsers, i++)))
+    KATZE_ARRAY_FOREACH_ITEM (browser, browsers)
         tab_panel_app_add_browser_cb (app, browser, extension);
     g_object_unref (browsers);
     g_signal_connect (app, "add-browser",

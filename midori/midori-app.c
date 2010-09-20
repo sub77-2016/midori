@@ -96,8 +96,7 @@ enum
     PROP_HISTORY,
     PROP_EXTENSIONS,
     PROP_BROWSERS,
-    PROP_BROWSER,
-    PROP_BROWSER_COUNT
+    PROP_BROWSER
 };
 
 enum {
@@ -393,22 +392,6 @@ midori_app_class_init (MidoriAppClass* class)
                                      "Browser",
                                      "The current browser",
                                      MIDORI_TYPE_BROWSER,
-                                     G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
-
-    /**
-    * MidoriApp:browser-count:
-    *
-    * The number of browsers.
-    *
-    * Deprecated: 0.1.3 Use MidoriApp:browsers instead.
-    */
-    g_object_class_install_property (gobject_class,
-                                     PROP_BROWSER_COUNT,
-                                     g_param_spec_uint (
-                                     "browser-count",
-                                     "Browser Count",
-                                     "The current number of browsers",
-                                     0, G_MAXUINT, 0,
                                      G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
 }
 
@@ -794,23 +777,18 @@ midori_app_set_property (GObject*      object,
         break;
     case PROP_SETTINGS:
         katze_object_assign (app->settings, g_value_dup_object (value));
-        /* FIXME: Propagate settings to all browsers */
         break;
     case PROP_BOOKMARKS:
         katze_object_assign (app->bookmarks, g_value_dup_object (value));
-        /* FIXME: Propagate bookmarks to all browsers */
         break;
     case PROP_TRASH:
         katze_object_assign (app->trash, g_value_dup_object (value));
-        /* FIXME: Propagate trash to all browsers */
         break;
     case PROP_SEARCH_ENGINES:
         katze_object_assign (app->search_engines, g_value_dup_object (value));
-        /* FIXME: Propagate search engines to all browsers */
         break;
     case PROP_HISTORY:
         katze_object_assign (app->history, g_value_dup_object (value));
-        /* FIXME: Propagate history to all browsers */
         break;
     case PROP_EXTENSIONS:
         katze_object_assign (app->extensions, g_value_dup_object (value));
@@ -857,9 +835,6 @@ midori_app_get_property (GObject*    object,
         break;
     case PROP_BROWSER:
         g_value_set_object (value, app->browser);
-        break;
-    case PROP_BROWSER_COUNT:
-        g_value_set_uint (value, katze_array_get_length (app->browsers));
         break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
