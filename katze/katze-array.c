@@ -65,6 +65,8 @@ enum {
 
 static guint signals[LAST_SIGNAL];
 
+GList* kalistglobal;
+
 static void
 katze_array_finalize (GObject* object);
 
@@ -482,6 +484,8 @@ katze_array_get_items (KatzeArray* array)
 GList*
 katze_array_peek_items (KatzeArray* array)
 {
+    g_return_val_if_fail (KATZE_IS_ARRAY (array), NULL);
+
     return array->items;
 }
 

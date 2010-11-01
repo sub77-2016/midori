@@ -945,7 +945,8 @@ midori_browser_edit_bookmark_dialog_new (MidoriBrowser* browser,
         }
 
         if (gtk_toggle_button_get_active (GTK_TOGGLE_BUTTON (check_toolbar)))
-            if (!gtk_widget_get_visible (browser->bookmarkbar))
+            if (!gtk_widget_get_visible (browser->bookmarkbar)
+             && browser->bookmarks != NULL)
                 _action_set_active (browser, "Bookmarkbar", TRUE);
         g_free (selected);
         return_status = TRUE;
@@ -971,22 +972,42 @@ midori_browser_prepare_download (MidoriBrowser*  browser,
         G_FILE_ATTRIBUTE_FILESYSTEM_FREE, NULL, &error);
     guint64 free_space = g_file_info_get_attribute_uint64 (info,
         G_FILE_ATTRIBUTE_FILESYSTEM_FREE);
+    gchar* path = g_file_get_path (folder);
+    gboolean can_write = g_access (path, W_OK) == 0;
+    g_free (path);
     g_object_unref (file);
     g_object_unref (folder);
-    if (free_space < total_size)
+    if (free_space < total_size || !can_write)
     {
-        gchar* message = g_strdup_printf (
-            _("There is not enough free space to download \"%s\"."), &uri[7]);
-        gchar* total_size_string = g_format_size_for_display (total_size);
-        gchar* free_space_string = g_format_size_for_display (free_space);
-        gchar* detailed_message = g_strdup_printf (
-            _("The file needs %s but only %s are left."),
-              total_size_string, free_space_string);
+        gchar* message;
+        gchar* detailed_message;
+
+        if (!can_write)
+        {
+            message = g_strdup_printf (
+                _("The file \"%s\" can't be saved in this folder."), &uri[7]);
+            detailed_message = g_strdup_printf (
+                _("You don't have permission to write in this location."));
+        }
+        else if (free_space < total_size)
+        {
+            gchar* total_size_string = g_format_size_for_display (total_size);
+            gchar* free_space_string = g_format_size_for_display (free_space);
+            message = g_strdup_printf (
+                _("There is not enough free space to download \"%s\"."),
+                  &uri[7]);
+            detailed_message = g_strdup_printf (
+                _("The file needs %s but only %s are left."),
+                  total_size_string, free_space_string);
+            g_free (total_size_string);
+            g_free (free_space_string);
+        }
+        else
+            g_assert_not_reached ();
+
         sokoke_message_dialog (GTK_MESSAGE_ERROR, message, detailed_message);
         g_free (message);
         g_free (detailed_message);
-        g_free (total_size_string);
-        g_free (free_space_string);
         g_object_unref (download);
         return FALSE;
     }
@@ -1277,6 +1298,8 @@ midori_browser_add_speed_dial (MidoriBrowser* browser)
         }
         g_free (body_fname);
     }
+    g_free (uri);
+    g_free (slot_id);
 }
 
 
@@ -1375,7 +1398,10 @@ midori_view_new_window_cb (GtkWidget*     view,
 {
     MidoriBrowser* new_browser;
     g_signal_emit (browser, signals[NEW_WINDOW], 0, NULL, &new_browser);
-    midori_browser_add_uri (new_browser, uri);
+    if (new_browser)
+        midori_browser_add_uri (new_browser, uri);
+    else /* No MidoriApp, so this is app or private mode */
+        sokoke_spawn_app (uri, TRUE);
 }
 
 static void
@@ -1566,10 +1592,8 @@ _midori_browser_add_tab (MidoriBrowser* browser,
     KatzeItem* item;
     guint n;
 
-    GTK_WIDGET_SET_FLAGS (view, GTK_CAN_FOCUS);
-
+    gtk_widget_set_can_focus (view, TRUE);
     tab_label = midori_view_get_proxy_tab_label (MIDORI_VIEW (view));
-
     item = midori_view_get_proxy_item (MIDORI_VIEW (view));
     g_object_ref (item);
     katze_array_add_item (browser->proxy_array, item);
@@ -2116,26 +2140,11 @@ _action_tab_new_activate (GtkAction*     action,
 }
 
 static void
-midori_browser_spawn_app (const gchar* uri)
-{
-    const gchar* executable = sokoke_get_argv (NULL)[0];
-    gchar* command = g_strconcat (executable, " -a", NULL);
-    sokoke_spawn_program (command, uri, FALSE);
-    g_free (command);
-}
-
-static void
 _action_private_browsing_activate (GtkAction*     action,
                                    MidoriBrowser* browser)
 {
     const gchar* uri = midori_browser_get_current_uri (browser);
-    if (uri != NULL)
-    {
-        if (*uri != '\0')
-            midori_browser_spawn_app (uri);
-        else
-            midori_browser_spawn_app ("about:blank");
-    }
+    sokoke_spawn_app (uri && *uri ? uri : "about:blank", TRUE);
 }
 
 static void
@@ -2225,7 +2234,7 @@ midori_browser_subscribe_to_news_feed (MidoriBrowser* browser,
                                        const gchar*   uri)
 {
     if (browser->news_aggregator && *browser->news_aggregator)
-        sokoke_spawn_program (browser->news_aggregator, uri, FALSE);
+        sokoke_spawn_program (browser->news_aggregator, uri);
     else
     {
         gchar* description = g_strdup_printf ("%s\n\n%s", uri,
@@ -2596,10 +2605,6 @@ midori_browser_toolbar_popup_context_menu_cb (GtkWidget*     widget,
     GtkWidget* menu;
     GtkWidget* menuitem;
 
-    /* Unsupported trick used for web app mode */
-    if (g_object_get_data (G_OBJECT (browser), "locked"))
-        return FALSE;
-
     menu = gtk_menu_new ();
     menuitem = sokoke_action_create_popup_menu_item (
         _action_by_name (browser, "Menubar"));
@@ -2738,7 +2743,7 @@ midori_browser_open_bookmark (MidoriBrowser* browser,
         uri_fixed = g_strdup (uri);
 
     if (katze_item_get_meta_boolean (item, "app"))
-        midori_browser_spawn_app (uri_fixed);
+        sokoke_spawn_app (uri_fixed, FALSE);
     else
     {
         midori_browser_set_current_uri (browser, uri_fixed);
@@ -3191,16 +3196,14 @@ _action_view_encoding_activate (GtkAction*     action,
 static gchar*
 midori_browser_get_uri_extension (const gchar* uri)
 {
-    gchar* extension;
     gchar* slash;
     gchar* period;
     gchar* ext_end;
-    gchar* tmp = g_strdup (uri);
 
     /* Find the last slash in the URI and search for the last period
        *after* the last slash. This is not completely accurate
        but should cover most (simple) URIs */
-    slash = strrchr (tmp, '/');
+    slash = strrchr (uri, '/');
     /* Huh, URI without slashes? */
     if (!slash)
         return g_strdup ("");
@@ -3220,11 +3223,7 @@ midori_browser_get_uri_extension (const gchar* uri)
         ext_end++;
 
     *ext_end = 0;
-    extension = g_strdup (period);
-
-    g_free (tmp);
-
-    return extension;
+    return g_strdup (period);
 }
 
 static void
@@ -3259,7 +3258,7 @@ midori_browser_source_transfer_cb (KatzeNetRequest* request,
                 g_object_get (browser->settings,
                     "text-editor", &text_editor, NULL);
                 if (text_editor && *text_editor)
-                    sokoke_spawn_program (text_editor, unique_filename, TRUE);
+                    sokoke_spawn_program (text_editor, unique_filename);
                 else
                     sokoke_show_uri (NULL, unique_filename,
                                      gtk_get_current_event_time (), NULL);
@@ -3323,7 +3322,7 @@ _action_source_view_activate (GtkAction*     action,
     if (g_str_has_prefix (uri, "file://"))
     {
         gchar* filename = g_filename_from_uri (uri, NULL, NULL);
-        sokoke_spawn_program (text_editor, filename, TRUE);
+        sokoke_spawn_program (text_editor, filename);
         g_free (filename);
         return;
     }
@@ -3338,10 +3337,10 @@ _action_fullscreen_activate (GtkAction*     action,
 {
     GdkWindowState state;
 
-    if (!GTK_WIDGET (browser)->window)
+    if (!gtk_widget_get_window (GTK_WIDGET (browser)))
         return;
 
-    state = gdk_window_get_state (GTK_WIDGET (browser)->window);
+    state = gdk_window_get_state (gtk_widget_get_window (GTK_WIDGET (browser)));
     if (state & GDK_WINDOW_STATE_FULLSCREEN)
         gtk_window_unfullscreen (GTK_WINDOW (browser));
     else
@@ -3595,7 +3594,19 @@ _action_location_secondary_icon_released (GtkAction*     action,
     {
         const gchar* uri = midori_view_get_display_uri (MIDORI_VIEW (view));
         const gchar* feed;
-        if (gtk_window_get_focus (GTK_WINDOW (browser)) == widget)
+        /* Clicking icon on blank is equal to Paste and Proceed */
+        if (midori_view_is_blank (MIDORI_VIEW (view)))
+        {
+            GtkClipboard* clipboard = gtk_clipboard_get_for_display (
+                gtk_widget_get_display (view), GDK_SELECTION_CLIPBOARD);
+            gchar* text = gtk_clipboard_wait_for_text (clipboard);
+            if (text != NULL)
+            {
+                _action_location_submit_uri (action, text, FALSE, browser);
+                g_free (text);
+            }
+        }
+        else if (gtk_window_get_focus (GTK_WINDOW (browser)) == widget)
             _action_location_submit_uri (action, uri, FALSE, browser);
         else if ((feed = g_object_get_data (G_OBJECT (view), "news-feeds")))
         {
@@ -3898,12 +3909,13 @@ midori_browser_menu_button_press_event_cb (GtkWidget*      toolitem,
                                            GdkEventButton* event,
                                            MidoriBrowser*  browser)
 {
+    if (event->button != 3)
+        return FALSE;
+
     /* GtkMenuBar catches button events on children with submenus,
        so we need to see if the actual widget is the menubar, and if
        it is an item, we forward it to the actual widget. */
-    toolitem = gtk_get_event_widget ((GdkEvent*)event);
-
-    if (GTK_IS_MENU_BAR (toolitem) && event->button == 3)
+    if ((GTK_IS_BOX (toolitem) || GTK_IS_MENU_BAR (toolitem)))
     {
         midori_browser_toolbar_popup_context_menu_cb (
             GTK_IS_BIN (toolitem) && gtk_bin_get_child (GTK_BIN (toolitem)) ?
@@ -3911,7 +3923,7 @@ midori_browser_menu_button_press_event_cb (GtkWidget*      toolitem,
             event->x, event->y, event->button, browser);
         return TRUE;
     }
-    else if (GTK_IS_MENU_ITEM (toolitem) && event->button == 3)
+    else if (GTK_IS_MENU_ITEM (toolitem))
     {
         gboolean handled;
         g_signal_emit_by_name (toolitem, "button-press-event", event, &handled);
@@ -4026,7 +4038,7 @@ _action_bookmarks_import_activate (GtkAction*     action,
         g_free (path);
     }
     gtk_list_store_insert_with_values (model, NULL, G_MAXINT,
-        0, _("Custom..."), 1, NULL, 2, NULL, 3, icon_width, -1);
+        0, _("Import from a file"), 1, NULL, 2, NULL, 3, icon_width, -1);
     gtk_combo_box_set_active (combobox, 0);
     gtk_box_pack_start (GTK_BOX (hbox), combo, TRUE, TRUE, 0);
     gtk_container_add (GTK_CONTAINER (content_area), hbox);
@@ -4075,7 +4087,7 @@ _action_bookmarks_import_activate (GtkAction*     action,
         {
             GtkWidget* file_dialog;
 
-            file_dialog = sokoke_file_chooser_dialog_new (_("Save file as"),
+            file_dialog = sokoke_file_chooser_dialog_new (_("Import from a file"),
                 GTK_WINDOW (browser), GTK_FILE_CHOOSER_ACTION_OPEN);
             if (gtk_dialog_run (GTK_DIALOG (file_dialog)) == GTK_RESPONSE_OK)
                 path = gtk_file_chooser_get_filename (GTK_FILE_CHOOSER (file_dialog));
@@ -4165,18 +4177,16 @@ midori_browser_clear_private_data_response_cb (GtkWidget*     dialog,
         GtkToggleButton* button;
         gint clear_prefs = MIDORI_CLEAR_NONE;
         gint saved_prefs = MIDORI_CLEAR_NONE;
-
+        GList* data_items = sokoke_register_privacy_item (NULL, NULL, NULL);
+        GString* clear_data = g_string_new (NULL);
         g_object_get (browser->settings, "clear-private-data", &saved_prefs, NULL);
 
         button = g_object_get_data (G_OBJECT (dialog), "history");
         if (gtk_toggle_button_get_active (button))
         {
-            const gchar* sqlcmd;
-            sqlite3* db;
+            const gchar* sqlcmd = "DELETE FROM history";
+            sqlite3* db = g_object_get_data (G_OBJECT (browser->history), "db");
             char* errmsg = NULL;
-
-            db = g_object_get_data (G_OBJECT (browser->history), "db");
-            sqlcmd = "DELETE FROM history";
 
             if (sqlite3_exec (db, sqlcmd, NULL, NULL, &errmsg) != SQLITE_OK)
             {
@@ -4194,66 +4204,32 @@ midori_browser_clear_private_data_response_cb (GtkWidget*     dialog,
             }
             clear_prefs |= MIDORI_CLEAR_HISTORY;
         }
-        button = g_object_get_data (G_OBJECT (dialog), "cookies");
-        if (gtk_toggle_button_get_active (button))
-        {
-            SoupSession* session = webkit_get_default_session ();
-            SoupSessionFeature* jar = soup_session_get_feature (session,
-                SOUP_TYPE_COOKIE_JAR);
-            GSList* cookies = soup_cookie_jar_all_cookies (SOUP_COOKIE_JAR (jar));
-            SoupCookie* cookie;
-            gsize i = 0;
-            while ((cookie = g_slist_nth_data (cookies, i++)))
-            {
-                soup_cookie_jar_delete_cookie (SOUP_COOKIE_JAR (jar), cookie);
-                soup_cookie_free (cookie);
-            }
-            g_slist_free (cookies);
-            clear_prefs |= MIDORI_CLEAR_COOKIES;
-        }
-        button = g_object_get_data (G_OBJECT (dialog), "flash-cookies");
-        if (gtk_toggle_button_get_active (button))
-        {
-            gchar* cache = g_build_filename (g_get_home_dir (), ".macromedia",
-                                             "Flash_Player", NULL);
-            sokoke_remove_path (cache, TRUE);
-            g_free (cache);
-            clear_prefs |= MIDORI_CLEAR_FLASH_COOKIES;
-        }
-        button = g_object_get_data (G_OBJECT (dialog), "website-icons");
-        if (gtk_toggle_button_get_active (button))
-        {
-            gchar* cache = g_build_filename (g_get_user_cache_dir (),
-                                             PACKAGE_NAME, "icons", NULL);
-            sokoke_remove_path (cache, TRUE);
-            g_free (cache);
-            clear_prefs |= MIDORI_CLEAR_WEBSITE_ICONS;
-        }
         button = g_object_get_data (G_OBJECT (dialog), "trash");
-        if (gtk_toggle_button_get_active (button))
+        if (gtk_toggle_button_get_active (button) && browser->trash)
         {
-            if (browser->trash)
-            {
-                katze_array_clear (browser->trash);
-                _midori_browser_update_actions (browser);
-            }
+            katze_array_clear (browser->trash);
+            _midori_browser_update_actions (browser);
             clear_prefs |= MIDORI_CLEAR_TRASH;
         }
-        button = g_object_get_data (G_OBJECT (dialog), "web-cache");
-        if (gtk_toggle_button_get_active (button))
-        {
-            gchar* cache = g_build_filename (g_get_user_cache_dir (),
-                                             PACKAGE_NAME, "web", NULL);
-            sokoke_remove_path (cache, TRUE);
-            g_free (cache);
-            clear_prefs |= MIDORI_CLEAR_WEB_CACHE;
-        }
-
         if (clear_prefs != saved_prefs)
         {
             clear_prefs |= (saved_prefs & MIDORI_CLEAR_ON_QUIT);
             g_object_set (browser->settings, "clear-private-data", clear_prefs, NULL);
         }
+        for (; data_items != NULL; data_items = g_list_next (data_items))
+        {
+            SokokePrivacyItem* privacy = data_items->data;
+            button = g_object_get_data (G_OBJECT (dialog), privacy->name);
+            g_return_if_fail (button != NULL && GTK_IS_TOGGLE_BUTTON (button));
+            if (gtk_toggle_button_get_active (button))
+            {
+                privacy->clear ();
+                g_string_append (clear_data, privacy->name);
+                g_string_append_c (clear_data, ',');
+            }
+        }
+        g_object_set (browser->settings, "clear-data", clear_data->str, NULL);
+        g_string_free (clear_data, TRUE);
     }
     if (response_id != GTK_RESPONSE_DELETE_EVENT)
         gtk_widget_destroy (dialog);
@@ -4290,6 +4266,8 @@ _action_clear_private_data_activate (GtkAction*     action,
         GtkWidget* icon;
         GtkWidget* label;
         GtkWidget* button;
+        GList* data_items;
+        gchar* clear_data = katze_object_get_string (browser->settings, "clear-data");
 
         gint clear_prefs = MIDORI_CLEAR_NONE;
         g_object_get (browser->settings, "clear-private-data", &clear_prefs, NULL);
@@ -4323,36 +4301,29 @@ _action_clear_private_data_activate (GtkAction*     action,
         vbox = gtk_vbox_new (TRUE, 4);
         alignment = gtk_alignment_new (0, 0, 1, 1);
         gtk_alignment_set_padding (GTK_ALIGNMENT (alignment), 0, 6, 12, 0);
-        button = gtk_check_button_new_with_mnemonic (_("History"));
+        /* i18n: Browsing history, visited web pages */
+        button = gtk_check_button_new_with_mnemonic (_("_History"));
         if ((clear_prefs & MIDORI_CLEAR_HISTORY) == MIDORI_CLEAR_HISTORY)
             gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (button), TRUE);
         g_object_set_data (G_OBJECT (dialog), "history", button);
-        gtk_box_pack_start (GTK_BOX (vbox), button, TRUE, TRUE, 0);
-        button = gtk_check_button_new_with_mnemonic (_("Cookies"));
-        if ((clear_prefs & MIDORI_CLEAR_COOKIES) == MIDORI_CLEAR_COOKIES)
-            gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (button), TRUE);
-        g_object_set_data (G_OBJECT (dialog), "cookies", button);
-        gtk_box_pack_start (GTK_BOX (vbox), button, TRUE, TRUE, 0);
-        button = gtk_check_button_new_with_mnemonic (_("'Flash' Cookies"));
-        if ((clear_prefs & MIDORI_CLEAR_FLASH_COOKIES) == MIDORI_CLEAR_FLASH_COOKIES)
-            gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (button), TRUE);
-        g_object_set_data (G_OBJECT (dialog), "flash-cookies", button);
-        gtk_box_pack_start (GTK_BOX (vbox), button, TRUE, TRUE, 0);
-        button = gtk_check_button_new_with_mnemonic (_("Website icons"));
-        if ((clear_prefs & MIDORI_CLEAR_WEBSITE_ICONS) == MIDORI_CLEAR_WEBSITE_ICONS)
-            gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (button), TRUE);
-        g_object_set_data (G_OBJECT (dialog), "website-icons", button);
         gtk_box_pack_start (GTK_BOX (vbox), button, TRUE, TRUE, 0);
         button = gtk_check_button_new_with_mnemonic (_("_Closed Tabs"));
         if ((clear_prefs & MIDORI_CLEAR_TRASH) == MIDORI_CLEAR_TRASH)
             gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (button), TRUE);
         g_object_set_data (G_OBJECT (dialog), "trash", button);
         gtk_box_pack_start (GTK_BOX (vbox), button, TRUE, TRUE, 0);
-        button = gtk_check_button_new_with_mnemonic (_("Web Cache"));
-        if ((clear_prefs & MIDORI_CLEAR_WEB_CACHE) == MIDORI_CLEAR_WEB_CACHE)
-            gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (button), TRUE);
-        g_object_set_data (G_OBJECT (dialog), "web-cache", button);
-        gtk_box_pack_start (GTK_BOX (vbox), button, TRUE, TRUE, 0);
+
+        data_items = sokoke_register_privacy_item (NULL, NULL, NULL);
+        for (; data_items != NULL; data_items = g_list_next (data_items))
+        {
+            SokokePrivacyItem* privacy = data_items->data;
+            button = gtk_check_button_new_with_mnemonic (privacy->label);
+            gtk_box_pack_start (GTK_BOX (vbox), button, TRUE, TRUE, 0);
+            g_object_set_data (G_OBJECT (dialog), privacy->name, button);
+            if (clear_data && strstr (clear_data, privacy->name))
+                gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (button), TRUE);
+        }
+        g_free (clear_data);
         gtk_container_add (GTK_CONTAINER (alignment), vbox);
         gtk_box_pack_start (GTK_BOX (hbox), alignment, TRUE, TRUE, 0);
         gtk_box_pack_start (GTK_BOX (content_area), hbox, FALSE, FALSE, 0);
@@ -4372,6 +4343,7 @@ _action_clear_private_data_activate (GtkAction*     action,
         g_signal_connect (dialog, "destroy",
             G_CALLBACK (gtk_widget_destroyed), &dialog);
         gtk_widget_show (dialog);
+        gtk_dialog_set_default_response (GTK_DIALOG (dialog), GTK_RESPONSE_ACCEPT);
     }
     else
         gtk_window_present (GTK_WINDOW (dialog));
@@ -4652,7 +4624,11 @@ midori_panel_notify_right_aligned_cb (MidoriPanel*   panel,
     GtkWidget* hpaned = gtk_widget_get_parent (browser->panel);
     GtkWidget* vpaned = gtk_widget_get_parent (browser->notebook);
     gint paned_position = gtk_paned_get_position (GTK_PANED (hpaned));
-    gint paned_size = hpaned->allocation.width;
+    GtkAllocation allocation;
+    gint paned_size;
+
+    gtk_widget_get_allocation (hpaned, &allocation);
+    paned_size = allocation.width;
 
     g_object_set (browser->settings, "right-align-sidepanel", right_aligned, NULL);
 
@@ -4685,7 +4661,7 @@ midori_panel_close_cb (MidoriPanel*   panel,
 
 static void
 gtk_notebook_switch_page_cb (GtkWidget*       notebook,
-                             GtkNotebookPage* page,
+                             gpointer         page,
                              guint            page_num,
                              MidoriBrowser*   browser)
 {
@@ -4704,7 +4680,7 @@ gtk_notebook_switch_page_cb (GtkWidget*       notebook,
 
 static void
 gtk_notebook_switch_page_after_cb (GtkWidget*       notebook,
-                                   GtkNotebookPage* page,
+                                   gpointer         page,
                                    guint            page_num,
                                    MidoriBrowser*   browser)
 {
@@ -5006,8 +4982,8 @@ static const GtkActionEntry entries[] =
         N_("Focus _Current Tab"), "<Ctrl>Home",
         N_("Focus the current tab"), G_CALLBACK (_action_tab_current_activate) },
     { "TabMinimize", NULL,
-        N_("Minimize _Current Tab"), "",
-        N_("Minimize the current tab"), G_CALLBACK (_action_tab_minimize_activate) },
+        N_("Only show the Icon of the _Current Tab"), "",
+        N_("Only show the icon of the current tab"), G_CALLBACK (_action_tab_minimize_activate) },
     { "TabDuplicate", NULL,
         N_("_Duplicate Current Tab"), "",
         N_("Duplicate the current tab"), G_CALLBACK (_action_tab_duplicate_activate) },
@@ -5125,22 +5101,24 @@ static gboolean
 midori_browser_alloc_timeout (MidoriBrowser* browser)
 {
     GtkWidget* widget = GTK_WIDGET (browser);
-    GdkWindowState state = gdk_window_get_state (widget->window);
+    GdkWindowState state = gdk_window_get_state (gtk_widget_get_window (widget));
 
     if (!(state &
         (GDK_WINDOW_STATE_MAXIMIZED | GDK_WINDOW_STATE_FULLSCREEN)))
     {
-        if (widget->allocation.width != browser->last_window_width)
+        GtkAllocation allocation;
+        gtk_widget_get_allocation (widget, &allocation);
+        if (allocation.width != browser->last_window_width)
         {
-            browser->last_window_width = widget->allocation.width;
+            browser->last_window_width = allocation.width;
             g_object_set (browser->settings,
                 "last-window-width", browser->last_window_width, NULL);
         }
-        if (widget->allocation.height != browser->last_window_height)
+        if (allocation.height != browser->last_window_height)
         {
-            browser->last_window_height = widget->allocation.height;
+            browser->last_window_height = allocation.height;
             g_object_set (browser->settings,
-                "last-window-height", widget->allocation.height, NULL);
+                "last-window-height", allocation.height, NULL);
         }
     }
 
@@ -5173,6 +5151,8 @@ midori_browser_size_allocate_cb (MidoriBrowser* browser,
 static void
 midori_browser_destroy_cb (MidoriBrowser* browser)
 {
+    g_object_set_data (G_OBJECT (browser), "midori-browser-destroyed", (void*)1);
+
     if (G_UNLIKELY (browser->panel_timeout))
         g_source_remove (browser->panel_timeout);
     if (G_UNLIKELY (browser->alloc_timeout))
@@ -5300,6 +5280,7 @@ static const gchar* ui_markup =
             "<menuitem action='UndoTabClose'/>"
             "<menuitem action='TrashEmpty'/>"
             "<menuitem action='Preferences'/>"
+            "<menuitem action='InspectPage'/>"
             "</menu>"
         "</menubar>"
         "<toolbar name='toolbar_navigation'>"
@@ -5315,7 +5296,7 @@ midori_browser_realize_cb (GtkStyle*      style,
     #ifdef HAVE_HILDON_2_2
     /* hildon_gtk_window_enable_zoom_keys */
     guint32 set = 1;
-    gdk_property_change (GTK_WIDGET (browser)->window,
+    gdk_property_change (gtk_widget_get_window (GTK_WIDGET (browser)),
                          gdk_atom_intern ("_HILDON_ZOOM_KEY_ATOM", FALSE),
                          gdk_x11_xatom_to_atom (XA_INTEGER),
                          32, GDK_PROP_MODE_REPLACE,
@@ -5537,7 +5518,6 @@ midori_browser_init (MidoriBrowser* browser)
     GtkWidget* hpaned;
     GtkWidget* vpaned;
     GtkRcStyle* rcstyle;
-    GtkWidget* label;
     GtkWidget* scrolled;
 
     browser->settings = midori_web_settings_new ();
@@ -5799,6 +5779,14 @@ midori_browser_init (MidoriBrowser* browser)
     /* FIXME: Show once implemented */
     _action_set_visible (browser, "AddDesktopShortcut", FALSE);
 
+    _action_set_visible (browser, "Bookmarks", browser->bookmarks != NULL);
+    _action_set_visible (browser, "BookmarkAdd", browser->bookmarks != NULL);
+    _action_set_visible (browser, "BookmarksImport", browser->bookmarks != NULL);
+    _action_set_visible (browser, "BookmarksExport", browser->bookmarks != NULL);
+    _action_set_visible (browser, "Bookmarkbar", browser->bookmarks != NULL);
+    _action_set_visible (browser, "Trash", browser->trash != NULL);
+    _action_set_visible (browser, "UndoTabClose", browser->trash != NULL);
+
     /* Create the navigationbar */
     browser->navigationbar = gtk_ui_manager_get_widget (
         ui_manager, "/toolbar_navigation");
@@ -5903,7 +5891,7 @@ midori_browser_init (MidoriBrowser* browser)
     scrolled = gtk_scrolled_window_new (NULL, NULL);
     gtk_scrolled_window_set_policy (GTK_SCROLLED_WINDOW (scrolled),
                                     GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
-    GTK_WIDGET_SET_FLAGS (scrolled, GTK_CAN_FOCUS);
+    gtk_widget_set_can_focus (scrolled, TRUE);
     gtk_scrolled_window_set_shadow_type (GTK_SCROLLED_WINDOW (scrolled),
                                          GTK_SHADOW_ETCHED_IN);
     gtk_box_pack_start (GTK_BOX (browser->inspector), scrolled, TRUE, TRUE, 0);
@@ -5921,24 +5909,29 @@ midori_browser_init (MidoriBrowser* browser)
 
     /* Statusbar */
     browser->statusbar = gtk_statusbar_new ();
+    #if GTK_CHECK_VERSION (2, 20, 0)
+    browser->statusbar_contents =
+        gtk_statusbar_get_message_area (GTK_STATUSBAR (browser->statusbar));
+    #else
     /* Rearrange the statusbar packing. This is necessariy to keep
         themes happy while there is no support from GtkStatusbar. */
-    label = GTK_STATUSBAR (browser->statusbar)->label;
-    if (GTK_IS_BOX (gtk_widget_get_parent (label)))
-        browser->statusbar_contents = gtk_widget_get_parent (label);
+    forward = GTK_STATUSBAR (browser->statusbar)->label;
+    if (GTK_IS_BOX (gtk_widget_get_parent (forward)))
+        browser->statusbar_contents = gtk_widget_get_parent (forward);
     else
     {
         browser->statusbar_contents = gtk_hbox_new (FALSE, 4);
         gtk_widget_show (browser->statusbar_contents);
         g_object_ref (GTK_STATUSBAR (browser->statusbar)->label);
         gtk_container_remove (
-            GTK_CONTAINER (GTK_STATUSBAR (browser->statusbar)->frame), label);
+            GTK_CONTAINER (GTK_STATUSBAR (browser->statusbar)->frame), forward);
         gtk_box_pack_start (GTK_BOX (browser->statusbar_contents),
-            label, TRUE, TRUE, 0);
-        g_object_unref (label);
+            forward, TRUE, TRUE, 0);
+        g_object_unref (forward);
         gtk_container_add (GTK_CONTAINER (GTK_STATUSBAR (browser->statusbar)->frame),
                            browser->statusbar_contents);
     }
+    #endif
     gtk_box_pack_start (GTK_BOX (vbox), browser->statusbar, FALSE, FALSE, 0);
 
     browser->progressbar = gtk_progress_bar_new ();
@@ -6208,7 +6201,8 @@ _midori_browser_update_settings (MidoriBrowser* browser)
 
     _action_set_active (browser, "Menubar", show_menubar);
     _action_set_active (browser, "Navigationbar", browser->show_navigationbar);
-    _action_set_active (browser, "Bookmarkbar", show_bookmarkbar);
+    _action_set_active (browser, "Bookmarkbar", show_bookmarkbar
+                                             && browser->bookmarks != NULL);
     _action_set_active (browser, "Panel", show_panel);
     #if WEBKIT_CHECK_VERSION (1, 1, 3)
     _action_set_active (browser, "Transferbar", show_transferbar);
@@ -6443,6 +6437,20 @@ midori_browser_set_bookmarks (MidoriBrowser* browser,
         midori_browser_show_bookmarkbar_notify_value_cb, browser);
     katze_object_assign (browser->bookmarks, bookmarks);
 
+    _action_set_visible (browser, "Bookmarks", bookmarks != NULL);
+    if (bookmarks != NULL)
+    {
+        /* FIXME: Proxies aren't shown propely. Why? */
+        GSList* proxies = gtk_action_get_proxies (
+            _action_by_name (browser, "Bookmarks"));
+        for (; proxies; proxies = g_slist_next (proxies))
+            gtk_widget_show (proxies->data);
+    }
+    _action_set_visible (browser, "BookmarkAdd", bookmarks != NULL);
+    _action_set_visible (browser, "BookmarksImport", bookmarks != NULL);
+    _action_set_visible (browser, "BookmarksExport", bookmarks != NULL);
+    _action_set_visible (browser, "Bookmarkbar", bookmarks != NULL);
+
     if (!bookmarks)
         return;
 
@@ -6498,6 +6506,8 @@ midori_browser_set_property (GObject*      object,
         g_object_set (_action_by_name (browser, "Trash"),
                       "array", browser->trash, "reversed", TRUE,
                       NULL);
+        _action_set_visible (browser, "Trash", browser->trash != NULL);
+        _action_set_visible (browser, "UndoTabClose", browser->trash != NULL);
         /* FIXME: Connect to updates */
         _midori_browser_update_actions (browser);
         break;
@@ -6769,6 +6779,17 @@ midori_browser_activate_action (MidoriBrowser* browser,
     g_return_if_fail (name != NULL);
 
     g_signal_emit (browser, signals[ACTIVATE_ACTION], 0, name);
+}
+
+void
+midori_browser_set_action_visible (MidoriBrowser* browser,
+                                   const gchar*   name,
+                                   gboolean       visible)
+{
+    g_return_if_fail (MIDORI_IS_BROWSER (browser));
+    g_return_if_fail (name != NULL);
+
+    _action_set_visible (browser, name, visible);
 }
 
 /**

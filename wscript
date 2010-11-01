@@ -10,7 +10,7 @@ try:
 except:
     WAFVERSION='1.0.0'
 if WAFVERSION[:3] != '1.5':
-    print 'Incompatible Waf, use 1.5'
+    print ('Incompatible Waf, use 1.5')
     sys.exit (1)
 
 import Build
@@ -29,7 +29,7 @@ from Configure import find_program_impl
 
 major = 0
 minor = 2
-micro = 8
+micro = 9
 
 APPNAME = 'midori'
 VERSION = str (major) + '.' + str (minor) + '.' + str (micro)
@@ -159,6 +159,8 @@ def configure (conf):
         'MDATADIR')
     conf.undefine ('DATADIR')
     dirname_default ('DOCDIR', os.path.join (conf.env['MDATADIR'], 'doc'))
+    if not APPNAME in conf.env['DOCDIR']:
+        conf.env['DOCDIR'] += '/' + APPNAME
 
     if option_enabled ('apidocs'):
         conf.find_program ('gtkdoc-scan', var='GTKDOC_SCAN')
@@ -308,7 +310,7 @@ def configure (conf):
                 '-Wno-missing-field-initializers '
                 '-Wredundant-decls -Wmissing-noreturn '
                 '-Wshadow -Wpointer-arith -Wcast-align '
-                '-Winline -Wformat-security '
+                '-Winline -Wformat-security -fno-common '
                 '-Winit-self -Wundef -Wdeclaration-after-statement '
                 '-Wmissing-format-attribute -Wnested-externs '
             # -DGSEAL_ENABLE
@@ -320,7 +322,7 @@ def configure (conf):
         conf.env.append_value ('VALAFLAGS', '--enable-checking'.split ())
     elif debug_level == 'none':
         conf.env.append_value ('VALAFLAGS', '--disable-assert')
-    print '''
+    print ('''
         Localization:        %(nls)s (intltool)
         Icon optimizations:  %(icons)s (rsvg-convert)
         Notifications:       %(libnotify)s (libnotify)
@@ -328,7 +330,7 @@ def configure (conf):
         IDN support:         %(idn)s (libidn or libsoup 2.27.90)
         User documentation:  %(user_docs)s (docutils)
         API documentation:   %(api_docs)s (gtk-doc)
-        ''' % locals ()
+        ''' % locals ())
     if unique == 'yes' and conf.check_cfg (modversion='unique-1.0') == '1.0.4':
         Utils.pprint ('RED', 'unique 1.0.4 found, this version is erroneous.')
         Utils.pprint ('RED', 'Please use an older or newer version.')
@@ -415,7 +417,7 @@ def build (bld):
     bld.add_group ()
 
     if bld.env['docs']:
-        bld.install_files ('${DOCDIR}/' + APPNAME + '/', \
+        bld.install_files ('${DOCDIR}/' + '/', \
             'AUTHORS COPYING ChangeLog EXPAT README')
 
     # Install default configuration
@@ -432,7 +434,7 @@ def build (bld):
             '../../../docs/user/midori.txt ' + 'midori.html'
         Utils.exec_command (command)
         os.chdir ('../../..')
-        bld.install_files ('${DOCDIR}/midori/user/', blddir + '/docs/user/midori.html')
+        bld.install_files ('${DOCDIR}/user/', blddir + '/docs/user/midori.html')
 
     if bld.env['INTLTOOL']:
         obj = bld.new_task_gen ('intltool_po')
@@ -441,7 +443,7 @@ def build (bld):
 
     if bld.env['GTKDOC_SCAN'] and Options.commands['build']:
         bld.add_subdirs ('docs/api')
-        bld.install_files ('${DOCDIR}/midori/api/', blddir + '/docs/api/*')
+        bld.install_files ('${DOCDIR}/api/', blddir + '/docs/api/*')
 
     if not is_mingw (bld.env) and Options.platform != 'win32':
         if bld.env['HAVE_HILDON']:
@@ -566,7 +568,7 @@ def shutdown ():
                 size_old = 0
             subprocess.call (['intltool-update', '-p', '-g', APPNAME])
             size_new = os.stat (APPNAME + '.pot').st_size
-            if size_new <> size_old:
+            if size_new != size_old:
                 Utils.pprint ('YELLOW', "Updated po template.")
                 try:
                     command = 'intltool-update -r -g %s' % APPNAME
@@ -611,7 +613,8 @@ def shutdown ():
                 command += ' wine cmd /k "PATH=%PATH%;' + Build.bld.env['PREFIX'] + os.sep + 'bin' + ' && ' + APPNAME + '.exe"'
             else:
                 command += ' ' + relfolder + os.sep + APPNAME + os.sep + APPNAME
-            print command
+            print (command)
             Utils.exec_command (command)
-        except Exception, msg:
+        except Exception:
+            msg = sys.exc_info()[1] # Python 2/3 compatibility
             Utils.pprint ('RED', "Failed to run application: " + str (msg))

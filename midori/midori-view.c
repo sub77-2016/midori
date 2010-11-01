@@ -94,6 +94,7 @@ struct _MidoriView
     gboolean close_buttons_on_tabs;
     MidoriNewPage open_new_pages_in;
     gboolean find_while_typing;
+    gint find_links;
 
     GtkWidget* menu_item;
     GtkWidget* tab_label;
@@ -103,10 +104,7 @@ struct _MidoriView
     KatzeItem* item;
     gint scrollh, scrollv;
     gboolean back_forward_set;
-
-    KatzeNet* net;
     GHashTable* memory;
-
     GtkWidget* scrolled_window;
 };
 
@@ -186,8 +184,7 @@ enum
     PROP_ZOOM_LEVEL,
     PROP_NEWS_FEEDS,
     PROP_STATUSBAR_TEXT,
-    PROP_SETTINGS,
-    PROP_NET
+    PROP_SETTINGS
 };
 
 enum {
@@ -600,15 +597,6 @@ midori_view_class_init (MidoriViewClass* class)
                                      "The associated settings",
                                      MIDORI_TYPE_WEB_SETTINGS,
                                      flags));
-
-    g_object_class_install_property (gobject_class,
-                                     PROP_NET,
-                                     g_param_spec_object (
-                                     "net",
-                                     "Net",
-                                     "The associated net",
-                                     KATZE_TYPE_NET,
-                                     flags));
 }
 
 static void
@@ -772,15 +760,15 @@ typedef struct
     MidoriView* view;
 } KatzeNetIconPriv;
 
-void
+static void
 katze_net_icon_priv_free (KatzeNetIconPriv* priv)
 {
     g_free (priv->icon_file);
     g_free (priv->icon_uri);
-    g_free (priv);
+    g_slice_free (KatzeNetIconPriv, priv);
 }
 
-gboolean
+static gboolean
 katze_net_icon_status_cb (KatzeNetRequest*  request,
                           KatzeNetIconPriv* priv)
 {
@@ -803,7 +791,7 @@ katze_net_icon_status_cb (KatzeNetRequest*  request,
     return TRUE;
 }
 
-void
+static void
 katze_net_icon_transfer_cb (KatzeNetRequest*  request,
                             KatzeNetIconPriv* priv)
 {
@@ -859,7 +847,6 @@ katze_net_icon_transfer_cb (KatzeNetRequest*  request,
     katze_net_icon_priv_free (priv);
 }
 
-
 static void
 _midori_web_view_load_icon (MidoriView* view)
 {
@@ -884,9 +871,9 @@ _midori_web_view_load_icon (MidoriView* view)
                 i++;
             if (view->uri[i] == '/')
             {
-                icon_uri = g_strdup (view->uri);
-                icon_uri[i] = '\0';
-                icon_uri = g_strdup_printf ("%s/favicon.ico", icon_uri);
+                gchar* path = g_strndup (view->uri, i);
+                icon_uri = g_strdup_printf ("%s/favicon.ico", path);
+                g_free (path);
             }
             else
                 icon_uri = g_strdup_printf ("%s/favicon.ico", view->uri);
@@ -910,7 +897,7 @@ _midori_web_view_load_icon (MidoriView* view)
         }
         else
         {
-            priv = g_new0 (KatzeNetIconPriv, 1);
+            priv = g_slice_new (KatzeNetIconPriv);
             priv->icon_file = icon_file;
             priv->icon_uri = icon_uri;
             priv->view = view;
@@ -962,7 +949,7 @@ midori_view_web_view_navigation_decision_cb (WebKitWebView*             web_view
                                              MidoriView*                view)
 {
     const gchar* uri = webkit_network_request_get_uri (request);
-    if (g_str_has_prefix (uri, "mailto:") || g_str_has_prefix (uri, "tel:"))
+    if (g_str_has_prefix (uri, "mailto:") || sokoke_external_uri (uri))
     {
         if (sokoke_show_uri (gtk_widget_get_screen (GTK_WIDGET (web_view)),
                              uri, GDK_CURRENT_TIME, NULL))
@@ -995,12 +982,18 @@ webkit_web_view_load_committed_cb (WebKitWebView*  web_view,
                                    MidoriView*     view)
 {
     const gchar* uri;
+    GList* children;
 
     g_object_freeze_notify (G_OBJECT (view));
 
     uri = webkit_web_frame_get_uri (web_frame);
     g_return_if_fail (uri != NULL);
     katze_assign (view->icon_uri, NULL);
+
+    children = gtk_container_get_children (GTK_CONTAINER (view));
+    for (; children; children = g_list_next (children))
+        if (g_object_get_data (G_OBJECT (children->data), "midori-infobar-cb"))
+            gtk_widget_destroy (children->data);
 
     if (g_strcmp0 (uri, katze_item_get_uri (view->item)))
     {
@@ -1018,7 +1011,7 @@ webkit_web_view_load_committed_cb (WebKitWebView*  web_view,
 
     if (!strncmp (uri, "https", 5))
     {
-#if WEBKIT_CHECK_VERSION (1, 1, 14) && defined (HAVE_LIBSOUP_2_29_91)
+        #if WEBKIT_CHECK_VERSION (1, 1, 14) && defined (HAVE_LIBSOUP_2_29_91)
         WebKitWebDataSource *source;
         WebKitNetworkRequest *request;
         SoupMessage *message;
@@ -1031,13 +1024,14 @@ webkit_web_view_load_committed_cb (WebKitWebView*  web_view,
          && soup_message_get_flags (message) & SOUP_MESSAGE_CERTIFICATE_TRUSTED)
             view->security = MIDORI_SECURITY_TRUSTED;
         else
-#endif
+        #endif
             view->security = MIDORI_SECURITY_UNKNOWN;
     }
     else
         view->security = MIDORI_SECURITY_NONE;
     g_object_notify (G_OBJECT (view), "security");
 
+    view->find_links = -1;
     midori_view_update_load_status (view, MIDORI_LOAD_COMMITTED);
 
     g_object_thaw_notify (G_OBJECT (view));
@@ -1131,6 +1125,180 @@ midori_view_web_view_resource_request_cb (WebKitWebView*         web_view,
             return;
         }
     }
+}
+#endif
+
+#define HAVE_GTK_INFO_BAR GTK_CHECK_VERSION (2, 18, 0)
+
+#if HAVE_GTK_INFO_BAR
+static void
+midori_view_infobar_response_cb (GtkWidget* infobar,
+                                 gint       response,
+                                 gpointer   data_object)
+{
+    void (*response_cb) (GtkWidget*, gint, gpointer);
+    response_cb = g_object_get_data (G_OBJECT (infobar), "midori-infobar-cb");
+    response_cb (infobar, response, data_object);
+    gtk_widget_destroy (infobar);
+}
+#else
+static void
+midori_view_info_bar_button_cb (GtkWidget* button,
+                                gpointer   data_object)
+{
+    GtkWidget* infobar = gtk_widget_get_parent (gtk_widget_get_parent (button));
+    gint response = GPOINTER_TO_INT (g_object_get_data (G_OBJECT (button), "midori-infobar-response"));
+    void (*response_cb) (GtkWidget*, gint, gpointer);
+    response_cb = g_object_get_data (G_OBJECT (infobar), "midori-infobar-cb");
+    response_cb (infobar, response, data_object);
+    gtk_widget_destroy (infobar);
+}
+#endif
+
+/**
+ * midori_view_add_info_bar
+ * @view: a #MidoriView
+ * @message_type: a #GtkMessageType
+ * @message: a message string
+ * @response_cb: a response callback
+ * @user_data: user data passed to the callback
+ * @first_button_text: button text or stock ID
+ * @...: first response ID, then more text - response ID pairs
+ *
+ * Adds an infobar (or equivalent) to the view. Activation of a
+ * button invokes the specified callback. The infobar is
+ * automatically destroyed if the location changes or reloads.
+ *
+ * Return value: an infobar widget
+ *
+ * Since: 0.2.9
+ **/
+GtkWidget*
+midori_view_add_info_bar (MidoriView*    view,
+                          GtkMessageType message_type,
+                          const gchar*   message,
+                          GCallback      response_cb,
+                          gpointer       data_object,
+                          const gchar*   first_button_text,
+                          ...)
+{
+    GtkWidget* infobar;
+    GtkWidget* action_area;
+    GtkWidget* content_area;
+    va_list args;
+    const gchar* button_text;
+    va_start (args, first_button_text);
+
+    #if HAVE_GTK_INFO_BAR
+    infobar = gtk_info_bar_new ();
+    for (button_text = first_button_text; button_text;
+         button_text = va_arg (args, const gchar*))
+    {
+        gint response_id = va_arg (args, gint);
+        gtk_info_bar_add_button (GTK_INFO_BAR (infobar),
+                                 button_text, response_id);
+    }
+    gtk_info_bar_set_message_type (GTK_INFO_BAR (infobar), message_type);
+    content_area = gtk_info_bar_get_content_area (GTK_INFO_BAR (infobar));
+    action_area = gtk_info_bar_get_action_area (GTK_INFO_BAR (infobar));
+    gtk_orientable_set_orientation (GTK_ORIENTABLE (action_area),
+                                    GTK_ORIENTATION_HORIZONTAL);
+    g_signal_connect (infobar, "response",
+        G_CALLBACK (midori_view_infobar_response_cb), data_object);
+    #else
+    infobar = gtk_hbox_new (FALSE, 0);
+    gtk_container_set_border_width (GTK_CONTAINER (infobar), 4);
+
+    content_area = gtk_hbox_new (FALSE, 0);
+    gtk_box_pack_start (GTK_BOX (infobar), content_area, TRUE, TRUE, 0);
+    action_area = gtk_hbutton_box_new ();
+    for (button_text = first_button_text; button_text;
+         button_text = va_arg (args, const gchar*))
+    {
+        gint response_id = va_arg (args, gint);
+        GtkWidget* button = gtk_button_new_with_mnemonic (button_text);
+        g_object_set_data (G_OBJECT (button), "midori-infobar-response",
+                           GINT_TO_POINTER (response_id));
+        g_signal_connect (button, "clicked",
+            G_CALLBACK (midori_view_info_bar_button_cb), data_object);
+        gtk_box_pack_start (GTK_BOX (action_area), button, FALSE, FALSE, 0);
+        if (response_id == GTK_RESPONSE_HELP)
+            gtk_button_box_set_child_secondary (GTK_BUTTON_BOX (action_area),
+                                                button, TRUE);
+    }
+    gtk_box_pack_start (GTK_BOX (infobar), action_area, FALSE, FALSE, 0);
+    #endif
+
+    va_end (args);
+    gtk_container_add (GTK_CONTAINER (content_area), gtk_label_new (message));
+    gtk_widget_show_all (infobar);
+    gtk_box_pack_start (GTK_BOX (view), infobar, FALSE, FALSE, 0);
+    gtk_box_reorder_child (GTK_BOX (view), infobar, 0);
+    g_object_set_data (G_OBJECT (infobar), "midori-infobar-cb", response_cb);
+    return infobar;
+}
+
+#if WEBKIT_CHECK_VERSION (1, 1, 14)
+static void
+midori_view_database_response_cb (GtkWidget*         infobar,
+                                  gint               response,
+                                  WebKitWebDatabase* database)
+{
+    if (response != GTK_RESPONSE_ACCEPT)
+    {
+        WebKitSecurityOrigin* origin = webkit_web_database_get_security_origin (database);
+        webkit_security_origin_set_web_database_quota (origin, 0);
+        webkit_web_database_remove (database);
+    }
+    /* TODO: Remember the decision */
+}
+
+static void
+midori_view_web_view_database_quota_exceeded_cb (WebKitWebView*     web_view,
+                                                 WebKitWebFrame*    web_frame,
+                                                 WebKitWebDatabase* database,
+                                                 MidoriView*        view)
+{
+    const gchar* uri = webkit_web_frame_get_uri (web_frame);
+    const gchar* hostname = sokoke_hostname_from_uri (uri, NULL);
+    gchar* message = g_strdup_printf (_("%s wants to save an HTML5 database."),
+                                      hostname && *hostname ? hostname : uri);
+    midori_view_add_info_bar (view, GTK_MESSAGE_QUESTION, message,
+        G_CALLBACK (midori_view_database_response_cb), database,
+        _("_Deny"), GTK_RESPONSE_REJECT, _("_Allow"), GTK_RESPONSE_ACCEPT,
+        NULL);
+    g_free (message);
+}
+#endif
+
+#if WEBKIT_CHECK_VERSION (1, 1, 23)
+static void
+midori_view_location_response_cb (GtkWidget*                       infobar,
+                                  gint                             response,
+                                  WebKitGeolocationPolicyDecision* decision)
+{
+    if (response == GTK_RESPONSE_ACCEPT)
+        webkit_geolocation_policy_allow (decision);
+    else
+        webkit_geolocation_policy_deny (decision);
+}
+
+static gboolean
+midori_view_web_view_geolocation_decision_cb (WebKitWebView*                   web_view,
+                                              WebKitWebFrame*                  web_frame,
+                                              WebKitGeolocationPolicyDecision* decision,
+                                              MidoriView*                      view)
+{
+    const gchar* uri = webkit_web_frame_get_uri (web_frame);
+    const gchar* hostname = sokoke_hostname_from_uri (uri, NULL);
+    gchar* message = g_strdup_printf (_("%s wants to know your location."),
+                                     hostname && *hostname ? hostname : uri);
+    midori_view_add_info_bar (view, GTK_MESSAGE_QUESTION,
+        message, G_CALLBACK (midori_view_location_response_cb), decision,
+        _("_Deny"), GTK_RESPONSE_REJECT, _("_Allow"), GTK_RESPONSE_ACCEPT,
+        NULL);
+    g_free (message);
+    return TRUE;
 }
 #endif
 
@@ -1438,6 +1606,35 @@ webkit_web_view_hovering_over_link_cb (WebKitWebView* web_view,
         g_object_set (view, "statusbar-text", link_uri, NULL);
 }
 
+static void
+midori_view_ensure_link_uri (MidoriView* view,
+                             gint        *x,
+                             gint        *y)
+{
+    g_return_if_fail (MIDORI_IS_VIEW (view));
+
+    #if WEBKIT_CHECK_VERSION (1, 1, 15)
+    if (view->web_view && gtk_widget_get_window (view->web_view))
+    {
+        gint ex, ey;
+        GdkEventButton event;
+
+        gdk_window_get_pointer (gtk_widget_get_window (view->web_view), &ex, &ey, NULL);
+        if (x != NULL)
+            *x = ex;
+        if (y != NULL)
+            *y = ey;
+
+        event.x = ex;
+        event.y = ey;
+        katze_object_assign (view->hit_test, webkit_web_view_get_hit_test_result (
+                             WEBKIT_WEB_VIEW (view->web_view), &event));
+        katze_assign (view->link_uri,
+             katze_object_get_string (view->hit_test, "link-uri"));
+    }
+    #endif
+}
+
 #define MIDORI_KEYS_MODIFIER_MASK (GDK_SHIFT_MASK | GDK_CONTROL_MASK \
     | GDK_MOD1_MASK | GDK_META_MASK | GDK_SUPER_MASK | GDK_HYPER_MASK )
 
@@ -1453,6 +1650,7 @@ gtk_widget_button_press_event_cb (WebKitWebView*  web_view,
     gboolean background;
 
     event->state = event->state & MIDORI_KEYS_MODIFIER_MASK;
+    midori_view_ensure_link_uri (view, NULL, NULL);
     link_uri = midori_view_get_link_uri (view);
 
     switch (event->button)
@@ -1599,8 +1797,92 @@ gtk_widget_key_press_event_cb (WebKitWebView* web_view,
                                MidoriView*    view)
 {
     guint character;
+    gint digit = g_ascii_digit_value (event->keyval);
 
-    if (event->keyval == '.' || event->keyval == '/' || event->keyval == GDK_KP_Divide)
+    event->state = event->state & MIDORI_KEYS_MODIFIER_MASK;
+
+    /* Find links by number: . to show links, type number, Return to go */
+    if (event->keyval == '.'
+     || (view->find_links > -1 && (digit != -1 || event->keyval == GDK_Return)))
+    {
+        WebKitWebFrame* web_frame = webkit_web_view_get_main_frame (web_view);
+        JSContextRef js_context = webkit_web_frame_get_global_context (web_frame);
+        gchar* result;
+
+        if (view->find_links == -1)
+        {
+            result = sokoke_js_script_eval (js_context,
+                "(function (selector, rule) { "
+                " var style = document.createElement ('style');"
+                " style.setAttribute ('type', 'text/css');"
+                " var heads = document.getElementsByTagName ('head');"
+                " heads[0].appendChild (style);"
+                " document.styleSheets[0].insertRule (selector + ' ' + rule);"
+                " } )"
+                " ('.midoriHKD87346', '{ "
+                " font-size:small !important; font-weight:bold !important;"
+                " z-index:500; border-radius:0.3em; line-height:1 !important;"
+                " background: white !important; color: black !important;"
+                " border:1px solid gray; padding:0 0.1em !important;"
+                " position:absolute; display:inline !important; }');"
+                "var links = document.getElementsByTagName ('a');"
+                "for (i in links) {"
+                "  var child = document.createElement ('span');"
+                "  child.setAttribute ('class', 'midoriHKD87346');"
+                "  child.appendChild (document.createTextNode (i));"
+                "  if (links[i].insertBefore)"
+                "    links[i].insertBefore (child); }",
+                NULL);
+            view->find_links = 0;
+        }
+        else if (digit != -1 || event->keyval == GDK_Return)
+        {
+            gchar* script;
+            if (event->keyval != GDK_Return)
+            {
+                if (view->find_links > -1)
+                    view->find_links *= 10;
+                view->find_links += digit;
+            }
+            script = g_strdup_printf (
+                "var links = document.getElementsByClassName ('midoriHKD87346');"
+                "var i = %d; var return_key = %d;"
+                "if (return_key || typeof links[i * 10] == 'undefined') {"
+                "    for (var j = 0; j < links.length; j++)"
+                "        links[j].style.display = 'none !important';"
+                "    links[i].parentNode.href; }",
+                view->find_links, event->keyval == GDK_Return);
+            result = sokoke_js_script_eval (js_context, script, NULL);
+            if (strcmp (result, "undefined"))
+            {
+                view->find_links = -1;
+                if (MIDORI_MOD_NEW_TAB (event->state))
+                {
+                    gboolean background = view->open_tabs_in_the_background;
+                    if (MIDORI_MOD_BACKGROUND (event->state))
+                        background = !background;
+                    g_signal_emit (view, signals[NEW_TAB], 0, result, background);
+                }
+                else
+                    midori_view_set_uri (view, result);
+            }
+            g_free (script);
+        }
+        else
+        {
+            result = sokoke_js_script_eval (js_context,
+                "var links = document.getElementsByClassName ('midoriHKD87346');"
+                "for (var i = 0; i < links.length; i++)"
+                "  links[i].style.display = 'none !important';",
+                NULL);
+            view->find_links = -1;
+        }
+        g_free (result);
+        return FALSE;
+    }
+
+    /* Find inline */
+    if (event->keyval == ',' || event->keyval == '/' || event->keyval == GDK_KP_Divide)
         character = '\0';
     else if (view->find_while_typing)
         character = gdk_unicode_to_keyval (event->keyval);
@@ -1669,7 +1951,7 @@ static void
 midori_web_view_menu_web_app_activate_cb (GtkWidget*  widget,
                                           MidoriView* view)
 {
-    sokoke_spawn_program ("midori -a", view->link_uri, FALSE);
+    sokoke_spawn_app (view->link_uri, FALSE);
 }
 
 static void
@@ -1761,7 +2043,7 @@ midori_web_view_menu_video_download_activate_cb (GtkWidget*  widget,
                                                  MidoriView* view)
 {
     gchar* uri = katze_object_get_string (view->hit_test, "media-uri");
-    sokoke_spawn_program (view->download_manager, uri, FALSE);
+    sokoke_spawn_program (view->download_manager, uri);
     g_free (uri);
 }
 #endif
@@ -1848,7 +2130,7 @@ static void
 midori_web_view_menu_download_activate_cb (GtkWidget*  widget,
                                            MidoriView* view)
 {
-    sokoke_spawn_program (view->download_manager, view->link_uri, FALSE);
+    sokoke_spawn_program (view->download_manager, view->link_uri);
 }
 
 static void
@@ -1950,20 +2232,12 @@ midori_view_populate_popup (MidoriView* view,
 
     #if WEBKIT_CHECK_VERSION (1, 1, 15)
     gint x, y;
-    GdkEventButton event;
     WebKitHitTestResultContext context;
     gboolean is_image;
     gboolean is_media;
 
-    gdk_window_get_pointer (view->web_view->window, &x, &y, NULL);
-    event.x = x;
-    event.y = y;
-    katze_object_assign (view->hit_test,
-        webkit_web_view_get_hit_test_result (web_view, &event));
+    midori_view_ensure_link_uri (view, &x, &y);
     context = katze_object_get_int (view->hit_test, "context");
-    /* Ensure view->link_uri is correct. */
-    katze_assign (view->link_uri,
-        katze_object_get_string (view->hit_test, "link-uri"));
     has_selection = context & WEBKIT_HIT_TEST_RESULT_CONTEXT_SELECTION;
     /* Ensure view->selected_text */
     midori_view_has_selection (view);
@@ -2063,8 +2337,8 @@ midori_view_populate_popup (MidoriView* view,
                 gtk_widget_show (menuitem);
                 g_object_set_data (G_OBJECT (menuitem), "x", GINT_TO_POINTER (x));
                 g_object_set_data (G_OBJECT (menuitem), "y", GINT_TO_POINTER (y));
-             }
-             #endif
+            }
+            #endif
         }
         return;
     }
@@ -2211,12 +2485,15 @@ midori_view_populate_popup (MidoriView* view,
     if (!view->link_uri && has_selection)
     {
         GtkWidget* window;
+        KatzeArray* search_engines = NULL;
 
         window = gtk_widget_get_toplevel (GTK_WIDGET (web_view));
         i = 0;
         if (katze_object_has_property (window, "search-engines"))
+            search_engines = katze_object_get_object (window, "search-engines");
+
+        if (search_engines != NULL)
         {
-            KatzeArray* search_engines;
             KatzeItem* item;
             GtkWidget* sub_menu = gtk_menu_new ();
 
@@ -2224,7 +2501,6 @@ midori_view_populate_popup (MidoriView* view,
             gtk_menu_item_set_submenu (GTK_MENU_ITEM (menuitem), sub_menu);
             gtk_menu_shell_insert (menu_shell, menuitem, 1);
 
-            search_engines = katze_object_get_object (window, "search-engines");
             KATZE_ARRAY_FOREACH_ITEM (item, search_engines)
             {
                 GdkPixbuf* pixbuf;
@@ -2413,7 +2689,8 @@ midori_view_populate_popup (MidoriView* view,
                 gtk_action_group_get_action (actions, "BookmarkAdd"));
         gtk_menu_shell_append (menu_shell, menuitem);
 
-        if (view->speed_dial_in_new_tabs && !midori_view_is_blank (view))
+        if (view->speed_dial_in_new_tabs && !midori_view_is_blank (view)
+         && strcmp ("/", sokoke_set_config_dir (NULL)))
         {
             menuitem = sokoke_action_create_popup_menu_item (
                 gtk_action_group_get_action (actions, "AddSpeedDial"));
@@ -2422,7 +2699,6 @@ midori_view_populate_popup (MidoriView* view,
         menuitem = sokoke_action_create_popup_menu_item (
                 gtk_action_group_get_action (actions, "AddDesktopShortcut"));
         gtk_menu_shell_append (menu_shell, menuitem);
-        gtk_widget_set_no_show_all (menuitem, TRUE);
         #endif
 
         menuitem = sokoke_action_create_popup_menu_item (
@@ -2472,15 +2748,14 @@ midori_view_web_view_tap_and_hold_cb (GtkWidget*  web_view,
 
     /* Emulate a pointer motion above the tap position
       and a right click at the according position. */
-    gdk_window_get_pointer (web_view->window, &x, &y, NULL);
+    event.any.window = gtk_widget_get_window (web_view);
+    gdk_window_get_pointer (event.any.window, &x, &y, NULL);
     event.any.type = GDK_MOTION_NOTIFY;
-    event.any.window = web_view->window;
     event.motion.x = x;
     event.motion.y = y;
     g_signal_emit_by_name (web_view, "motion-notify-event", &event, &result);
 
     event.any.type = GDK_BUTTON_PRESS;
-    event.any.window = web_view->window;
     event.button.axes = NULL;
     event.button.x = x;
     event.button.y = y;
@@ -2766,7 +3041,7 @@ midori_view_notify_vadjustment_cb (MidoriView* view,
     g_object_unref (vadjustment);
 }
 
-void
+static void
 katze_net_object_maybe_unref (gpointer object)
 {
     if (object)
@@ -2794,6 +3069,7 @@ midori_view_init (MidoriView* view)
     view->link_uri = NULL;
     view->selected_text = NULL;
     view->news_feeds = katze_array_new (KATZE_TYPE_ITEM);
+    view->find_links = -1;
 
     view->item = katze_item_new ();
 
@@ -2849,8 +3125,6 @@ midori_view_finalize (GObject* object)
     katze_assign (view->download_manager, NULL);
     katze_assign (view->news_aggregator, NULL);
 
-    katze_object_assign (view->net, NULL);
-
     G_OBJECT_CLASS (midori_view_parent_class)->finalize (object);
 }
 
@@ -2889,9 +3163,6 @@ midori_view_set_property (GObject*      object,
         break;
     case PROP_SETTINGS:
         midori_view_set_settings (view, g_value_get_object (value));
-        break;
-    case PROP_NET:
-        katze_object_assign (view->net, g_value_dup_object (value));
         break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -2945,9 +3216,6 @@ midori_view_get_property (GObject*    object,
     case PROP_SETTINGS:
         g_value_set_object (value, view->settings);
         break;
-    case PROP_NET:
-        g_value_set_object (value, view->net);
-        break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
         break;
@@ -2988,6 +3256,9 @@ static void
 _midori_view_update_settings (MidoriView* view)
 {
     gboolean zoom_text_and_images, kinetic_scrolling;
+
+    g_free (view->download_manager);
+    g_free (view->news_aggregator);
 
     g_object_get (view->settings,
         "speed-dial-in-new-tabs", &view->speed_dial_in_new_tabs,
@@ -3057,17 +3328,11 @@ midori_view_settings_notify_cb (MidoriWebSettings* settings,
     g_object_get_property (G_OBJECT (view->settings), name, &value);
 
     if (name == g_intern_string ("speed-dial-in-new-tabs"))
-    {
         view->speed_dial_in_new_tabs = g_value_get_boolean (&value);
-    }
     else if (name == g_intern_string ("download-manager"))
-    {
         katze_assign (view->download_manager, g_value_dup_string (&value));
-    }
     else if (name == g_intern_string ("news-aggregator"))
-    {
         katze_assign (view->news_aggregator, g_value_dup_string (&value));
-    }
     else if (name == g_intern_string ("zoom-text-and-images"))
     {
         if (view->web_view)
@@ -3086,25 +3351,15 @@ midori_view_settings_notify_cb (MidoriWebSettings* settings,
                                    view->close_buttons_on_tabs);
     }
     else if (name == g_intern_string ("open-new-pages-in"))
-    {
         view->open_new_pages_in = g_value_get_enum (&value);
-    }
     else if (name == g_intern_string ("ask-for-destination-folder"))
-    {
         view->ask_for_destination_folder = g_value_get_boolean (&value);
-    }
     else if (name == g_intern_string ("middle-click-opens-selection"))
-    {
         view->middle_click_opens_selection = g_value_get_boolean (&value);
-    }
     else if (name == g_intern_string ("open-tabs-in-the-background"))
-    {
         view->open_tabs_in_the_background = g_value_get_boolean (&value);
-    }
     else if (name == g_intern_string ("find-while-typing"))
-    {
         view->find_while_typing = g_value_get_boolean (&value);
-    }
 
     g_value_unset (&value);
 }
@@ -3249,11 +3504,10 @@ static gboolean
 midori_view_web_inspector_show_window_cb (gpointer    inspector,
                                           MidoriView* view)
 {
-    GtkWidget* inspector_view;
-    GtkWidget* window;
+    GtkWidget* inspector_view = katze_object_get_object (inspector, "web-view");
+    GtkWidget* window = gtk_widget_get_toplevel (inspector_view);
+    g_object_unref (inspector_view);
 
-    g_object_get (inspector, "web-view", &inspector_view, NULL);
-    window = gtk_widget_get_toplevel (inspector_view);
     if (!window)
         return FALSE;
     gtk_window_present (GTK_WINDOW (window));
@@ -3276,13 +3530,13 @@ midori_view_web_inspector_detach_window_cb (gpointer    inspector,
 {
     GtkWidget* inspector_view = katze_object_get_object (inspector, "web-view");
     GtkWidget* parent = gtk_widget_get_parent (inspector_view);
+    g_object_unref (inspector_view);
     if (GTK_IS_WINDOW (parent))
         return FALSE;
     gtk_widget_hide (parent);
     gtk_container_remove (GTK_CONTAINER (parent), inspector_view);
     midori_view_web_inspector_construct_window (inspector,
         WEBKIT_WEB_VIEW (view->web_view), inspector_view, view);
-    g_object_unref (inspector_view);
     return TRUE;
 }
 
@@ -3312,6 +3566,14 @@ midori_view_construct_web_view (MidoriView* view)
                       #if WEBKIT_CHECK_VERSION (1, 1, 14)
                       "signal::resource-request-starting",
                       midori_view_web_view_resource_request_cb, view,
+                      #endif
+                      #if WEBKIT_CHECK_VERSION (1, 1, 14)
+                      "signal::database-quota-exceeded",
+                      midori_view_web_view_database_quota_exceeded_cb, view,
+                      #endif
+                      #if WEBKIT_CHECK_VERSION (1, 1, 23)
+                      "signal::geolocation-policy-decision-requested",
+                      midori_view_web_view_geolocation_decision_cb, view,
                       #endif
                       "signal::load-started",
                       webkit_web_view_load_started_cb, view,
@@ -3484,7 +3746,6 @@ midori_view_set_uri (MidoriView*  view,
                 "{set_thumb_small}", _("Small"),
                 "{set_thumb_normal}", _("Medium"),
                 "{set_thumb_big}", _("Big"),  NULL);
-
 
             midori_view_load_alternate_string (view,
                 data, res_root, "about:blank", NULL);
@@ -3672,9 +3933,7 @@ midori_view_set_uri (MidoriView*  view,
                 g_free (exception);
             }
         }
-        else if (g_str_has_prefix (uri, "mailto:")
-              || g_str_has_prefix (uri, "tel:")
-              || g_str_has_prefix (uri, "callto:"))
+        else if (g_str_has_prefix (uri, "mailto:") || sokoke_external_uri (uri))
         {
             sokoke_show_uri (NULL, uri, GDK_CURRENT_TIME, NULL);
         }
@@ -3746,7 +4005,6 @@ midori_view_get_icon_uri (MidoriView* view)
 
     return view->icon_uri;
 }
-
 
 /**
  * midori_view_get_display_uri:
@@ -3963,7 +4221,6 @@ midori_view_tab_label_menu_open_cb (GtkWidget* menuitem,
     MidoriBrowser* browser = midori_browser_get_for_widget (view);
     midori_browser_set_current_tab (browser, view);
 }
-
 
 static void
 midori_view_tab_label_menu_duplicate_tab_cb (GtkWidget*  menuitem,
@@ -4468,17 +4725,17 @@ midori_view_reload (MidoriView* view,
 
     g_return_if_fail (MIDORI_IS_VIEW (view));
 
-#if WEBKIT_CHECK_VERSION (1, 1, 14)
+    #if WEBKIT_CHECK_VERSION (1, 1, 14)
     title = NULL;
-#elif WEBKIT_CHECK_VERSION (1, 1, 6)
+    #elif WEBKIT_CHECK_VERSION (1, 1, 6)
     /* WebKit 1.1.6 doesn't handle "alternate content" flawlessly,
        so reloading via Javascript works but not via API calls. */
     title = g_strdup_printf (_("Error - %s"), view->uri);
-#else
+    #else
     /* Error pages are special, we want to try loading the destination
        again, not the error page which isn't even a proper page */
     title = g_strdup_printf (_("Error - %s"), view->uri);
-#endif
+    #endif
     if (view->title && title && strstr (title, view->title))
         webkit_web_view_open (WEBKIT_WEB_VIEW (view->web_view), view->uri);
     else if (!(view->uri && *view->uri && strncmp (view->uri, "about:", 6)))
@@ -4597,42 +4854,12 @@ midori_view_get_previous_page (MidoriView* view)
     web_frame = webkit_web_view_get_main_frame (WEBKIT_WEB_VIEW (view->web_view));
     js_context = webkit_web_frame_get_global_context (web_frame);
     katze_assign (uri, sokoke_js_script_eval (js_context,
-        "(function (g) {"
-        "var ind = ['prev','←','«','&lt;'];"
-        "var nind = ['next','→','»','&gt;'];"
-        "for (h in g) {"
-        "l = g[h];"
-        "for (i in l)"
-        "if (l[i].rel && (l[i].rel == ind[0]))"
-        "return l[i].href;"
-        "for (j in ind)"
-        "for (i in l)"
-        "if (l[i].innerHTML"
-        "&& (l[i].innerHTML.toLowerCase ().indexOf (ind[j]) != -1)"
-        "&& (l[i].innerHTML.toLowerCase ().indexOf (nind[j]) == -1))"
-        "return l[i].href;"
-        "var wa = window.location.href.split (/\\d+/);"
-        "var wn = window.location.href.split (/[^\\d]+/);"
-        "wn = wn.slice (1,wn.length - 1);"
-        "var cand = [];"
-        "for (i in wn)"
-        "{"
-        "cand[i] = '';"
-        "for (j = 0; j <= i; j++)"
-        "{"
-        "cand[i] += wa[j];"
-        "if (wn[j])"
-        "cand[i] += parseInt (wn[j]) - ((i == j) ? 1 : 0);"
-        "}"
-        "}"
-        "for (j in cand)"
-        "for (i in l)"
-        "if (cand[j].length && l[i].href && (l[i].href.indexOf (cand[j]) == 0))"
-        "return l[i].href;"
-        "}"
-        "return 0;"
-        "}) ([document.getElementsByTagName ('link'),"
-        "document.getElementsByTagName ('a')]);", NULL));
+        "(function (l) { for (i in l) "
+        "if ((l[i].rel && l[i].rel == 'prev') "
+        " || (l[i].innerHTML"
+        "  && l[i].innerHTML.toLowerCase ().indexOf ('prev') != -1)) "
+        "{ return l[i].href; } return 0; })("
+        "document.getElementsByTagName ('a'));", NULL));
     return uri && uri[0] != '0' ? uri : NULL;
 }
 
@@ -4661,44 +4888,15 @@ midori_view_get_next_page (MidoriView* view)
     web_frame = webkit_web_view_get_main_frame (WEBKIT_WEB_VIEW (view->web_view));
     js_context = webkit_web_frame_get_global_context (web_frame);
     katze_assign (uri, sokoke_js_script_eval (js_context,
-        "(function (g) {"
-        "var ind = ['next','→','»','&gt;'];"
-        "var nind = ['prev','←','«','&lt;'];"
-        "for (h in g) {"
-        "l = g[h];"
-        "for (i in l)"
-        "if (l[i].rel && (l[i].rel == ind[0]))"
-        "return l[i].href;"
-        "for (j in ind)"
-        "for (i in l)"
-        "if (l[i].innerHTML"
-        "&& (l[i].innerHTML.toLowerCase ().indexOf (ind[j]) != -1)"
-        "&& (l[i].innerHTML.toLowerCase ().indexOf (nind[j]) == -1))"
-        "return l[i].href;"
-        "var wa = window.location.href.split (/\\d+/);"
-        "var wn = window.location.href.split (/[^\\d]+/);"
-        "wn = wn.slice (1,wn.length - 1);"
-        "var cand = [];"
-        "for (i in wn)"
-        "{"
-        "cand[i] = '';"
-        "for (j = 0; j <= i; j++)"
-        "{"
-        "cand[i] += wa[j];"
-        "if (wn[j])"
-        "cand[i] += parseInt (wn[j]) + ((i == j) ? 1 : 0);"
-        "}"
-        "}"
-        "for (j in cand)"
-        "for (i in l)"
-        "if (cand[j].length && l[i].href && (l[i].href.indexOf (cand[j]) == 0))"
-        "return l[i].href;"
-        "}"
-        "return 0;"
-        "}) ([document.getElementsByTagName ('link'),"
-        "document.getElementsByTagName ('a')]);", NULL));
+        "(function (l) { for (i in l) "
+        "if ((l[i].rel && l[i].rel == 'next') "
+        " || (l[i].innerHTML"
+        "  && l[i].innerHTML.toLowerCase ().indexOf ('next') != -1)) "
+        "{ return l[i].href; } return 0; })("
+        "document.getElementsByTagName ('a'));", NULL));
     return uri && uri[0] != '0' ? uri : NULL;
 }
+
 #if WEBKIT_CHECK_VERSION (1, 1, 5)
 static GtkWidget*
 midori_view_print_create_custom_widget_cb (GtkPrintOperation* operation,
@@ -4765,9 +4963,9 @@ midori_view_print (MidoriView* view)
     #if WEBKIT_CHECK_VERSION (1, 1, 5)
     operation = gtk_print_operation_new ();
     gtk_print_operation_set_custom_tab_label (operation, _("Features"));
-#if GTK_CHECK_VERSION (2, 18, 0)
+    #if GTK_CHECK_VERSION (2, 18, 0)
     gtk_print_operation_set_embed_page_setup (operation, TRUE);
-#endif
+    #endif
     g_signal_connect (operation, "create-custom-widget",
         G_CALLBACK (midori_view_print_create_custom_widget_cb), view);
     g_signal_connect (operation, "custom-widget-apply",
@@ -4927,6 +5125,8 @@ midori_view_get_snapshot (MidoriView* view,
                           gint        height)
 {
     GtkWidget* web_view;
+    GdkWindow* window;
+    GtkAllocation allocation;
     gboolean fast;
     gint x, y, w, h;
     GdkRectangle rect;
@@ -4938,12 +5138,14 @@ midori_view_get_snapshot (MidoriView* view,
 
     g_return_val_if_fail (MIDORI_IS_VIEW (view), NULL);
     web_view = view->web_view;
-    g_return_val_if_fail (web_view->window, NULL);
+    window = gtk_widget_get_window (web_view);
+    g_return_val_if_fail (window != NULL, NULL);
 
-    x = web_view->allocation.x;
-    y = web_view->allocation.y;
-    w = web_view->allocation.width;
-    h = web_view->allocation.height;
+    gtk_widget_get_allocation (web_view, &allocation);
+    x = allocation.x;
+    y = allocation.y;
+    w = allocation.width;
+    h = allocation.height;
 
     /* If width and height are both negative, we try to render faster at
        the cost of correctness or beauty. Only a part of the page is
@@ -4963,15 +5165,14 @@ midori_view_get_snapshot (MidoriView* view,
     rect.width = w;
     rect.height = h;
 
-    pixmap = gdk_pixmap_new (web_view->window, w, h,
-        gdk_drawable_get_depth (web_view->window));
+    pixmap = gdk_pixmap_new (window, w, h, gdk_drawable_get_depth (window));
     event.expose.type = GDK_EXPOSE;
     event.expose.window = pixmap;
     event.expose.send_event = FALSE;
     event.expose.count = 0;
     event.expose.area.x = 0;
     event.expose.area.y = 0;
-    gdk_drawable_get_size (GDK_DRAWABLE (web_view->window),
+    gdk_drawable_get_size (GDK_DRAWABLE (window),
         &event.expose.area.width, &event.expose.area.height);
     event.expose.region = gdk_region_rectangle (&event.expose.area);
 
@@ -5056,7 +5257,7 @@ thumb_view_load_status_cb (MidoriView* thumb_view,
     js = g_strdup_printf ("setThumbnail('%s','%s','%s');",
                           dom_id, encoded, thumb_view->uri);
     webkit_web_view_execute_script (WEBKIT_WEB_VIEW (view->web_view), js);
-    free (js);
+    g_free (js);
     g_object_unref (img);
 
     g_free (dom_id);
@@ -5106,7 +5307,7 @@ midori_view_speed_dial_inject_thumb (MidoriView* view,
 
     if (!view->thumb_view)
     {
-        view->thumb_view = midori_view_new (view->net);
+        view->thumb_view = midori_view_new_with_uri (NULL, NULL, NULL);
         gtk_container_add (GTK_CONTAINER (notebook), view->thumb_view);
         /* We use an empty label. It's not invisible but at least hard to spot. */
         label = gtk_event_box_new ();

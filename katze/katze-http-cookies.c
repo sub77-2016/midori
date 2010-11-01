@@ -1,5 +1,5 @@
 /*
- Copyright (C) 2008-2009 Christian Dywan <christian@twotoasts.de>
+ Copyright (C) 2008-2010 Christian Dywan <christian@twotoasts.de>
 
  This library is free software; you can redistribute it and/or
  modify it under the terms of the GNU Lesser General Public
@@ -16,13 +16,21 @@
 #include "katze-http-cookies.h"
 
 #include <stdlib.h>
+#ifdef HAVE_UNISTD_H
+    #include <unistd.h>
+#endif
 #include <glib/gi18n.h>
 #include <libsoup/soup.h>
 #include <gtk/gtk.h>
+#include <glib/gstdio.h>
 
 struct _KatzeHttpCookies
 {
     GObject parent_instance;
+    gchar* filename;
+    SoupCookieJar* jar;
+    guint timeout;
+    guint counter;
 };
 
 struct _KatzeHttpCookiesClass
@@ -120,11 +128,12 @@ cookie_jar_load (SoupCookieJar* jar,
     gchar* line;
     gchar* p;
     gsize length = 0;
-    time_t now = time (NULL);
+    time_t now;
 
     if (!g_file_get_contents (filename, &contents, &length, NULL))
         return;
 
+    now = time (NULL);
     line = contents;
     for (p = contents; *p; p++)
     {
@@ -145,12 +154,10 @@ cookie_jar_load (SoupCookieJar* jar,
    Copyright (C) 2008 Xan Lopez <xan@gnome.org>
    Copyright (C) 2008 Dan Winship <danw@gnome.org>
    Copied from libSoup 2.24, coding style preserved */
-static void
+static gboolean
 write_cookie (FILE *out, SoupCookie *cookie)
 {
-	fseek (out, 0, SEEK_END);
-
-	fprintf (out, "%s%s\t%s\t%s\t%s\t%lu\t%s\t%s\n",
+	if (fprintf (out, "%s%s\t%s\t%s\t%s\t%lu\t%s\t%s\n",
 		 cookie->http_only ? "#HttpOnly_" : "",
 		 cookie->domain,
 		 *cookie->domain == '.' ? "TRUE" : "FALSE",
@@ -158,117 +165,132 @@ write_cookie (FILE *out, SoupCookie *cookie)
 		 cookie->secure ? "TRUE" : "FALSE",
 		 (gulong)soup_date_to_time_t (cookie->expires),
 		 cookie->name,
-		 cookie->value);
+		 cookie->value) < 0)
+            return FALSE;
+        return TRUE;
 }
 
-/* Cookie jar saving to Mozilla format
-   Copyright (C) 2008 Xan Lopez <xan@gnome.org>
-   Copyright (C) 2008 Dan Winship <danw@gnome.org>
-   Copied from libSoup 2.24, coding style preserved */
-static void
-delete_cookie (const char *filename, SoupCookie *cookie)
+static gboolean
+katze_http_cookies_update_jar (KatzeHttpCookies* http_cookies)
 {
-	char *contents = NULL, *line, *p;
-	gsize length = 0;
-	FILE *f;
-	SoupCookie *c;
-	time_t now = time (NULL);
+    gint fn = 0;
+    FILE* f = NULL;
+    gchar* temporary_filename = NULL;
+    GSList* cookies;
 
-	if (!g_file_get_contents (filename, &contents, &length, NULL))
-		return;
+    http_cookies->timeout = 0;
 
-	f = fopen (filename, "w");
-	if (!f) {
-		g_free (contents);
-		return;
-	}
+    temporary_filename = g_strconcat (http_cookies->filename, ".XXXXXX", NULL);
+    if ((fn = g_mkstemp (temporary_filename)) == -1)
+        goto failed;
+    if (!((f = fdopen (fn, "wb"))))
+        goto failed;
 
-	line = contents;
-	for (p = contents; *p; p++) {
-		/* \r\n comes out as an extra empty line and gets ignored */
-		if (*p == '\r' || *p == '\n') {
-			*p = '\0';
-			c = parse_cookie (line, now);
-			if (!c)
-				continue;
-			if (!soup_cookie_equal (cookie, c))
-				write_cookie (f, c);
-			line = p + 1;
-			soup_cookie_free (c);
-		}
-	}
-	c = parse_cookie (line, now);
-	if (c) {
-		if (!soup_cookie_equal (cookie, c))
-			write_cookie (f, c);
-		soup_cookie_free (c);
-	}
+    cookies = soup_cookie_jar_all_cookies (http_cookies->jar);
+    for (; cookies != NULL; cookies = g_slist_next (cookies))
+    {
+        SoupCookie* cookie = cookies->data;
+        if (cookie->expires && !soup_date_is_past (cookie->expires))
+            write_cookie (f, cookie);
+        soup_cookie_free (cookie);
+    }
+    g_slist_free (cookies);
 
-	g_free (contents);
-	fclose (f);
+    if (fclose (f) != 0)
+    {
+        f = NULL;
+        goto failed;
+    }
+    f = NULL;
+
+    if (g_rename (temporary_filename, http_cookies->filename) == -1)
+        goto failed;
+    g_free (temporary_filename);
+
+    if (g_getenv ("MIDORI_COOKIES_DEBUG") != NULL)
+    {
+        g_print ("KatzeHttpCookies: %d cookies changed\n", http_cookies->counter);
+        http_cookies->counter = 0;
+    }
+    return FALSE;
+
+failed:
+    if (f)
+        fclose (f);
+    g_unlink (temporary_filename);
+    g_free (temporary_filename);
+    if (g_getenv ("MIDORI_COOKIES_DEBUG") != NULL)
+        g_print ("KatzeHttpCookies: Failed to write '%s'\n",
+                 http_cookies->filename);
+    return FALSE;
 }
 
-/* Cookie jar saving to Mozilla format
-   Copyright (C) 2008 Xan Lopez <xan@gnome.org>
-   Copyright (C) 2008 Dan Winship <danw@gnome.org>
-   Mostly copied from libSoup 2.24, coding style adjusted */
 static void
-cookie_jar_changed_cb (SoupCookieJar* jar,
-                       SoupCookie*    old_cookie,
-                       SoupCookie*    new_cookie,
-                       gchar*         filename)
+katze_http_cookies_jar_changed_cb (SoupCookieJar*    jar,
+                                   SoupCookie*       old_cookie,
+                                   SoupCookie*       new_cookie,
+                                   KatzeHttpCookies* http_cookies)
 {
     GObject* settings;
     guint accept_cookies;
 
     if (old_cookie)
-        delete_cookie (filename, old_cookie);
+        soup_cookie_set_max_age (old_cookie, 0);
 
     if (new_cookie)
     {
-        FILE *out;
-
         settings = g_object_get_data (G_OBJECT (jar), "midori-settings");
         accept_cookies = katze_object_get_enum (settings, "accept-cookies");
         if (accept_cookies == 2 /* MIDORI_ACCEPT_COOKIES_NONE */)
         {
-            soup_cookie_jar_delete_cookie (jar, new_cookie);
+            soup_cookie_set_max_age (new_cookie, 0);
         }
         else if (accept_cookies == 1 /* MIDORI_ACCEPT_COOKIES_SESSION */
             && new_cookie->expires)
         {
-            soup_cookie_jar_delete_cookie (jar, new_cookie);
+            soup_cookie_set_max_age (new_cookie, -1);
         }
         else if (new_cookie->expires)
         {
             gint age = katze_object_get_int (settings, "maximum-cookie-age");
-            soup_cookie_set_max_age (new_cookie,
-                age * SOUP_COOKIE_MAX_AGE_ONE_DAY);
-
-            if (!(out = fopen (filename, "a")))
-                return;
-            write_cookie (out, new_cookie);
-            if (fclose (out) != 0)
-                return;
+            if (age > 0)
+            {
+                SoupDate* max_date = soup_date_new_from_now (
+                    age * SOUP_COOKIE_MAX_AGE_ONE_DAY);
+                if (soup_date_to_time_t (new_cookie->expires)
+                  > soup_date_to_time_t (max_date))
+                    soup_cookie_set_expires (new_cookie, max_date);
+            }
+            else
+            {
+                /* An age of 0 to SoupCookie means already-expired
+                   A user choosing 0 days probably expects 1 hour. */
+                soup_cookie_set_max_age (new_cookie, SOUP_COOKIE_MAX_AGE_ONE_HOUR);
+            }
         }
     }
+
+    if (g_getenv ("MIDORI_COOKIES_DEBUG") != NULL)
+        http_cookies->counter++;
+
+    if (!http_cookies->timeout && (old_cookie || new_cookie->expires))
+        http_cookies->timeout = g_timeout_add_seconds (5,
+            (GSourceFunc)katze_http_cookies_update_jar, http_cookies);
 }
 
 static void
 katze_http_cookies_attach (SoupSessionFeature* feature,
                            SoupSession*        session)
 {
-    SoupSessionFeature* cookie_jar;
-    gchar* filename;
-
-    cookie_jar = soup_session_get_feature (session, SOUP_TYPE_COOKIE_JAR);
-    g_return_if_fail (cookie_jar != NULL);
-    filename = g_object_get_data (G_OBJECT (feature), "filename");
-    g_return_if_fail (filename != NULL);
-    cookie_jar_load (SOUP_COOKIE_JAR (cookie_jar), filename);
-    g_signal_connect_data (cookie_jar, "changed",
-        G_CALLBACK (cookie_jar_changed_cb), g_strdup (filename),
-        (GClosureNotify)g_free, 0);
+    KatzeHttpCookies* http_cookies = (KatzeHttpCookies*)feature;
+    SoupSessionFeature* jar = soup_session_get_feature (session, SOUP_TYPE_COOKIE_JAR);
+    g_return_if_fail (jar != NULL);
+    http_cookies->filename = g_object_get_data (G_OBJECT (feature), "filename");
+    g_return_if_fail (http_cookies->filename != NULL);
+    http_cookies->jar = g_object_ref (jar);
+    cookie_jar_load (http_cookies->jar, http_cookies->filename);
+    g_signal_connect (jar, "changed",
+        G_CALLBACK (katze_http_cookies_jar_changed_cb), feature);
 
 }
 
@@ -276,7 +298,11 @@ static void
 katze_http_cookies_detach (SoupSessionFeature* feature,
                            SoupSession*        session)
 {
-    /* Nothing to do. */
+    KatzeHttpCookies* http_cookies = (KatzeHttpCookies*)feature;
+    if (http_cookies->timeout)
+        katze_http_cookies_update_jar (http_cookies);
+    katze_assign (http_cookies->filename, NULL);
+    katze_object_assign (http_cookies->jar, NULL);
 }
 
 static void
@@ -288,13 +314,23 @@ katze_http_cookies_session_feature_iface_init (SoupSessionFeatureInterface *ifac
 }
 
 static void
+katze_http_cookies_finalize (GObject* object)
+{
+    katze_http_cookies_detach ((SoupSessionFeature*)object, NULL);
+}
+
+static void
 katze_http_cookies_class_init (KatzeHttpCookiesClass* class)
 {
-    /* Nothing to do. */
+    GObjectClass* gobject_class = (GObjectClass*)class;
+    gobject_class->finalize = katze_http_cookies_finalize;
 }
 
 static void
 katze_http_cookies_init (KatzeHttpCookies* http_cookies)
 {
-    /* Nothing to do. */
+    http_cookies->filename = NULL;
+    http_cookies->jar = NULL;
+    http_cookies->timeout = 0;
+    http_cookies->counter = 0;
 }

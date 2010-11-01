@@ -247,6 +247,20 @@ sokoke_show_uri_with_mime_type (GdkScreen*   screen,
     return success;
 }
 
+static void
+sokoke_open_with_response_cb (GtkWidget* dialog,
+                              gint       response,
+                              GtkEntry*  entry)
+{
+    if (response == GTK_RESPONSE_ACCEPT)
+    {
+        const gchar* command = gtk_entry_get_text (entry);
+        const gchar* uri = g_object_get_data (G_OBJECT (dialog), "uri");
+        sokoke_spawn_program (command, uri);
+    }
+    gtk_widget_destroy (dialog);
+}
+
 /**
  * sokoke_show_uri:
  * @screen: a #GdkScreen, or %NULL
@@ -268,7 +282,6 @@ sokoke_show_uri (GdkScreen*   screen,
                  guint32      timestamp,
                  GError**     error)
 {
-
     #if HAVE_HILDON
     HildonURIAction* action = hildon_uri_get_default_action_by_uri (uri, NULL);
     return hildon_uri_open (uri, action, error);
@@ -281,9 +294,9 @@ sokoke_show_uri (GdkScreen*   screen,
     GFile *file;
     gchar *free_uri;
 
+    g_return_val_if_fail (GDK_IS_SCREEN (screen) || !screen, FALSE);
     g_return_val_if_fail (uri != NULL, FALSE);
     g_return_val_if_fail (!error || !*error, FALSE);
-    g_return_val_if_fail (GDK_IS_SCREEN (screen) || !screen, FALSE);
 
     file = g_file_new_for_uri (uri);
     app_info = g_file_query_default_handler (file, NULL, error);
@@ -343,6 +356,11 @@ sokoke_show_uri (GdkScreen*   screen,
 
     const gchar* fallbacks [] = { "xdg-open", "exo-open", "gnome-open" };
     gsize i;
+    GtkWidget* dialog;
+    GtkWidget* box;
+    gchar* filename;
+    gchar* ms;
+    GtkWidget* entry;
 
     g_return_val_if_fail (GDK_IS_SCREEN (screen) || !screen, FALSE);
     g_return_val_if_fail (uri != NULL, FALSE);
@@ -369,21 +387,40 @@ sokoke_show_uri (GdkScreen*   screen,
             *error = NULL;
     }
 
-    return FALSE;
+    dialog = gtk_dialog_new_with_buttons (_("Open with"), NULL, 0,
+        GTK_STOCK_CANCEL, GTK_RESPONSE_CANCEL,
+        GTK_STOCK_OPEN, GTK_RESPONSE_ACCEPT, NULL);
+    box = gtk_dialog_get_content_area (GTK_DIALOG (dialog));
+    filename = g_filename_from_uri (uri, NULL, NULL);
+    ms = g_strdup_printf (_("Choose an application or command to open \"%s\":"),
+                          filename);
+    gtk_box_pack_start (GTK_BOX (box), gtk_label_new (ms), TRUE, FALSE, 4);
+    g_free (ms);
+    entry = gtk_entry_new ();
+    gtk_entry_set_activates_default (GTK_ENTRY (entry), TRUE);
+    gtk_box_pack_start (GTK_BOX (box), entry, TRUE, FALSE, 4);
+    g_signal_connect (dialog, "response",
+                      G_CALLBACK (sokoke_open_with_response_cb), entry);
+    g_object_set_data_full (G_OBJECT (dialog), "uri",
+                            filename, (GDestroyNotify)g_free);
+    gtk_widget_show_all (dialog);
+    gtk_dialog_set_default_response (GTK_DIALOG (dialog), GTK_RESPONSE_ACCEPT);
+    gtk_widget_grab_focus (entry);
+
+    return TRUE;
     #endif
 }
 
 gboolean
 sokoke_spawn_program (const gchar* command,
-                      const gchar* argument,
-                      gboolean     filename)
+                      const gchar* argument)
 {
     GError* error;
 
     g_return_val_if_fail (command != NULL, FALSE);
     g_return_val_if_fail (argument != NULL, FALSE);
 
-    if (filename)
+    if (!g_strstr_len (argument, 8, "://"))
     {
         gboolean success;
 
@@ -444,16 +481,19 @@ sokoke_spawn_program (const gchar* command,
     {
         /* FIXME: Implement Hildon specific version */
         gchar* uri_format;
+        gchar* argument_quoted;
         gchar* command_ready;
         gchar** argv;
 
         if ((uri_format = strstr (command, "%u")))
             uri_format[1] = 's';
 
+        argument_quoted = g_shell_quote (argument);
         if (strstr (command, "%s"))
-            command_ready = g_strdup_printf (command, argument);
+            command_ready = g_strdup_printf (command, argument_quoted);
         else
-            command_ready = g_strconcat (command, " ", argument, NULL);
+            command_ready = g_strconcat (command, " ", argument_quoted, NULL);
+        g_free (argument_quoted);
 
         error = NULL;
         if (!g_shell_parse_argv (command_ready, NULL, &argv, &error))
@@ -484,10 +524,30 @@ sokoke_spawn_program (const gchar* command,
     return TRUE;
 }
 
+void
+sokoke_spawn_app (const gchar* uri,
+                  gboolean     inherit_config)
+{
+    const gchar* executable = sokoke_get_argv (NULL)[0];
+    /* "midori"
+       "/usr/bin/midori"
+       "c:/Program Files/Midori/bin/midori.exe" */
+    gchar* quoted = g_shell_quote (executable);
+    gchar* command;
+    if (inherit_config)
+        command = g_strconcat (quoted, " -c ", sokoke_set_config_dir (NULL),
+                                       " -a", NULL);
+    else
+        command = g_strconcat (quoted, " -a", NULL);
+    g_free (quoted);
+    sokoke_spawn_program (command, uri);
+    g_free (command);
+}
+
 /**
  * sokoke_hostname_from_uri:
  * @uri: an URI string
- * @path: location of a string pointer
+ * @path: location of a string, or %NULL
  *
  * Returns the hostname of the specified URI.
  *
@@ -503,10 +563,15 @@ sokoke_hostname_from_uri (const gchar* uri,
 
     if ((hostname = strchr (uri, '/')))
     {
+        gchar* pathname;
         if (hostname[1] == '/')
             hostname += 2;
-        if ((*path = strchr (hostname, '/')))
-            return g_strndup (hostname, *path - hostname);
+        if ((pathname = strchr (hostname, '/')))
+        {
+            if (path != NULL)
+                *path = pathname;
+            return g_strndup (hostname, pathname - hostname);
+        }
         else
             return g_strdup (hostname);
     }
@@ -674,6 +739,28 @@ sokoke_resolve_hostname (const gchar* hostname)
     return host_resolved == 1 ? TRUE : FALSE;
 }
 
+gboolean
+sokoke_external_uri (const gchar* uri)
+{
+    gchar* scheme;
+    GAppInfo* info;
+
+    if (!uri || !strncmp (uri, "http", 4)
+             || !strncmp (uri, "file", 4)
+             || !strncmp (uri, "about:", 6))
+        return FALSE;
+
+    scheme = g_uri_parse_scheme (uri);
+    if (!scheme)
+        return FALSE;
+
+    info = g_app_info_get_default_for_uri_scheme (scheme);
+    g_free (scheme);
+    if (info)
+        g_object_unref (info);
+    return info != NULL;
+}
+
 /**
  * sokoke_magic_uri:
  * @uri: a string typed by a user
@@ -696,8 +783,7 @@ sokoke_magic_uri (const gchar* uri)
     /* Just return if it's a javascript: or mailto: uri */
     if (!strncmp (uri, "javascript:", 11)
      || !strncmp (uri, "mailto:", 7)
-     || !strncmp (uri, "tel:", 4)
-     || !strncmp (uri, "callto:", 7)
+     || sokoke_external_uri (uri)
      || !strncmp (uri, "data:", 5)
      || !strncmp (uri, "about:", 6))
         return g_strdup (uri);
@@ -917,6 +1003,7 @@ sokoke_xfce_header_new (const gchar* icon,
     if (sokoke_get_desktop () == SOKOKE_DESKTOP_XFCE)
     {
         GtkWidget* entry;
+        GtkStyle* style;
         gchar* markup;
         GtkWidget* xfce_heading;
         GtkWidget* hbox;
@@ -927,8 +1014,9 @@ sokoke_xfce_header_new (const gchar* icon,
 
         xfce_heading = gtk_event_box_new ();
         entry = gtk_entry_new ();
+        style = gtk_widget_get_style (entry);
         gtk_widget_modify_bg (xfce_heading, GTK_STATE_NORMAL,
-            &entry->style->base[GTK_STATE_NORMAL]);
+            &style->base[GTK_STATE_NORMAL]);
         hbox = gtk_hbox_new (FALSE, 12);
         gtk_container_set_border_width (GTK_CONTAINER (hbox), 6);
         if (icon)
@@ -939,7 +1027,7 @@ sokoke_xfce_header_new (const gchar* icon,
         gtk_box_pack_start (GTK_BOX (hbox), image, FALSE, FALSE, 0);
         label = gtk_label_new (NULL);
         gtk_widget_modify_fg (label, GTK_STATE_NORMAL
-         , &entry->style->text[GTK_STATE_NORMAL]);
+         , &style->text[GTK_STATE_NORMAL]);
         markup = g_strdup_printf ("<span size='large' weight='bold'>%s</span>",
                                   title);
         gtk_label_set_markup (GTK_LABEL (label), markup);
@@ -1208,6 +1296,7 @@ sokoke_action_create_popup_menu_item (GtkAction* action)
     }
     gtk_widget_set_sensitive (menuitem, sensitive);
     sokoke_widget_set_visible (menuitem, visible);
+    gtk_widget_set_no_show_all (menuitem, TRUE);
     g_signal_connect_swapped (menuitem, "activate",
                               G_CALLBACK (gtk_action_activate), action);
 
@@ -1333,7 +1422,7 @@ sokoke_register_stock_items (void)
         gtk_icon_factory_add (factory, items[i].stock_id, icon_set);
         gtk_icon_set_unref (icon_set);
     }
-    gtk_stock_add ((GtkStockItem*)items, G_N_ELEMENTS (items));
+    gtk_stock_add_static ((GtkStockItem*)items, G_N_ELEMENTS (items));
     gtk_icon_factory_add_default (factory);
     g_object_unref (factory);
 
@@ -1392,6 +1481,8 @@ sokoke_register_stock_items (void)
  * @new_config_dir: an absolute path, or %NULL
  *
  * Retrieves and/ or sets the base configuration folder.
+ *
+ * "/" means no configuration is saved.
  *
  * Return value: the configuration folder, or %NULL
  **/
@@ -1956,4 +2047,38 @@ sokoke_accept_languages (const gchar* const * lang_names)
     langs_str = g_strjoinv (", ", langs_array);
 
     return langs_str;
+}
+
+/**
+ * sokoke_register_privacy_item:
+ * @name: the name of the privacy item
+ * @label: a user visible, localized label
+ * @clear: a callback clearing data
+ *
+ * Registers an item to clear data, either via the
+ * Clear Private Data dialogue or when Midori quits.
+ *
+ * Return value: a #GList if all arguments are %NULL
+ **/
+GList*
+sokoke_register_privacy_item (const gchar* name,
+                              const gchar* label,
+                              GCallback    clear)
+{
+    static GList* items = NULL;
+    SokokePrivacyItem* item;
+
+    if (name == NULL && label == NULL && clear == NULL)
+        return items;
+
+    g_return_val_if_fail (name != NULL, NULL);
+    g_return_val_if_fail (label != NULL, NULL);
+    g_return_val_if_fail (clear != NULL, NULL);
+
+    item = g_new (SokokePrivacyItem, 1);
+    item->name = g_strdup (name);
+    item->label = g_strdup (label);
+    item->clear = clear;
+    items = g_list_append (items, item);
+    return NULL;
 }

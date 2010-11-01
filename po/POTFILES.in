@@ -5,6 +5,7 @@ midori/main.c
 midori/midori-app.c
 midori/midori-array.c
 midori/midori-browser.c
+midori/midori-extension.c
 midori/midori-locationaction.c
 midori/midori-panel.c
 midori/midori-websettings.c
@@ -15,7 +16,6 @@ midori/sokoke.c
 toolbars/midori-findbar.c
 toolbars/midori-transferbar.c
 panels/midori-bookmarks.c
-panels/midori-console.c
 panels/midori-extensions.c
 panels/midori-history.c
 panels/midori-transfers.c
@@ -33,7 +33,6 @@ extensions/cookie-manager/cookie-manager.c
 extensions/cookie-manager/cookie-manager-page.c
 extensions/cookie-manager/main.c
 extensions/copy-tabs.c
-extensions/external-applications.vala
 extensions/feed-panel/feed-atom.c
 extensions/feed-panel/feed-panel.c
 extensions/feed-panel/feed-parse.c

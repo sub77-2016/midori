@@ -38,6 +38,8 @@
     #define gtk_widget_get_allocation(wdgt, alloc) *alloc = wdgt->allocation
 #endif
 
+#define I_ g_intern_static_string
+
 static void
 proxy_toggle_button_toggled_cb (GtkToggleButton* button,
                                 GObject*         object)
@@ -104,6 +106,8 @@ katze_app_info_get_commandline (GAppInfo* info)
     #endif
     if (!exe)
         exe = g_app_info_get_executable (info);
+    if (!exe)
+        exe = g_app_info_get_name (info);
     return exe;
 }
 
@@ -470,6 +474,9 @@ g_icon_to_string (GIcon *icon)
  *     "custom-PROPERTY": the last value of an enumeration will be the "custom"
  *         value, where the user may enter text freely, which then updates
  *         the property PROPERTY instead. This applies only to enumerations.
+ *     Since 0.2.9 the following hints are also supported:
+ *     "languages": the widget will be particularly suitable for choosing
+ *         multiple language codes, ie. "de,en_GB".
  *
  * Any other values for @hint are silently ignored.
  *
@@ -508,7 +515,7 @@ katze_property_proxy (gpointer     object,
     type = G_PARAM_SPEC_TYPE (pspec);
     nick = g_param_spec_get_nick (pspec);
     _hint = g_intern_string (hint);
-    if (_hint == g_intern_string ("blurb"))
+    if (_hint == I_("blurb"))
         nick = g_param_spec_get_blurb (pspec);
     string = NULL;
     if (type == G_TYPE_PARAM_BOOLEAN)
@@ -517,7 +524,7 @@ katze_property_proxy (gpointer     object,
         gboolean toggled = katze_object_get_boolean (object, property);
 
         #ifdef HAVE_HILDON_2_2
-        if (_hint != g_intern_string ("toggle"))
+        if (_hint != I_("toggle"))
         {
             widget = hildon_check_button_new (HILDON_SIZE_FINGER_HEIGHT | HILDON_SIZE_AUTO_WIDTH);
             gtk_button_set_label (GTK_BUTTON (widget), gettext (nick));
@@ -527,7 +534,7 @@ katze_property_proxy (gpointer     object,
         #endif
         {
             widget = gtk_check_button_new ();
-            if (_hint == g_intern_string ("toggle"))
+            if (_hint == I_("toggle"))
                 gtk_toggle_button_set_mode (GTK_TOGGLE_BUTTON (widget), FALSE);
             else
                 gtk_button_set_label (GTK_BUTTON (widget), gettext (nick));
@@ -542,7 +549,7 @@ katze_property_proxy (gpointer     object,
             G_CALLBACK (proxy_widget_boolean_destroy_cb), object);
         g_free (notify_property);
     }
-    else if (type == G_TYPE_PARAM_STRING && _hint == g_intern_string ("file"))
+    else if (type == G_TYPE_PARAM_STRING && _hint == I_("file"))
     {
         string = katze_object_get_string (object, property);
 
@@ -557,7 +564,7 @@ katze_property_proxy (gpointer     object,
             g_signal_connect (widget, "selection-changed",
                               G_CALLBACK (proxy_file_file_set_cb), object);
     }
-    else if (type == G_TYPE_PARAM_STRING && _hint == g_intern_string ("folder"))
+    else if (type == G_TYPE_PARAM_STRING && _hint == I_("folder"))
     {
         string = katze_object_get_string (object, property);
 
@@ -571,7 +578,7 @@ katze_property_proxy (gpointer     object,
             g_signal_connect (widget, "selection-changed",
                               G_CALLBACK (proxy_folder_file_set_cb), object);
     }
-    else if (type == G_TYPE_PARAM_STRING && _hint == g_intern_string ("uri"))
+    else if (type == G_TYPE_PARAM_STRING && _hint == I_("uri"))
     {
         string = katze_object_get_string (object, property);
 
@@ -590,14 +597,14 @@ katze_property_proxy (gpointer     object,
                               G_CALLBACK (proxy_uri_file_set_cb), object);
         #endif
     }
-    else if (type == G_TYPE_PARAM_STRING && (_hint == g_intern_string ("font")
-        || _hint == g_intern_string ("font-monospace")))
+    else if (type == G_TYPE_PARAM_STRING && (_hint == I_("font")
+        || _hint == I_("font-monospace")))
     {
         GtkComboBox* combo;
         gint n_families, i;
         PangoContext* context;
         PangoFontFamily** families;
-        gboolean monospace = _hint == g_intern_string ("font-monospace");
+        gboolean monospace = _hint == I_("font-monospace");
         string = katze_object_get_string (object, property);
 
         widget = gtk_combo_box_new_text ();
@@ -638,6 +645,8 @@ katze_property_proxy (gpointer     object,
         const gchar* app_type = &hint[12];
         GtkSettings* settings;
         gint icon_width = 16;
+        GtkTreeIter iter_none;
+        GAppInfo* info;
 
         settings = gtk_settings_get_for_screen (gdk_screen_get_default ());
         gtk_icon_size_lookup_for_settings (settings, GTK_ICON_SIZE_MENU,
@@ -662,14 +671,12 @@ katze_property_proxy (gpointer     object,
         if (!g_strcmp0 (string, ""))
             katze_assign (string, NULL);
 
-        if (apps)
-        {
-            GtkTreeIter iter_none;
-            gint i = 0;
-            GAppInfo* info;
+        gtk_list_store_insert_with_values (model, &iter_none, 0,
+            0, NULL, 1, NULL, 2, _("None"), 3, icon_width, -1);
 
-            gtk_list_store_insert_with_values (model, &iter_none, 0,
-                0, NULL, 1, NULL, 2, _("None"), 3, icon_width, -1);
+        if (apps != NULL)
+        {
+            gint i = 0;
 
             while ((info = g_list_nth_data (apps, i++)))
             {
@@ -689,7 +696,10 @@ katze_property_proxy (gpointer     object,
 
                 g_free (icon_name);
             }
+            g_list_free (apps);
+        }
 
+        {
             info = g_app_info_create_from_commandline ("",
                 "", G_APP_INFO_CREATE_NONE, NULL);
             gtk_list_store_insert_with_values (model, NULL, G_MAXINT,
@@ -724,7 +734,6 @@ katze_property_proxy (gpointer     object,
                     gtk_combo_box_set_active_iter (combo, &iter_none);
             }
         }
-        g_list_free (apps);
         g_signal_connect (widget, "changed",
                           G_CALLBACK (proxy_combo_box_apps_changed_cb), object);
     }
@@ -736,6 +745,17 @@ katze_property_proxy (gpointer     object,
         g_object_get (object, property, &string, NULL);
         if (!string)
             string = g_strdup (G_PARAM_SPEC_STRING (pspec)->default_value);
+        if (!(string && *string) && _hint == I_("languages"))
+        {
+            gchar* lang = g_strjoinv (",", (gchar**)g_get_language_names ());
+            if (g_str_has_suffix (lang, ",C"))
+            {
+                string = g_strndup (lang, strlen (lang) - 2);
+                g_free (lang);
+            }
+            else
+                string = lang;
+        }
         gtk_entry_set_text (GTK_ENTRY (widget), string ? string : "");
         g_signal_connect (widget, "activate",
                           G_CALLBACK (proxy_entry_activate_cb), object);

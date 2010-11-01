@@ -291,22 +291,23 @@ midori_addons_open_in_editor_clicked_cb (GtkWidget* toolitem,
         MidoriWebSettings* settings;
         MidoriBrowser* browser;
         gchar* text_editor;
-        gchar* element_uri;
 
         browser = midori_browser_get_for_widget (GTK_WIDGET (addons->treeview));
         settings = katze_object_get_object (browser, "settings");
 
         gtk_tree_model_get (model, &iter, 0, &element, -1);
-        element_uri = g_filename_to_uri (element->fullpath, NULL, NULL);
 
         g_object_get (settings, "text-editor", &text_editor, NULL);
         if (text_editor && *text_editor)
-            sokoke_spawn_program (text_editor, element_uri, TRUE);
+            sokoke_spawn_program (text_editor, element->fullpath);
         else
+        {
+            gchar* element_uri = g_filename_to_uri (element->fullpath, NULL, NULL);
             sokoke_show_uri (NULL, element_uri,
                              gtk_get_current_event_time (), NULL);
+            g_free (element_uri);
+        }
 
-        g_free (element_uri);
         g_free (text_editor);
     }
 }
@@ -516,7 +517,6 @@ static void
 addons_free_elements (GSList* elements)
 {
     struct AddonElement* element;
-    GSList* start = elements;
 
     while (elements)
     {
@@ -527,11 +527,10 @@ addons_free_elements (GSList* elements)
         g_free (element->script_content);
         g_slist_free (element->includes);
         g_slist_free (element->excludes);
+        g_slice_free (struct AddonElement, element);
 
         elements = g_slist_next (elements);
     }
-
-    g_slist_free (start);
 }
 
 static void
@@ -707,6 +706,7 @@ addons_get_files (AddonsKind kind)
     }
 
     g_free (file_extension);
+    g_slist_free (directories);
 
     return files;
 }
@@ -951,7 +951,6 @@ addons_update_elements (MidoriExtension* extension,
                         AddonsKind       kind)
 {
     GSList* addon_files;
-    GSList* files_list;
     gchar* name;
     gchar* fullpath;
     struct AddonElement* element;
@@ -992,7 +991,6 @@ addons_update_elements (MidoriExtension* extension,
     g_key_file_load_from_file (keyfile, config_file, G_KEY_FILE_NONE, NULL);
 
     addon_files = addons_get_files (kind);
-    files_list = addon_files;
 
     elements = NULL;
     while (addon_files)
@@ -1001,7 +999,7 @@ addons_update_elements (MidoriExtension* extension,
         gchar* tooltip;
 
         fullpath = addon_files->data;
-        element = g_new (struct AddonElement, 1);
+        element = g_slice_new (struct AddonElement);
         element->displayname = g_filename_display_basename (fullpath);
         element->fullpath = fullpath;
         element->enabled = TRUE;
@@ -1065,13 +1063,11 @@ addons_update_elements (MidoriExtension* extension,
         addon_files = g_slist_next (addon_files);
         elements = g_slist_prepend (elements, element);
     }
-    g_slist_free (files_list);
     g_free (config_file);
     g_key_file_free (keyfile);
 
-    if (addons_list)
-        g_free (addons_list);
-    addons_list = g_new (struct AddonsList, 1);
+    g_slice_free (struct AddonsList, addons_list);
+    addons_list = g_slice_new (struct AddonsList);
     addons_list->elements = elements;
     addons_list->liststore = liststore;
 

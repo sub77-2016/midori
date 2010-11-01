@@ -24,10 +24,19 @@
 #define MAXLENGTH 1024 * 1024
 
 static gchar*
+web_cache_get_cache_dir (void)
+{
+    static gchar* cache_dir = NULL;
+    if (!cache_dir)
+        cache_dir = g_build_filename (g_get_user_cache_dir (),
+                                      PACKAGE_NAME, "web", NULL);
+    return cache_dir;
+}
+
+static gchar*
 web_cache_get_cached_path (MidoriExtension* extension,
                            const gchar*     uri)
 {
-    static const gchar* cache_path = NULL;
     gchar* checksum;
     gchar* folder;
     gchar* sub_path;
@@ -36,12 +45,10 @@ web_cache_get_cached_path (MidoriExtension* extension,
     gchar* cached_filename;
     gchar* cached_path;
 
-    if (!cache_path)
-        cache_path = midori_extension_get_string (extension, "path");
     checksum = g_compute_checksum_for_string (G_CHECKSUM_MD5, uri, -1);
     folder = g_strdup_printf ("%c%c", checksum[0], checksum[1]);
-    sub_path = g_build_path (G_DIR_SEPARATOR_S, cache_path, folder, NULL);
-    /* FIXME: Wrong place? */
+    sub_path = g_build_path (G_DIR_SEPARATOR_S,
+                             web_cache_get_cache_dir (), folder, NULL);
     katze_mkdir_with_parents (sub_path, 0700);
     g_free (folder);
 
@@ -82,7 +89,7 @@ web_cache_save_headers (SoupMessage* msg,
       return TRUE;
 }
 
-GHashTable*
+static GHashTable*
 web_cache_get_headers (gchar* filename)
 {
     GHashTable* headers;
@@ -435,12 +442,11 @@ static void
 web_cache_activate_cb (MidoriExtension* extension,
                        MidoriApp*       app)
 {
-    const gchar* cache_path = midori_extension_get_string (extension, "path");
     KatzeArray* browsers;
     MidoriBrowser* browser;
     SoupSession* session = webkit_get_default_session ();
 
-    katze_mkdir_with_parents (cache_path, 0700);
+    katze_mkdir_with_parents (web_cache_get_cache_dir (), 0700);
     g_signal_connect (session, "request-queued",
                       G_CALLBACK (web_cache_session_request_queued_cb), extension);
 
@@ -453,24 +459,27 @@ web_cache_activate_cb (MidoriExtension* extension,
     g_object_unref (browsers);
 }
 
+static void
+web_cache_clear_cache_cb (void)
+{
+    sokoke_remove_path (web_cache_get_cache_dir (), TRUE);
+}
+
 MidoriExtension*
 extension_init (void)
 {
-    gchar* cache_path = g_build_filename (g_get_user_cache_dir (),
-                                          PACKAGE_NAME, "web", NULL);
     MidoriExtension* extension = g_object_new (MIDORI_TYPE_EXTENSION,
         "name", _("Web Cache"),
         "description", _("Cache HTTP communication on disk"),
         "version", "0.1",
         "authors", "Christian Dywan <christian@twotoasts.de>",
         NULL);
-    midori_extension_install_string (extension, "path", cache_path);
-    midori_extension_install_integer (extension, "size", 50);
-
-    g_free (cache_path);
 
     g_signal_connect (extension, "activate",
         G_CALLBACK (web_cache_activate_cb), NULL);
+
+    sokoke_register_privacy_item ("web-cache", _("Web Cache"),
+        G_CALLBACK (web_cache_clear_cache_cb));
 
     return extension;
 }

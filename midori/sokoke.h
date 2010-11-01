@@ -35,6 +35,8 @@
 
 #if !GTK_CHECK_VERSION (2, 14, 0)
     #define gtk_dialog_get_content_area(dlg) dlg->vbox
+    #define gtk_dialog_get_action_area(dlg) dlg->action_area
+    #define gtk_widget_get_window(wdgt) wdgt->window
 #endif
 
 #if !GTK_CHECK_VERSION (2, 16, 0)
@@ -50,6 +52,9 @@
     #define gtk_widget_has_focus(widget) GTK_WIDGET_HAS_FOCUS (widget)
     #define gtk_widget_get_visible(widget) GTK_WIDGET_VISIBLE (widget)
     #define gtk_widget_get_sensitive(widget) GTK_WIDGET_IS_SENSITIVE (widget)
+    #define gtk_widget_set_can_focus(widget,flag) \
+        GTK_WIDGET_SET_FLAGS (widget, GTK_CAN_FOCUS)
+    #define gtk_widget_get_allocation(wdgt, alloc) *alloc = wdgt->allocation
 #endif
 
 #if !GTK_CHECK_VERSION (2, 20, 0)
@@ -96,9 +101,12 @@ sokoke_show_uri                         (GdkScreen*      screen,
                                          GError**        error);
 
 gboolean
-sokoke_spawn_program                    (const gchar*    command,
-                                         const gchar*    argument,
-                                         gboolean        quote);
+sokoke_spawn_program                    (const gchar* command,
+                                         const gchar* argument);
+
+void
+sokoke_spawn_app                        (const gchar*    uri,
+                                         gboolean        inherit_config);
 
 gchar* sokoke_search_uri                (const gchar*    uri,
                                          const gchar*    keywords);
@@ -109,6 +117,9 @@ sokoke_hostname_from_uri                (const gchar*    uri,
 
 gchar*
 sokoke_uri_to_ascii                     (const gchar*    uri);
+
+gboolean
+sokoke_external_uri                     (const gchar*    uri);
 
 gchar*
 sokoke_magic_uri                        (const gchar*    uri);
@@ -255,5 +266,17 @@ sokoke_accept_languages                 (const gchar* const * lang_names);
 gboolean
 sokoke_recursive_fork_protection        (const gchar*         uri,
                                          gboolean             set_uri);
+
+typedef struct
+{
+    gchar* name;
+    gchar* label;
+    GCallback clear;
+} SokokePrivacyItem;
+
+GList*
+sokoke_register_privacy_item (const gchar* name,
+                              const gchar* label,
+                              GCallback    clear);
 
 #endif /* !__SOKOKE_H__ */
