@@ -1,4 +1,4 @@
-midori (0.2.8-1) UNRELEASED; urgency=low
+midori (0.2.9-1) UNRELEASED; urgency=low
 
   * New upstream release.
   * debian/control:
