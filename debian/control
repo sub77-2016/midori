@@ -25,7 +25,8 @@ Build-Depends: debhelper (>= 7.0.50),
 # For testing under xvfb:
  xvfb,
  xauth,
- xfonts-base
+ xfonts-base,
+ hardening-includes
 # Disabled optional dependencies:
 Build-Conflicts: gtk-doc-tools,
  libgtksourceview2.0-dev (>= 2.0),

@@ -1,5 +1,15 @@
 #!/usr/bin/make -f
 
+LDFLAGS=$(shell dpkg-buildflags --get LDFLAGS)
+CFLAGS=$(shell dpkg-buildflags --get CFLAGS)
+CFLAGS+=$(HARDENING_CFLAGS)
+#LDFLAGS+=-Wl,-z,defs -Wl,--as-needed $(HARDENING_LDFLAGS)
+LDFLAGS+=-Wl,--as-needed $(HARDENING_LDFLAGS)
+
+# waf, thank you _so_ much
+CCFLAGS=$(CFLAGS)
+LINKFLAGS=$(LDFLAGS)
+
 CMD=$(shell echo $@ | sed 's/override_//')
 
 LIBWEBKIT_PKG=$(shell dpkg-query -p libwebkit-dev | grep Depends | sed -r 's/.*(libwebkit[^ ]+).*/\1/')
@@ -45,7 +55,7 @@ override_dh_auto_configure: $(WAFADMIN_FILE)
 	$(WAF) --nocache configure --prefix /usr
 
 override_dh_auto_build: $(WAFADMIN_FILE)
-	$(WAF) --nocache build --debug full
+	$(WAF) build --nocache --debug full
 
 #override_dh_auto_test: $(WAFADMIN_FILE)
 #	xvfb-run $(WAF) --nocache check

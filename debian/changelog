@@ -3,8 +3,12 @@ midori (0.2.8-1) UNRELEASED; urgency=low
   * New upstream release.
   * debian/control:
     - add myself to uploaders.
+  * debian/rules:
+    - pick {C,LD}FLAGS from dpkg-buildflags.
+    - add -Wl,-z,defs -Wl,--as-needed to LDFLAGS.
+    - add hardening flags to {C,LD}FLAGS.
 
- -- Yves-Alexis Perez <corsac@debian.org>  Mon, 20 Sep 2010 23:34:56 +0200
+ -- Yves-Alexis Perez <corsac@debian.org>  Mon, 18 Oct 2010 11:26:48 +0200
 
 midori (0.2.7-1.1) unstable; urgency=low
 
