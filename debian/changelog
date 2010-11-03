@@ -7,8 +7,18 @@ midori (0.2.9-1) UNRELEASED; urgency=low
     - pick {C,LD}FLAGS from dpkg-buildflags.
     - add -Wl,-z,defs -Wl,--as-needed to LDFLAGS.
     - add hardening flags to {C,LD}FLAGS.
+  * debian/rules:
+    - remove waf stuff, midori waf has been updated so it's no longer needed
+      to dynamically patch waf for HPPA.
+    - install $(DISTRO)-config to /etc/xdg/midori to tune the default homepage
+  * debian/{Ubuntu,Debian}-config added, with default homepage setting.
+  * debian/patches:
+    - add-debian-search refreshed.
+    - fix-serial-build dropped thanks to waf upgrade in midori.
+  * debian/control:
+    - drop quilt build-dep, useless now.
 
- -- Yves-Alexis Perez <corsac@debian.org>  Mon, 18 Oct 2010 11:26:48 +0200
+ -- Yves-Alexis Perez <corsac@debian.org>  Tue, 02 Nov 2010 22:42:48 +0100
 
 midori (0.2.7-1.1) unstable; urgency=low
 

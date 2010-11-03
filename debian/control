@@ -4,7 +4,6 @@ Priority: optional
 Maintainer: Ryan Niebur <ryan@debian.org>
 Uploaders: Yves-Alexis Perez <corsac@debian.org>
 Build-Depends: debhelper (>= 7.0.50),
- quilt (>= 0.46-7),
  lsb-release,
  libgtk2.0-dev (>= 2.10),
  libglib2.0-dev,
@@ -26,7 +25,8 @@ Build-Depends: debhelper (>= 7.0.50),
  xvfb,
  xauth,
  xfonts-base,
- hardening-includes
+ hardening-includes,
+ libxss-dev
 # Disabled optional dependencies:
 Build-Conflicts: gtk-doc-tools,
  libgtksourceview2.0-dev (>= 2.0),

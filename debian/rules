@@ -21,16 +21,9 @@ ifneq (0, $(shell test -e $(CONFIG_FILE); echo "$$?"))
 endif
 
 %:
-	dh --with quilt $@
+	dh $@
 
-override_dh_quilt_patch:
-	ln -sf ../$(CONFIG_FILE) midori/midori-debian.h
-	test -e midori/midori-debian.h
-	$(CMD)
-
-#WAF=/usr/bin/waf
-BASE_WAF=./waf
-WAF=env WAFDIR=debian/ $(BASE_WAF)
+WAF=./waf
 
 debian/presubj: debian/presubj.in
 	@echo "presubj parameters:"
@@ -44,43 +37,31 @@ debian/presubj: debian/presubj.in
 override_dh_install: debian/presubj
 	$(CMD) --fail-missing
 
-WAFADMIN_FILE=debian/wafadmin/Runner.py
-WAFADMIN_APPEND=debian/runner-append
-
-override_dh_auto_clean: $(WAFADMIN_FILE)
+override_dh_auto_clean:
 	$(WAF) --nocache distclean
 	rm -rf _build_
+	rm -rf .waf*
 
-override_dh_auto_configure: $(WAFADMIN_FILE)
+override_dh_auto_configure:
 	$(WAF) --nocache configure --prefix /usr
 
-override_dh_auto_build: $(WAFADMIN_FILE)
+override_dh_auto_build:
 	$(WAF) build --nocache --debug full
 
-#override_dh_auto_test: $(WAFADMIN_FILE)
+#override_dh_auto_test:
 #	xvfb-run $(WAF) --nocache check
 
-override_dh_auto_install: $(WAFADMIN_FILE)
+override_dh_auto_install:
 	$(WAF) --nocache install --destdir debian/tmp
 	rm -f debian/tmp/usr/share/doc/midori/COPYING debian/tmp/usr/share/doc/midori/TRANSLATE
 	rm -f debian/tmp/usr/share/midori/res/mootools.js
 	ln -s /usr/share/javascript/mootools/mootools.js debian/tmp/usr/share/midori/res/mootools.js
+	install debian/$(DISTRO)-config debian/tmp/etc/xdg/midori/config
 
 PRIORITY=$(shell sed -r -e '/DEBIAN_WWW_ALTERNATIVES_PRIORITY/ !d' -e 's/.* ([^ ]*)$$/\1/' $(CONFIG_FILE))
 
 debian/midori.postinst: debian/midori.postinst.base
 	sed "s/DEBIAN_WWW_ALTERNATIVES_PRIORITY/$(PRIORITY)/g" debian/midori.postinst.base > debian/midori.postinst
-
-$(WAFADMIN_FILE): $(BASE_WAF) $(WAFADMIN_APPEND)
-	rm -fr debian/wafadmin/ .waf-*
-	$(BASE_WAF) --help >/dev/null
-	cp -a ./.waf-*/wafadmin debian/
-	rm -fr .waf-*
-	cat $(WAFADMIN_APPEND) >> $(WAFADMIN_FILE)
-
-override_dh_clean:
-	rm -fr debian/wafadmin
-	$(CMD)
 
 override_dh_installdeb: debian/midori.postinst
 	$(CMD)

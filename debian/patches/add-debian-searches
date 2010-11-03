@@ -1,8 +1,8 @@
-Fix #520381 - add a Debian search to the default search list.
-and #525991 - Adding debian bugs search to pre-installed searches
+diff --git a/data/search b/data/search
+index c793829..2cd3cbc 100644
 --- a/data/search
 +++ b/data/search
-@@ -19,3 +19,17 @@
+@@ -26,3 +26,17 @@ text=Dictionary, Encyclopedia and Thesaurus
  uri=http://www.thefreedictionary.com/%s
  icon=
  token=fd
