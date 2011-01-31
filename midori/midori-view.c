@@ -59,6 +59,10 @@ midori_view_item_meta_data_changed (KatzeItem*   item,
                                     const gchar* key,
                                     MidoriView*  view);
 
+static void
+_midori_view_set_settings (MidoriView*        view,
+                           MidoriWebSettings* settings);
+
 struct _MidoriView
 {
     GtkVBox parent_instance;
@@ -470,7 +474,7 @@ midori_view_class_init (MidoriViewClass* class)
                                      "Title",
                                      "The title of the currently loaded page",
                                      NULL,
-                                     G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+                                     flags));
 
     /**
      * MidoriView:security:
@@ -600,8 +604,9 @@ midori_view_class_init (MidoriViewClass* class)
 }
 
 static void
-midori_view_update_title (MidoriView* view)
+midori_view_set_title (MidoriView* view, const gchar* title)
 {
+    katze_assign (view->title, g_strdup (title));
     #ifndef G_OS_WIN32
     /* If left-to-right text is combined with right-to-left text the default
        behaviour of Pango can result in awkwardly aligned text. For example
@@ -1447,9 +1452,9 @@ midori_view_apply_scroll_position (MidoriView* view)
     {
         if (view->scrollh > 0)
         {
-            GtkAdjustment* adjustment = katze_object_get_object (view->scrolled_window, "hadjustment");
+            GtkScrolledWindow* scrolled = GTK_SCROLLED_WINDOW (view->scrolled_window);
+            GtkAdjustment* adjustment = gtk_scrolled_window_get_hadjustment (scrolled);
             gtk_adjustment_set_value (adjustment, view->scrollh);
-            g_object_unref (adjustment);
         }
         view->scrollh = -3;
     }
@@ -1457,9 +1462,9 @@ midori_view_apply_scroll_position (MidoriView* view)
     {
         if (view->scrollv > 0)
         {
-            GtkAdjustment* adjustment = katze_object_get_object (view->scrolled_window, "vadjustment");
+            GtkScrolledWindow* scrolled = GTK_SCROLLED_WINDOW (view->scrolled_window);
+            GtkAdjustment* adjustment = gtk_scrolled_window_get_vadjustment (scrolled);
             gtk_adjustment_set_value (adjustment, view->scrollv);
-            g_object_unref (adjustment);
         }
         view->scrollv = -3;
     }
@@ -1542,7 +1547,8 @@ midori_web_view_notify_icon_uri_cb (WebKitWebView* web_view,
                                     GParamSpec*    pspec,
                                     MidoriView*    view)
 {
-    katze_assign (view->icon_uri, katze_object_get_string (web_view, "icon-uri"));
+    const gchar* icon_uri = webkit_web_view_get_icon_uri (web_view);
+    katze_assign (view->icon_uri, g_strdup (icon_uri));
     _midori_web_view_load_icon (view);
 }
 #endif
@@ -1553,8 +1559,8 @@ webkit_web_view_notify_title_cb (WebKitWebView* web_view,
                                  GParamSpec*    pspec,
                                  MidoriView*    view)
 {
-    g_object_get (web_view, "title", &view->title, NULL);
-    midori_view_update_title (view);
+    const gchar* title = webkit_web_view_get_title (web_view);
+    midori_view_set_title (view, title);
     g_object_notify (G_OBJECT (view), "title");
 }
 #else
@@ -1609,26 +1615,33 @@ webkit_web_view_hovering_over_link_cb (WebKitWebView* web_view,
 static void
 midori_view_ensure_link_uri (MidoriView* view,
                              gint        *x,
-                             gint        *y)
+                             gint        *y,
+                             GdkEventButton* event)
 {
     g_return_if_fail (MIDORI_IS_VIEW (view));
 
     #if WEBKIT_CHECK_VERSION (1, 1, 15)
     if (view->web_view && gtk_widget_get_window (view->web_view))
     {
-        gint ex, ey;
-        GdkEventButton event;
+        GdkEventButton ev;
 
-        gdk_window_get_pointer (gtk_widget_get_window (view->web_view), &ex, &ey, NULL);
+        if (!event) {
+            gint ex, ey;
+            event = &ev;
+            gdk_window_get_pointer (gtk_widget_get_window (view->web_view), &ex, &ey, NULL);
+            event->x = ex;
+            event->y = ey;
+        }
+
         if (x != NULL)
-            *x = ex;
+            *x = event->x;
         if (y != NULL)
-            *y = ey;
+            *y = event->y;
 
-        event.x = ex;
-        event.y = ey;
-        katze_object_assign (view->hit_test, webkit_web_view_get_hit_test_result (
-                             WEBKIT_WEB_VIEW (view->web_view), &event));
+        katze_object_assign (view->hit_test,
+            g_object_ref (
+            webkit_web_view_get_hit_test_result (
+            WEBKIT_WEB_VIEW (view->web_view), event)));
         katze_assign (view->link_uri,
              katze_object_get_string (view->hit_test, "link-uri"));
     }
@@ -1650,7 +1663,7 @@ gtk_widget_button_press_event_cb (WebKitWebView*  web_view,
     gboolean background;
 
     event->state = event->state & MIDORI_KEYS_MODIFIER_MASK;
-    midori_view_ensure_link_uri (view, NULL, NULL);
+    midori_view_ensure_link_uri (view, NULL, NULL, event);
     link_uri = midori_view_get_link_uri (view);
 
     switch (event->button)
@@ -1801,9 +1814,16 @@ gtk_widget_key_press_event_cb (WebKitWebView* web_view,
 
     event->state = event->state & MIDORI_KEYS_MODIFIER_MASK;
 
+    /* Handle oddities in Russian keyboard layouts */
+    if (event->hardware_keycode == ';')
+        event->keyval = ',';
+    else if (event->hardware_keycode == '<')
+        event->keyval = '.';
+
     /* Find links by number: . to show links, type number, Return to go */
     if (event->keyval == '.'
-     || (view->find_links > -1 && (digit != -1 || event->keyval == GDK_Return)))
+     || (view->find_links > -1
+     && (digit != -1 || event->keyval == GDK_Return || event->keyval == GDK_Escape)))
     {
         WebKitWebFrame* web_frame = webkit_web_view_get_main_frame (web_view);
         JSContextRef js_context = webkit_web_frame_get_global_context (web_frame);
@@ -1850,10 +1870,11 @@ gtk_widget_key_press_event_cb (WebKitWebView* web_view,
                 "if (return_key || typeof links[i * 10] == 'undefined') {"
                 "    for (var j = 0; j < links.length; j++)"
                 "        links[j].style.display = 'none !important';"
-                "    links[i].parentNode.href; }",
+                "    if (typeof links[i] != 'undefined')"
+                "        links[i].parentNode.href; }",
                 view->find_links, event->keyval == GDK_Return);
             result = sokoke_js_script_eval (js_context, script, NULL);
-            if (strcmp (result, "undefined"))
+            if (result && strstr (result, "://"))
             {
                 view->find_links = -1;
                 if (MIDORI_MOD_NEW_TAB (event->state))
@@ -2236,7 +2257,7 @@ midori_view_populate_popup (MidoriView* view,
     gboolean is_image;
     gboolean is_media;
 
-    midori_view_ensure_link_uri (view, &x, &y);
+    midori_view_ensure_link_uri (view, &x, &y, NULL);
     context = katze_object_get_int (view->hit_test, "context");
     has_selection = context & WEBKIT_HIT_TEST_RESULT_CONTEXT_SELECTION;
     /* Ensure view->selected_text */
@@ -2801,9 +2822,8 @@ webkit_web_view_create_web_view_cb (GtkWidget*      web_view,
         new_view = view;
     else
     {
-        new_view = (MidoriView*)midori_view_new_with_uri (NULL, NULL,
-                                                          view->settings);
-        midori_view_construct_web_view (new_view);
+        new_view = (MidoriView*)midori_view_new_with_title (NULL,
+            view->settings, FALSE);
         g_signal_connect (new_view->web_view, "web-view-ready",
                           G_CALLBACK (webkit_web_view_web_view_ready_cb), view);
     }
@@ -3015,10 +3035,10 @@ midori_view_notify_hadjustment_cb (MidoriView* view,
                                    GParamSpec* pspec,
                                    gpointer    data)
 {
-    GtkAdjustment* hadjustment = katze_object_get_object (view->scrolled_window, "hadjustment");
+    GtkScrolledWindow* scrolled = GTK_SCROLLED_WINDOW (view->scrolled_window);
+    GtkAdjustment* hadjustment = gtk_scrolled_window_get_hadjustment (scrolled);
     g_signal_connect (hadjustment, "notify::value",
         G_CALLBACK (midori_view_hadjustment_notify_value_cb), view);
-    g_object_unref (hadjustment);
 }
 
 static void
@@ -3035,10 +3055,10 @@ midori_view_notify_vadjustment_cb (MidoriView* view,
                                    GParamSpec* pspec,
                                    gpointer    data)
 {
-    GtkAdjustment* vadjustment = katze_object_get_object (view->scrolled_window, "vadjustment");
+    GtkScrolledWindow* scrolled = GTK_SCROLLED_WINDOW (view->scrolled_window);
+    GtkAdjustment* vadjustment = gtk_scrolled_window_get_vadjustment (scrolled);
     g_signal_connect (vadjustment, "notify::value",
         G_CALLBACK (midori_view_vadjustment_notify_value_cb), view);
-    g_object_unref (vadjustment);
 }
 
 static void
@@ -3046,6 +3066,16 @@ katze_net_object_maybe_unref (gpointer object)
 {
     if (object)
         g_object_unref (object);
+}
+
+static GHashTable* midori_view_get_memory (void)
+{
+    static GHashTable* memory = NULL;
+    if (!memory)
+        memory = g_hash_table_new_full (g_str_hash, g_str_equal,
+            g_free, katze_net_object_maybe_unref);
+    return g_hash_table_ref (memory);
+
 }
 
 static void
@@ -3057,8 +3087,7 @@ midori_view_init (MidoriView* view)
     view->mime_type = g_strdup ("");
     view->icon = NULL;
     view->icon_uri = NULL;
-    view->memory = g_hash_table_new_full (g_str_hash, g_str_equal,
-        g_free, katze_net_object_maybe_unref);
+    view->memory = midori_view_get_memory ();
     view->progress = 0.0;
     view->load_status = MIDORI_LOAD_FINISHED;
     view->minimized = FALSE;
@@ -3091,6 +3120,8 @@ midori_view_init (MidoriView* view)
         G_CALLBACK (midori_view_notify_hadjustment_cb), view);
     g_signal_connect (view->scrolled_window, "notify::vadjustment",
         G_CALLBACK (midori_view_notify_vadjustment_cb), view);
+
+    midori_view_construct_web_view (view);
 }
 
 static void
@@ -3107,13 +3138,22 @@ midori_view_finalize (GObject* object)
         midori_view_item_meta_data_changed, view);
 
     if (view->thumb_view)
+    {
         gtk_widget_destroy (view->thumb_view);
+        view->thumb_view = NULL;
+    }
 
     katze_assign (view->uri, NULL);
     katze_assign (view->title, NULL);
     katze_object_assign (view->icon, NULL);
     katze_assign (view->icon_uri, NULL);
-    g_hash_table_destroy (view->memory);
+
+    if (view->memory)
+    {
+        g_hash_table_unref (view->memory);
+        view->memory = NULL;
+    }
+
     katze_assign (view->statusbar_text, NULL);
     katze_assign (view->link_uri, NULL);
     katze_assign (view->selected_text, NULL);
@@ -3141,8 +3181,7 @@ midori_view_set_property (GObject*      object,
     switch (prop_id)
     {
     case PROP_TITLE:
-        katze_assign (view->title, g_value_dup_string (value));
-        midori_view_update_title (view);
+        midori_view_set_title (view, g_value_get_string (value));
         break;
     case PROP_MINIMIZED:
         view->minimized = g_value_get_boolean (value);
@@ -3162,7 +3201,7 @@ midori_view_set_property (GObject*      object,
         katze_assign (view->statusbar_text, g_value_dup_string (value));
         break;
     case PROP_SETTINGS:
-        midori_view_set_settings (view, g_value_get_object (value));
+        _midori_view_set_settings (view, g_value_get_object (value));
         break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -3228,10 +3267,7 @@ midori_view_focus_in_event (GtkWidget*     widget,
 {
     MidoriView* view = MIDORI_VIEW (widget);
 
-    /* Always propagate focus to the child web view,
-     * create it if it's not there yet. */
-    if (!view->web_view)
-        midori_view_construct_web_view (view);
+    /* Always propagate focus to the child web view */
     gtk_widget_grab_focus (view->web_view);
     return TRUE;
 }
@@ -3244,7 +3280,7 @@ midori_view_focus_in_event (GtkWidget*     widget,
  *
  * Return value: a new #MidoriView
  *
- * Deprecated: 0.2.8: Use midori_view_new_with_uri() instead.
+ * Deprecated: 0.2.8: Use midori_view_new_with_title() instead.
  **/
 GtkWidget*
 midori_view_new (KatzeNet* net)
@@ -3253,9 +3289,24 @@ midori_view_new (KatzeNet* net)
 }
 
 static void
-_midori_view_update_settings (MidoriView* view)
+_midori_view_set_settings (MidoriView*        view,
+                           MidoriWebSettings* settings)
 {
     gboolean zoom_text_and_images, kinetic_scrolling;
+
+    if (view->settings)
+        g_signal_handlers_disconnect_by_func (view->settings,
+            midori_view_settings_notify_cb, view);
+
+    katze_object_assign (view->settings, settings);
+    if (!settings)
+        return;
+
+    g_object_ref (settings);
+    g_signal_connect (settings, "notify",
+                      G_CALLBACK (midori_view_settings_notify_cb), view);
+
+    g_object_set (view->web_view, "settings", settings, NULL);
 
     g_free (view->download_manager);
     g_free (view->news_aggregator);
@@ -3281,36 +3332,29 @@ _midori_view_update_settings (MidoriView* view)
 }
 
 /**
- * midori_view_new_with_uri:
+ * midori_view_new_with_title:
  * @uri: an URI string, or %NULL
  * @title: a title, or %NULL
  * @settings: a #MidoriWebSettings, or %NULL
+ * @append: if %TRUE, the view should be appended
  *
  * Creates a new view with the specified parameters that
  * is visible by default.
  *
  * Return value: a new #MidoriView
  *
- * Since: 0.2.8
+ * Since: 0.3.0
  **/
 GtkWidget*
-midori_view_new_with_uri (const gchar*       uri,
-                          const gchar*       title,
-                          MidoriWebSettings* settings)
+midori_view_new_with_title (const gchar*       title,
+                            MidoriWebSettings* settings,
+                            gboolean           append)
 {
-    MidoriView* view = g_object_new (MIDORI_TYPE_VIEW, NULL);
-    view->title = g_strdup (title);
-    if (title != NULL)
-        midori_view_update_title (view);
+    MidoriView* view = g_object_new (MIDORI_TYPE_VIEW, "title", title, NULL);
     if (settings)
-    {
-        view->settings = g_object_ref (settings);
-        _midori_view_update_settings (view);
-        g_signal_connect (settings, "notify",
-                          G_CALLBACK (midori_view_settings_notify_cb), view);
-    }
-    if (uri != NULL)
-        midori_view_set_uri (view, uri);
+        _midori_view_set_settings (view, settings);
+    if (append)
+        g_object_set_data (G_OBJECT (view), "midori-view-append", (void*)1);
     gtk_widget_show ((GtkWidget*)view);
     return (GtkWidget*)view;
 }
@@ -3376,25 +3420,12 @@ midori_view_set_settings (MidoriView*        view,
                           MidoriWebSettings* settings)
 {
     g_return_if_fail (MIDORI_IS_VIEW (view));
-    g_return_if_fail (!settings || MIDORI_IS_WEB_SETTINGS (settings));
+    g_return_if_fail (MIDORI_IS_WEB_SETTINGS (settings));
 
     if (view->settings == settings)
         return;
 
-    if (view->settings)
-        g_signal_handlers_disconnect_by_func (view->settings,
-            midori_view_settings_notify_cb, view);
-
-    katze_object_assign (view->settings, settings);
-    if (settings)
-    {
-        g_object_ref (settings);
-        if (view->web_view)
-            g_object_set (view->web_view, "settings", settings, NULL);
-        _midori_view_update_settings (view);
-        g_signal_connect (settings, "notify",
-            G_CALLBACK (midori_view_settings_notify_cb), view);
-    }
+    _midori_view_set_settings (view, settings);
     g_object_notify (G_OBJECT (view), "settings");
 }
 
@@ -3501,13 +3532,11 @@ midori_view_web_inspector_inspect_web_view_cb (gpointer       inspector,
 }
 
 static gboolean
-midori_view_web_inspector_show_window_cb (gpointer    inspector,
-                                          MidoriView* view)
+midori_view_web_inspector_show_window_cb (WebKitWebInspector* inspector,
+                                          MidoriView*         view)
 {
-    GtkWidget* inspector_view = katze_object_get_object (inspector, "web-view");
-    GtkWidget* window = gtk_widget_get_toplevel (inspector_view);
-    g_object_unref (inspector_view);
-
+    WebKitWebView* inspector_view = webkit_web_inspector_get_web_view (inspector);
+    GtkWidget* window = gtk_widget_get_toplevel (GTK_WIDGET (inspector_view));
     if (!window)
         return FALSE;
     gtk_window_present (GTK_WINDOW (window));
@@ -3518,9 +3547,8 @@ static gboolean
 midori_view_web_inspector_attach_window_cb (gpointer    inspector,
                                             MidoriView* view)
 {
-    GtkWidget* inspector_view = katze_object_get_object (inspector, "web-view");
+    WebKitWebView* inspector_view = webkit_web_inspector_get_web_view (inspector);
     g_signal_emit (view, signals[ATTACH_INSPECTOR], 0, inspector_view);
-    g_object_unref (inspector_view);
     return TRUE;
 }
 
@@ -3528,15 +3556,15 @@ static gboolean
 midori_view_web_inspector_detach_window_cb (gpointer    inspector,
                                             MidoriView* view)
 {
-    GtkWidget* inspector_view = katze_object_get_object (inspector, "web-view");
-    GtkWidget* parent = gtk_widget_get_parent (inspector_view);
-    g_object_unref (inspector_view);
+    WebKitWebView* inspector_view = webkit_web_inspector_get_web_view (inspector);
+    GtkWidget* parent = gtk_widget_get_parent (GTK_WIDGET (inspector_view));
     if (GTK_IS_WINDOW (parent))
         return FALSE;
+
     gtk_widget_hide (parent);
-    gtk_container_remove (GTK_CONTAINER (parent), inspector_view);
+    gtk_container_remove (GTK_CONTAINER (parent), GTK_WIDGET (inspector_view));
     midori_view_web_inspector_construct_window (inspector,
-        WEBKIT_WEB_VIEW (view->web_view), inspector_view, view);
+        WEBKIT_WEB_VIEW (view->web_view), GTK_WIDGET (inspector_view), view);
     return TRUE;
 }
 
@@ -3647,7 +3675,7 @@ midori_view_construct_web_view (MidoriView* view)
     gtk_container_add (GTK_CONTAINER (view->scrolled_window), view->web_view);
     gtk_widget_show_all (view->scrolled_window);
 
-    inspector = katze_object_get_object (view->web_view, "web-inspector");
+    inspector = webkit_web_view_get_inspector ((WebKitWebView*)view->web_view);
     g_object_connect (inspector,
                       "signal::inspect-web-view",
                       midori_view_web_inspector_inspect_web_view_cb, view,
@@ -3658,7 +3686,6 @@ midori_view_construct_web_view (MidoriView* view)
                       "signal::detach-window",
                       midori_view_web_inspector_detach_window_cb, view,
                       NULL);
-    g_object_unref (inspector);
 }
 
 /**
@@ -3666,6 +3693,10 @@ midori_view_construct_web_view (MidoriView* view)
  * @view: a #MidoriView
  *
  * Opens the specified URI in the view.
+ *
+ * Since 0.3.0 a warning is shown if the view is not yet
+ * contained in a browser. This is because extensions
+ * can't monitor page loading if that happens.
  **/
 void
 midori_view_set_uri (MidoriView*  view,
@@ -3675,14 +3706,15 @@ midori_view_set_uri (MidoriView*  view,
 
     g_return_if_fail (MIDORI_IS_VIEW (view));
 
+    if (!gtk_widget_get_parent (GTK_WIDGET (view)))
+        g_warning ("Calling %s() before adding the view to a browser. This "
+                   "breaks extensions that monitor page loading.", G_STRFUNC);
+
     /* Treat "about:blank" and "" equally, see midori_view_is_blank(). */
     if (!uri || !strcmp (uri, "about:blank")) uri = "";
 
     if (g_getenv ("MIDORI_UNARMED") == NULL)
     {
-        if (!view->web_view)
-            midori_view_construct_web_view (view);
-
         if (view->speed_dial_in_new_tabs && !strcmp (uri, ""))
         {
             #if !WEBKIT_CHECK_VERSION (1, 1, 14)
@@ -3847,6 +3879,7 @@ midori_view_set_uri (MidoriView*  view,
                 data = g_strdup_printf (
                     "<html><head><title>about:version</title></head>"
                     "<body><h1>about:version</h1>"
+                    "<p>Version numbers in brackets show the version used at runtime.</p>"
                     "<img src=\"res://logo-shade.png\" "
                     "style=\"position: absolute; right: 15px; bottom: 15px; z-index: -9;\">"
                     "<table>"
@@ -4227,10 +4260,11 @@ midori_view_tab_label_menu_duplicate_tab_cb (GtkWidget*  menuitem,
                                              MidoriView* view)
 {
     MidoriNewView where = MIDORI_NEW_VIEW_TAB;
-    GtkWidget* new_view = midori_view_new_with_uri (
-        midori_view_get_display_uri (view),
-        NULL, view->settings);
+    GtkWidget* new_view = midori_view_new_with_title (
+        NULL, view->settings, FALSE);
+    const gchar* uri = midori_view_get_display_uri (MIDORI_VIEW (view));
     g_signal_emit (view, signals[NEW_VIEW], 0, new_view, where);
+    midori_view_set_uri (MIDORI_VIEW (new_view), uri);
 }
 
 static void
@@ -4331,9 +4365,9 @@ midori_view_get_tab_menu (MidoriView* view)
 }
 
 static gboolean
-midori_view_tab_label_button_release_event (GtkWidget*      tab_label,
-                                            GdkEventButton* event,
-                                            GtkWidget*      widget)
+midori_view_tab_label_button_press_event (GtkWidget*      tab_label,
+                                          GdkEventButton* event,
+                                          GtkWidget*      widget)
 {
     if (event->button == 2)
     {
@@ -4564,8 +4598,8 @@ midori_view_get_proxy_tab_label (MidoriView* view)
         if (!view->close_buttons_on_tabs)
             gtk_widget_hide (view->tab_close);
 
-        g_signal_connect (event_box, "button-release-event",
-            G_CALLBACK (midori_view_tab_label_button_release_event), view);
+        g_signal_connect (event_box, "button-press-event",
+            G_CALLBACK (midori_view_tab_label_button_press_event), view);
         g_signal_connect (view->tab_close, "style-set",
             G_CALLBACK (midori_view_tab_icon_style_set_cb), NULL);
         g_signal_connect (view->tab_close, "clicked",
@@ -4666,7 +4700,9 @@ midori_view_can_zoom_in (MidoriView* view)
 {
     g_return_val_if_fail (MIDORI_IS_VIEW (view), FALSE);
 
-    return view->web_view != NULL && !g_str_has_prefix (view->mime_type, "image/");
+    return view->web_view != NULL
+        && (katze_object_get_boolean (view->settings, "zoom-text-and-images")
+        || !g_str_has_prefix (view->mime_type, "image/"));
 }
 
 gboolean
@@ -4674,7 +4710,9 @@ midori_view_can_zoom_out (MidoriView* view)
 {
     g_return_val_if_fail (MIDORI_IS_VIEW (view), FALSE);
 
-    return view->web_view != NULL && !g_str_has_prefix (view->mime_type, "image/");
+    return view->web_view != NULL
+        && (katze_object_get_boolean (view->settings, "zoom-text-and-images")
+        || !g_str_has_prefix (view->mime_type, "image/"));
 }
 
 gboolean
@@ -4907,30 +4945,13 @@ midori_view_print_create_custom_widget_cb (GtkPrintOperation* operation,
 
     box = gtk_vbox_new (FALSE, 0);
     gtk_container_set_border_width (GTK_CONTAINER (box), 4);
-    button = gtk_check_button_new ();
-    g_object_set_data (G_OBJECT (operation), "print-backgrounds", button);
+    button = katze_property_proxy (view->settings, "print-backgrounds", NULL);
     gtk_button_set_label (GTK_BUTTON (button), _("Print background images"));
     gtk_widget_set_tooltip_text (button, _("Whether background images should be printed"));
-    if (katze_object_get_boolean (view->settings, "print-backgrounds"))
-        gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (button), TRUE);
     gtk_box_pack_start (GTK_BOX (box), button, FALSE, FALSE, 0);
     gtk_widget_show_all (box);
 
     return box;
-}
-
-static void
-midori_view_print_custom_widget_apply_cb (GtkPrintOperation* operation,
-                                          GtkWidget*         widget,
-                                          MidoriView*        view)
-{
-    GtkWidget* button;
-
-    button = g_object_get_data (G_OBJECT (operation), "print-backgrounds");
-    g_object_set (view->settings,
-        "print-backgrounds",
-        gtk_toggle_button_get_active (GTK_TOGGLE_BUTTON (button)),
-        NULL);
 }
 #endif
 
@@ -4968,8 +4989,6 @@ midori_view_print (MidoriView* view)
     #endif
     g_signal_connect (operation, "create-custom-widget",
         G_CALLBACK (midori_view_print_create_custom_widget_cb), view);
-    g_signal_connect (operation, "custom-widget-apply",
-        G_CALLBACK (midori_view_print_custom_widget_apply_cb), view);
     error = NULL;
     webkit_web_frame_print_full (frame, operation,
         GTK_PRINT_OPERATION_ACTION_PRINT_DIALOG, &error);
@@ -5244,7 +5263,7 @@ thumb_view_load_status_cb (MidoriView* thumb_view,
     gchar* js;
     gsize sz;
 
-    if (katze_object_get_enum (thumb_view, "load-status") != MIDORI_LOAD_FINISHED)
+    if (midori_view_get_load_status (thumb_view) != MIDORI_LOAD_FINISHED)
         return;
 
     gtk_widget_realize (midori_view_get_web_view (MIDORI_VIEW (thumb_view)));
@@ -5307,7 +5326,7 @@ midori_view_speed_dial_inject_thumb (MidoriView* view,
 
     if (!view->thumb_view)
     {
-        view->thumb_view = midori_view_new_with_uri (NULL, NULL, NULL);
+        view->thumb_view = midori_view_new_with_title (NULL, NULL, FALSE);
         gtk_container_add (GTK_CONTAINER (notebook), view->thumb_view);
         /* We use an empty label. It's not invisible but at least hard to spot. */
         label = gtk_event_box_new ();
@@ -5318,7 +5337,7 @@ midori_view_speed_dial_inject_thumb (MidoriView* view,
     thumb_view = view->thumb_view;
     settings = g_object_new (MIDORI_TYPE_WEB_SETTINGS, "enable-scripts", FALSE,
         "enable-plugins", FALSE, "auto-load-images", TRUE, NULL);
-    midori_view_set_settings (MIDORI_VIEW (thumb_view), settings);
+    _midori_view_set_settings (MIDORI_VIEW (thumb_view), settings);
 
     g_object_set_data (G_OBJECT (thumb_view), "dom-id", dom_id);
     g_signal_connect (thumb_view, "notify::load-status",

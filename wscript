@@ -28,8 +28,8 @@ import misc
 from Configure import find_program_impl
 
 major = 0
-minor = 2
-micro = 9
+minor = 3
+micro = 0
 
 APPNAME = 'midori'
 VERSION = str (major) + '.' + str (minor) + '.' + str (micro)
@@ -161,6 +161,7 @@ def configure (conf):
     dirname_default ('DOCDIR', os.path.join (conf.env['MDATADIR'], 'doc'))
     if not APPNAME in conf.env['DOCDIR']:
         conf.env['DOCDIR'] += '/' + APPNAME
+        conf.define ('DOCDIR', conf.env['DOCDIR'])
 
     if option_enabled ('apidocs'):
         conf.find_program ('gtkdoc-scan', var='GTKDOC_SCAN')
@@ -276,7 +277,7 @@ def configure (conf):
 
     conf.define ('PACKAGE_VERSION', VERSION)
     conf.define ('PACKAGE_NAME', APPNAME)
-    conf.define ('PACKAGE_BUGREPORT', 'http://www.twotoasts.de/bugs')
+    conf.define ('PACKAGE_BUGREPORT', 'https://bugs.launchpad.net/midori')
     conf.define ('GETTEXT_PACKAGE', APPNAME)
 
     conf.define ('MIDORI_MAJOR_VERSION', major)
@@ -417,7 +418,7 @@ def build (bld):
     bld.add_group ()
 
     if bld.env['docs']:
-        bld.install_files ('${DOCDIR}/' + '/', \
+        bld.install_files ('${DOCDIR}/', \
             'AUTHORS COPYING ChangeLog EXPAT README')
 
     # Install default configuration

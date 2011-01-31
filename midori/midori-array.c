@@ -294,18 +294,93 @@ katze_array_from_xmlDocPtr (KatzeArray* array,
 }
 
 static gboolean
-katze_array_from_opera_file (KatzeArray* array,
-                             FILE*       file)
+katze_array_from_netscape_file (KatzeArray* array,
+                               const gchar* filename)
 {
-    gchar line[200];
-    gchar* partial_line = NULL;
+    gchar* line  = NULL;
+    GIOChannel* channel = g_io_channel_new_file (filename, "r", 0);
+    KatzeArray* folder  = array;
+    KatzeItem* item = NULL;
+
+    if (!channel)
+        return FALSE;
+
+    while (g_io_channel_read_line (channel, &line, NULL, NULL, NULL)
+            == G_IO_STATUS_NORMAL)
+    {
+        g_strstrip (line);
+        /* parse lines with bookmarks data only, skip the rest */
+        if (!strncmp (line, "<D", 2) || !strncmp (line, "</D", 3))
+        {
+            gchar** element = g_strsplit_set (line, "<>", -1);
+            /* current item */
+            if (katze_str_equal (element[1], "DT"))
+            {
+                /* item is bookmark */
+                if (!strncmp (element[3], "A HREF", 6))
+                {
+                    gchar** parts = g_strsplit (line, "\"", -1);
+                    item = katze_item_new ();
+                    katze_array_add_item (folder, item);
+                    item->name = g_strdup (element[4]);
+                    item->uri = g_strdup (parts[1]);
+                    g_strfreev (parts);
+                }
+                /* item is folder */
+                if (!strncmp (element[3], "H3", 2))
+                {
+                    item = (KatzeItem*)katze_array_new (KATZE_TYPE_ARRAY);
+                    katze_array_add_item (folder, item);
+                    folder = (KatzeArray*)item;
+                    item->name = g_strdup (element[4]);
+                }
+            }
+            /* item description */
+            if (item && katze_str_equal (element[1], "DD"))
+            {
+                if (element[2])
+                    item->text = g_strdup (element[2]);
+                item = NULL;
+            }
+            /* end of current folder, level-up */
+            if (katze_str_equal (element[1], "/DL"))
+            {
+                if (folder != array)
+                    folder = katze_item_get_parent ((KatzeItem*)folder);
+                continue;
+            }
+            g_strfreev (element);
+        }
+        continue;
+    }
+    g_io_channel_shutdown (channel, FALSE, 0);
+    g_io_channel_unref (channel);
+    return TRUE;
+}
+
+static gboolean
+katze_array_from_opera_file (KatzeArray* array,
+                             const gchar*  filename)
+{
+    gchar* line = NULL;
+    GIOChannel* channel = g_io_channel_new_file (filename, "r", 0);
     KatzeArray* folder = array;
     KatzeItem* item = NULL;
 
-    while (fgets (line, 200, file))
+    if (!channel)
+        return FALSE;
+
+    while (g_io_channel_read_line (channel, &line, NULL, NULL, NULL)
+            == G_IO_STATUS_NORMAL)
     {
-        gboolean incomplete_line = (strlen (line) == 199);
         g_strstrip (line);
+        /* skip file header */
+        if (katze_str_equal (line, "Options: encoding = utf8, version=3")
+            || katze_str_equal (line, "Opera Hotlist version 2.0"))
+        {
+            item = NULL;
+            continue;
+        }
         if (line[0] == '\0')
         {
             item = NULL;
@@ -340,30 +415,7 @@ katze_array_from_opera_file (KatzeArray* array,
         }
         else if (item)
         {
-            gchar** parts;
-
-            /* Handle lines longer than 200 characters */
-            if (incomplete_line)
-            {
-                if (partial_line)
-                {
-                    gchar* chunk = g_strconcat (partial_line, line, NULL);
-                    katze_assign (partial_line, chunk);
-                }
-                else
-                    partial_line = g_strdup (line);
-                continue;
-            }
-
-            if (partial_line)
-            {
-                gchar* full_line = g_strconcat (partial_line, line, NULL);
-                katze_assign (partial_line, NULL);
-                parts = g_strsplit (full_line, "=", 2);
-                g_free (full_line);
-            }
-            else
-                parts = g_strsplit (line, "=", 2);
+            gchar** parts = g_strsplit (line, "=", 2);
 
             if (parts && parts[0] && parts[1])
             {
@@ -392,6 +444,8 @@ katze_array_from_opera_file (KatzeArray* array,
         else
             g_warning ("Unexpected property outside of element: %s", line);
     }
+    g_io_channel_shutdown (channel, FALSE, 0);
+    g_io_channel_unref (channel);
     return TRUE;
 }
 
@@ -433,6 +487,36 @@ midori_array_from_file (KatzeArray*  array,
     if (!format)
         format = "";
 
+    /* netscape html */
+    if (!*format && g_str_has_suffix (filename, ".html"))
+    {
+        FILE* file;
+        if ((file = g_fopen (filename, "r")))
+        {
+            gchar line[50];
+            while (fgets (line, 50, file))
+            {
+                g_strstrip (line);
+                if (katze_str_equal (line, "<!DOCTYPE NETSCAPE-Bookmark-file-1>"))
+                {
+                    if (!katze_array_from_netscape_file (array, filename))
+                    {
+                        /* Parsing failed */
+                        fclose (file);
+                        if (error)
+                            *error = g_error_new_literal (G_FILE_ERROR,
+                                    G_FILE_ERROR_FAILED, _("Malformed document."));
+                        return FALSE;
+                    }
+                    return TRUE;
+                }
+                else
+                    break;
+            }
+            fclose (file);
+        }
+    }
+
     /* Opera6 */
     if (katze_str_equal (format, "opera")
     || (!*format && g_str_has_suffix (filename, ".adr")))
@@ -454,7 +538,7 @@ midori_array_from_file (KatzeArray*  array,
                     verify++;
                 else if (verify == 2)
                 {
-                    if (!katze_array_from_opera_file (array, file))
+                    if (!katze_array_from_opera_file (array, filename))
                     {
                         /* Parsing failed */
                         fclose (file);
@@ -591,15 +675,17 @@ string_append_item (GString*   string,
     {
         KatzeItem* _item;
         KatzeArray* array = KATZE_ARRAY (item);
+        GList* list;
 
         g_string_append (string, "<folder>\n");
         /* FIXME: " folded=\"no\" */
         string_append_xml_element (string, "title", katze_item_get_name (item));
         string_append_xml_element (string, "desc", katze_item_get_text (item));
-        KATZE_ARRAY_FOREACH_ITEM (_item, array)
+        KATZE_ARRAY_FOREACH_ITEM_L (_item, array, list)
             string_append_item (string, _item);
         g_string_append (string, metadata);
         g_string_append (string, "</folder>\n");
+        g_list_free (list);
     }
     else if (katze_item_get_uri (item))
     {
@@ -679,6 +765,7 @@ katze_array_to_xbel (KatzeArray* array,
 {
     gchar* metadata = katze_item_metadata_to_xbel (KATZE_ITEM (array));
     KatzeItem* item;
+    GList* list;
 
     GString* markup = g_string_new (
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
@@ -691,11 +778,12 @@ katze_array_to_xbel (KatzeArray* array,
     string_append_xml_element (markup, "title", katze_item_get_name (KATZE_ITEM (array)));
     string_append_xml_element (markup, "desc", katze_item_get_text (KATZE_ITEM (array)));
     g_string_append (markup, metadata);
-    KATZE_ARRAY_FOREACH_ITEM (item, array)
+    KATZE_ARRAY_FOREACH_ITEM_L (item, array, list)
         string_append_item (markup, item);
     g_string_append (markup, "</xbel>\n");
 
     g_free (metadata);
+    g_list_free (list);
 
     return g_string_free (markup, FALSE);
 }

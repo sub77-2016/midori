@@ -1,6 +1,7 @@
 /*
  Copyright (C) 2008 Christian Dywan <christian@twotoasts.de>
  Copyright (C) 2008-2010 Arno Renevier <arno@renevier.net>
+ Copyright (C) 2010 Paweł Forysiuk <tuxator@o2.pl>
 
  This library is free software; you can redistribute it and/or
  modify it under the terms of the GNU Lesser General Public
@@ -91,6 +92,199 @@ struct AddonsList
     GtkListStore* liststore;
     GSList* elements;
 };
+
+static void
+addons_install_response (GtkWidget*  infobar,
+                         gint        response_id,
+                         MidoriView* view)
+{
+    if (response_id == GTK_RESPONSE_ACCEPT)
+    {
+        MidoriBrowser* browser;
+        const gchar* uri;
+
+        browser = midori_browser_get_for_widget (GTK_WIDGET (infobar));
+        uri = midori_view_get_display_uri (view);
+        if (uri && *uri)
+        {
+            gchar** split_uri;
+            gchar* path, *filename, *hostname, *dest_path, *temp_uri;
+            const gchar* folder;
+            WebKitNetworkRequest* request;
+            WebKitDownload* download;
+
+            split_uri = g_strsplit (uri, "/", -1);
+            hostname = split_uri[2];
+            temp_uri = NULL;
+            filename = NULL;
+            folder = NULL;
+
+            if (!g_strcmp0 (hostname, "userscripts.org"))
+            {
+                gchar* script_id;
+                const gchar* js_script;
+                WebKitWebView* web_view;
+                WebKitWebFrame* web_frame;
+
+                web_view = WEBKIT_WEB_VIEW (midori_view_get_web_view (view));
+                web_frame = webkit_web_view_get_main_frame (web_view);
+
+                js_script = "document.getElementById('heading').childNodes[3].childNodes[1].innerHTML";
+                if (WEBKIT_IS_WEB_FRAME (web_frame))
+                {
+                    JSContextRef js_context = webkit_web_frame_get_global_context (web_frame);
+                    gchar* value = sokoke_js_script_eval (js_context, js_script, NULL);
+                    if (value && *value)
+                        filename = g_strdup_printf ("%s.user.js", value);
+                    g_free (value);
+                }
+
+                folder = "scripts";
+                script_id = split_uri[5];
+                /* rewrite uri to get source js */
+                temp_uri = g_strdup_printf ("http://%s/scripts/source/%s.user.js",
+                                            hostname, script_id);
+                uri = temp_uri;
+            }
+            else if (!g_strcmp0 (hostname, "userstyles.org"))
+            {
+                gchar* subpage;
+
+                folder = "styles";
+                if (g_str_has_suffix (uri, "/"))
+                    subpage = split_uri[6];
+                else
+                    subpage = split_uri[5];
+
+                if (!subpage)
+                {
+                    gchar* style_id;
+                    const gchar* js_script;
+                    WebKitWebView* web_view;
+                    WebKitWebFrame* web_frame;
+
+                    web_view = WEBKIT_WEB_VIEW (midori_view_get_web_view (view));
+                    web_frame = webkit_web_view_get_main_frame (web_view);
+
+                    js_script = "document.getElementById('stylish-description').innerHTML;";
+                    if (WEBKIT_IS_WEB_FRAME (web_frame))
+                    {
+                        JSContextRef js_context = webkit_web_frame_get_global_context (web_frame);
+                        gchar* value = sokoke_js_script_eval (js_context, js_script, NULL);
+                        if (value && *value)
+                            filename = g_strdup_printf ("%s.css", value);
+                        g_free (value);
+                    }
+                    /* rewrite uri to get css */
+                    style_id = split_uri[4];
+                    temp_uri = g_strdup_printf ("http://%s/styles/%s.css", hostname, style_id);
+                    uri = temp_uri;
+                }
+            }
+
+            if (g_str_has_suffix (uri, ".user.js"))
+                folder = "scripts";
+            else if (g_str_has_suffix (uri, ".user.css"))
+                folder = "styles";
+            if (!filename)
+                filename = g_path_get_basename (uri);
+            path = g_build_path (G_DIR_SEPARATOR_S, g_get_user_data_dir (),
+                                 PACKAGE_NAME, folder, filename, NULL);
+
+            request = webkit_network_request_new (uri);
+            download = webkit_download_new (request);
+            g_object_unref (request);
+
+            dest_path = g_filename_to_uri (path, NULL, NULL);
+            webkit_download_set_destination_uri (download, dest_path);
+            webkit_download_start (download);
+
+            g_free (filename);
+            g_free (path);
+            g_free (temp_uri);
+            g_free (dest_path);
+            g_strfreev (split_uri);
+        }
+    }
+    gtk_widget_destroy (GTK_WIDGET (infobar));
+}
+
+static void
+addons_uri_install (MidoriBrowser* browser,
+                    MidoriView*    view,
+                    AddonsKind     kind)
+{
+    const gchar* message;
+    const gchar* button_text;
+
+    if (kind == ADDONS_USER_SCRIPTS)
+    {
+        /* i18n: An infobar shows up when viewing a script on userscripts.org */
+        message = _("This page appears to contain a user script. Do you wish to install it?");
+        button_text = _("_Install user script");
+    }
+    else if (kind == ADDONS_USER_STYLES)
+    {
+        /* i18n: An infobar shows up when viewing a style on userstyles.org */
+        message = _("This page appears to contain a user style. Do you wish to install it?");
+        button_text = _("_Install user style");
+    }
+    else
+        g_assert_not_reached ();
+
+    midori_view_add_info_bar (view, GTK_MESSAGE_QUESTION, message,
+        G_CALLBACK (addons_install_response), view,
+        button_text, GTK_RESPONSE_ACCEPT,
+        _("Don't install"), GTK_RESPONSE_CANCEL, NULL);
+}
+
+static void
+addons_notify_load_status_cb (MidoriBrowser*   browser,
+                              GParamSpec*      pspec,
+                              MidoriExtension* extension)
+{
+    const gchar* uri = midori_browser_get_current_uri (browser);
+
+    if (uri && *uri)
+    {
+       /* FIXME: addons_notify_load_status_cb should pass MidoriView* pointer */
+       GtkWidget* view = midori_browser_get_current_tab (browser);
+       if (midori_view_get_load_status (MIDORI_VIEW (view)) == MIDORI_LOAD_FINISHED)
+       {
+           /* casual sites goes by uri suffix */
+           if (g_str_has_suffix (uri, ".user.js"))
+               addons_uri_install (browser, MIDORI_VIEW (view), ADDONS_USER_SCRIPTS);
+           else if (g_str_has_suffix (uri, ".user.css"))
+               addons_uri_install (browser, MIDORI_VIEW (view), ADDONS_USER_STYLES);
+           else if (g_str_has_prefix (uri, "http://userscripts.org/scripts/"))
+           {
+               gchar** split_uri = g_strsplit (uri, "/", -1);
+               gchar* subpage = split_uri[4];
+
+               /* userscripts.org script main (with desc) and "source view" pages */
+               if (!g_strcmp0 (subpage, "show") /* || !g_strcmp0 (subpage, "review") */)
+                   addons_uri_install (browser, MIDORI_VIEW (view), ADDONS_USER_SCRIPTS);
+
+               g_strfreev (split_uri);
+           }
+           else if (g_str_has_prefix (uri, "http://userstyles.org/styles/"))
+           {
+               gchar** split_uri = g_strsplit (uri, "/", -1);
+               gchar* subpage;
+
+               if (g_str_has_suffix (uri, "/"))
+                   subpage = split_uri[6];
+               else
+                   subpage = split_uri[5];
+               /* userstyles.org style main page with style description */
+               if (!subpage)
+                   addons_uri_install (browser, MIDORI_VIEW (view), ADDONS_USER_STYLES);
+
+               g_strfreev (split_uri);
+           }
+       }
+    }
+}
 
 static void
 midori_addons_button_add_clicked_cb (GtkToolItem* toolitem,
@@ -293,7 +487,7 @@ midori_addons_open_in_editor_clicked_cb (GtkWidget* toolitem,
         gchar* text_editor;
 
         browser = midori_browser_get_for_widget (GTK_WIDGET (addons->treeview));
-        settings = katze_object_get_object (browser, "settings");
+        settings = midori_browser_get_settings (browser);
 
         gtk_tree_model_get (model, &iter, 0, &element, -1);
 
@@ -794,6 +988,7 @@ css_metadata_from_file (const gchar* filename,
     GIOChannel* channel;
     gchar* line;
     gchar* rest_of_line;
+    gboolean line_has_meta;
 
     if (!g_file_test (filename, G_FILE_TEST_IS_REGULAR | G_FILE_TEST_IS_SYMLINK))
         return FALSE;
@@ -802,60 +997,61 @@ css_metadata_from_file (const gchar* filename,
     if (!channel)
         return FALSE;
 
+    line_has_meta = FALSE;
     while (g_io_channel_read_line (channel, &line, NULL, NULL, NULL)
            == G_IO_STATUS_NORMAL)
     {
-        if (g_str_has_prefix (line, "@-moz-document"))
+        if (g_str_has_prefix (line, "@-moz-document") || line_has_meta)
         { /* FIXME: We merely look for includes. We should honor blocks. */
              if (includes)
              {
                  gchar** parts;
                  guint i;
 
-                 rest_of_line = g_strdup (line + strlen ("@-moz-document"));
+                 if (g_str_has_prefix (line, "@-moz-document"))
+                     rest_of_line = g_strdup (line + strlen ("@-moz-document"));
+                 else
+                     rest_of_line = g_strdup (line);
+
                  rest_of_line = g_strstrip (rest_of_line);
                  parts = g_strsplit (rest_of_line, " ", 0);
                  i = 0;
-                 while (parts[i])
+                 while (parts[i] && (*parts[i] != '\0' && *parts[i] != '{'))
                  {
                      gchar* value = NULL;
                      if (g_str_has_prefix (parts[i], "url-prefix("))
                          value = g_strdup (parts[i] + strlen ("url-prefix("));
+                     else if (g_str_has_prefix (parts[i], "domain("))
+                         value = g_strdup (parts[i] + strlen ("domain("));
                      else if (g_str_has_prefix (parts[i], "url("))
                          value = g_strdup (parts[i] + strlen ("url("));
                     if (value)
                     {
-                         guint j;
+                         guint begin, end;
+                         gchar* domain;
 
-                         if (value[0] != '\'' && value[0] != '"')
+                         line_has_meta = TRUE;
+                         begin = value[0] == '"' || value[0] == '\'' ? 1 : 0;
+                         end = 1;
+                         while (value[end] != '\0' && value[end] != ')')
+                             ++end;
+
+                         domain = g_strndup (value + begin, end - begin * 2);
+                         if (!strncmp ("http", domain, 4))
+                             *includes = g_slist_prepend (*includes, domain);
+                         else
                          {
-                             /* Wrong syntax, abort */
-                             g_free (value);
-                             g_strfreev (parts);
-                             g_free (line);
-                             g_io_channel_shutdown (channel, false, 0);
-                             g_slist_free (*includes);
-                             g_slist_free (*excludes);
-                             *includes = NULL;
-                             *excludes = NULL;
-                             return FALSE;
+                             *includes = g_slist_prepend (*includes,
+                                 g_strdup_printf ("http://*%s/*", domain));
+                             g_free (domain);
                          }
-                         j = 1;
-                         while (value[j] != '\0')
-                         {
-                             if (value[j] == value[0])
-                                 break;
-                             j++;
-                         }
-                         *includes = g_slist_prepend (*includes, g_strndup (value + 1, j - 1));
                          g_free (value);
                     }
-
-                    /* FIXME: Recognize "domain" */
                     i++;
                  }
                  g_strfreev (parts);
              }
+             line_has_meta  = g_str_has_suffix (rest_of_line, "{") ? FALSE : TRUE;
         }
         g_free (line);
     }
@@ -871,7 +1067,8 @@ addons_get_element_content (gchar*     file_path,
                             gchar**    content)
 {
     gchar* file_content;
-    guint meta;
+    GString* content_chunks;
+    guint meta, comment;
     guint i, n;
 
     g_assert (kind == ADDONS_USER_SCRIPTS || kind == ADDONS_USER_STYLES);
@@ -887,7 +1084,9 @@ addons_get_element_content (gchar*     file_path,
         else if (kind == ADDONS_USER_STYLES)
         {
             meta = 0;
+            comment = 0;
             n = strlen (file_content);
+            content_chunks = g_string_new_len (NULL, n);
             for (i = 0; i < n; i++)
             {
                 /* Replace line breaks with spaces */
@@ -896,23 +1095,19 @@ addons_get_element_content (gchar*     file_path,
                 /* Change all single quotes to double quotes */
                 if (file_content[i] == '\'')
                     file_content[i] = '\"';
-                /* Turn metadata we inspected earlier into comments */
                 if (!meta && file_content[i] == '@')
                 {
-                    file_content[i] = '/';
                     meta++;
                 }
                 else if (meta == 1
                     && (file_content[i] == '-' || file_content[i] == 'n'))
                 {
-                    file_content[i] = '*';
                     meta++;
                 }
                 else if (meta == 2 && file_content[i] == '{')
                 {
-                    file_content[i - 1] = '*';
-                    file_content[i] = '/';
                     meta++;
+                    continue;
                 }
                 else if (meta == 3 && file_content[i] == '{')
                     meta++;
@@ -920,9 +1115,33 @@ addons_get_element_content (gchar*     file_path,
                     meta--;
                 else if (meta == 3 && file_content[i] == '}')
                 {
-                    file_content[i] = ' ';
                     meta = 0;
+                    continue;
                 }
+
+                if (file_content[i] == '/' && file_content[i+1] == '*')
+                    comment++;
+                /* Check whether we have comment ending, merely '*' or '/' */
+                else if (comment == 2
+                    && file_content[i] == '*' && file_content[i+1] == '/')
+                {
+                    comment--;
+                }
+                else if (comment == 1
+                    && file_content[i-1] == '*' && file_content[i] == '/')
+                {
+                    comment--;
+                    continue;
+                }
+
+                /* Skip consecutive spaces */
+                if (file_content[i] == ' '
+                 && i > 0 && file_content[i - 1] == ' ')
+                    continue;
+
+                /* Append actual data to string */
+                if ((meta == 0 || meta >= 3) && !comment)
+                    g_string_append_c (content_chunks, file_content[i]);
             }
 
             *content = g_strdup_printf (
@@ -936,8 +1155,8 @@ addons_get_element_content (gchar*     file_path,
                 "else document.documentElement.insertBefore"
                 "(mystyle, document.documentElement.firstChild);"
                 "}, true);",
-                file_content);
-
+                content_chunks->str);
+            g_string_free (content_chunks, TRUE);
         }
         g_free (file_content);
         if (*content)
@@ -1356,6 +1575,8 @@ addons_app_add_browser_cb (MidoriApp*       app,
           (GtkCallback)addons_add_tab_foreach_cb, extension);
     g_signal_connect (browser, "add-tab",
         G_CALLBACK (addons_add_tab_cb), extension);
+    g_signal_connect (browser, "notify::load-status",
+        G_CALLBACK (addons_notify_load_status_cb), extension);
     panel = katze_object_get_object (browser, "panel");
 
     scripts = addons_new (ADDONS_USER_SCRIPTS, extension);
@@ -1411,7 +1632,8 @@ addons_save_settings (MidoriApp*       app,
     config_file = g_build_filename (config_dir, "addons", NULL);
     katze_mkdir_with_parents (config_dir, 0700);
     sokoke_key_file_save_to_file (keyfile, config_file, &error);
-    if (error)
+    /* If the folder is /, this is a test run, thus no error */
+    if (error && !g_str_equal (config_dir, "/"))
     {
         g_warning (_("The configuration of the extension '%s' couldn't be saved: %s\n"),
                     _("User addons"), error->message);

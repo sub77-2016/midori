@@ -420,7 +420,8 @@ sokoke_spawn_program (const gchar* command,
     g_return_val_if_fail (command != NULL, FALSE);
     g_return_val_if_fail (argument != NULL, FALSE);
 
-    if (!g_strstr_len (argument, 8, "://"))
+    if (!g_strstr_len (argument, 8, "://")
+     && !g_str_has_prefix (argument, "about:"))
     {
         gboolean success;
 
@@ -827,15 +828,22 @@ sokoke_magic_uri (const gchar* uri)
  * sokoke_uri_unescape_string:
  * @uri: an URI string
  *
- * Unescape @uri if needed, and pass through '+'.
+ * Unescape @uri if needed, and pass through '+' and '%20'.
  *
  * Return value: a newly allocated URI
  **/
 gchar*
 sokoke_uri_unescape_string (const gchar* uri)
 {
-    if (strchr (uri,'%'))
-        return g_uri_unescape_string (uri, "+");
+    if (strchr (uri,'%') || strchr (uri, ' '))
+    {
+        /* Preserve %20 for pasting URLs into other windows */
+        gchar* unescaped = g_uri_unescape_string (uri, "+");
+        gchar* spaced = sokoke_replace_variables (unescaped, " ", "%20", NULL);
+        g_free (unescaped);
+        return spaced;
+    }
+
     return g_strdup (uri);
 }
 
@@ -1101,6 +1109,17 @@ sokoke_on_entry_focus_out_event (GtkEntry*      entry,
     return FALSE;
 }
 
+static void
+sokoke_on_entry_drag_data_received (GtkEntry*       entry,
+                                    GdkDragContext* drag_context,
+                                    gint            x,
+                                    gint            y,
+                                    guint           timestamp,
+                                    gpointer        user_data)
+{
+    sokoke_on_entry_focus_in_event (entry, NULL, NULL);
+}
+
 void
 sokoke_entry_set_default_text (GtkEntry*    entry,
                                const gchar* default_text)
@@ -1115,6 +1134,12 @@ sokoke_entry_set_default_text (GtkEntry*    entry,
         sokoke_widget_set_pango_font_style (GTK_WIDGET (entry),
                                             PANGO_STYLE_ITALIC);
         gtk_entry_set_text (entry, default_text);
+        g_signal_connect (entry, "drag-data-received",
+            G_CALLBACK (sokoke_on_entry_drag_data_received), NULL);
+        g_signal_connect (entry, "focus-in-event",
+            G_CALLBACK (sokoke_on_entry_focus_in_event), NULL);
+        g_signal_connect (entry, "focus-out-event",
+           G_CALLBACK (sokoke_on_entry_focus_out_event), NULL);
     }
     else if (!gtk_widget_has_focus (GTK_WIDGET (entry)))
     {
@@ -1129,10 +1154,6 @@ sokoke_entry_set_default_text (GtkEntry*    entry,
     }
     g_object_set_data (G_OBJECT (entry), "sokoke_default_text",
                        (gpointer)default_text);
-    g_signal_connect (entry, "focus-in-event",
-        G_CALLBACK (sokoke_on_entry_focus_in_event), NULL);
-    g_signal_connect (entry, "focus-out-event",
-        G_CALLBACK (sokoke_on_entry_focus_out_event), NULL);
 }
 
 gchar*

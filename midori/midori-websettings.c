@@ -151,6 +151,7 @@ enum
     PROP_ENABLE_SCRIPTS,
     PROP_ENABLE_PLUGINS,
     PROP_ENABLE_DEVELOPER_EXTRAS,
+    PROP_ENABLE_SPELL_CHECKING,
     PROP_ENABLE_HTML5_DATABASE,
     PROP_ENABLE_HTML5_LOCAL_STORAGE,
     PROP_ENABLE_OFFLINE_WEB_APPLICATION_CACHE,
@@ -547,7 +548,7 @@ midori_web_settings_class_init (MidoriWebSettingsClass* class)
                                      "toolbar-items",
                                      _("Toolbar Items"),
                                      _("The items to show on the toolbar"),
-                                     "TabNew,Back,Forward,Next,ReloadStop,Location,Panel,Search,Trash",
+                                     "TabNew,Back,Forward,Next,ReloadStop,BookmarkAdd,Location,Search,Trash",
                                      flags));
 
     g_object_class_install_property (gobject_class,
@@ -565,6 +566,8 @@ midori_web_settings_class_init (MidoriWebSettingsClass* class)
      * Whether to show the operating controls of the panel.
      *
      * Since: 0.1.9
+     *
+     * Deprecated: 0.3.0
      */
     g_object_class_install_property (gobject_class,
                                      PROP_SHOW_PANEL_CONTROLS,
@@ -681,6 +684,8 @@ midori_web_settings_class_init (MidoriWebSettingsClass* class)
      * Note: Only since 0.2.0 is this value actually used.
      *
      * Since: 0.1.7
+     *
+     * Deprecated: 0.3.0
      */
     g_object_class_install_property (gobject_class,
                                      PROP_ASK_FOR_DESTINATION_FOLDER,
@@ -701,6 +706,8 @@ midori_web_settings_class_init (MidoriWebSettingsClass* class)
      * Whether to show a notification when a transfer has been completed.
      *
      * Since: 0.1.7
+     *
+     * Deprecated: 0.3.0
      */
     g_object_class_install_property (gobject_class,
                                      PROP_NOTIFY_TRANSFER_COMPLETED,
@@ -878,6 +885,15 @@ midori_web_settings_class_init (MidoriWebSettingsClass* class)
                                      "Enable special extensions for developers",
                                      TRUE,
                                      flags));
+    #if WEBKIT_CHECK_VERSION (1, 1, 6)
+    g_object_class_install_property (gobject_class,
+                                     PROP_ENABLE_SPELL_CHECKING,
+                                     g_param_spec_boolean ("enable-spell-checking",
+                                                           _("Enable Spell Checking"),
+                                                           _("Enable spell checking while typing"),
+                                                           TRUE,
+                                                           flags));
+    #endif
     #if WEBKIT_CHECK_VERSION (1, 1, 8)
     g_object_class_install_property (gobject_class,
                                      PROP_ENABLE_HTML5_DATABASE,
@@ -1071,7 +1087,8 @@ midori_web_settings_class_init (MidoriWebSettingsClass* class)
     /**
     * MidoriWebSettings:preferred-languages:
     *
-    * A comma separated list of languages preferred for rendering multilingual webpages.
+    * A comma separated list of languages preferred for rendering multilingual
+    * webpages and spell checking.
     *
     * Since: 0.2.3
     */
@@ -1438,13 +1455,23 @@ midori_web_settings_set_property (GObject*      object,
                       g_value_get_boolean (value), NULL);
         break;
     case PROP_ENABLE_PLUGINS:
-        g_object_set (web_settings, "WebKitWebSettings::enable-plugins",
-                      g_value_get_boolean (value), NULL);
+        g_object_set (web_settings,
+            "WebKitWebSettings::enable-plugins", g_value_get_boolean (value),
+        #if WEBKIT_CHECK_VERSION (1, 1, 22)
+            "enable-java-applet", g_value_get_boolean (value),
+        #endif
+            NULL);
         break;
     case PROP_ENABLE_DEVELOPER_EXTRAS:
         g_object_set (web_settings, "WebKitWebSettings::enable-developer-extras",
                       g_value_get_boolean (value), NULL);
         break;
+    #if WEBKIT_CHECK_VERSION (1, 1, 6)
+    case PROP_ENABLE_SPELL_CHECKING:
+        g_object_set (web_settings, "WebKitWebSettings::enable-spell-checking",
+                      g_value_get_boolean (value), NULL);
+        break;
+    #endif
     #if WEBKIT_CHECK_VERSION (1, 1, 8)
     case PROP_ENABLE_HTML5_DATABASE:
         g_object_set (web_settings, "WebKitWebSettings::enable-html5-database",
@@ -1519,6 +1546,10 @@ midori_web_settings_set_property (GObject*      object,
         break;
     case PROP_PREFERRED_LANGUAGES:
         katze_assign (web_settings->http_accept_language, g_value_dup_string (value));
+        #if WEBKIT_CHECK_VERSION (1, 1, 6)
+        g_object_set (web_settings, "spell-checking-languages",
+                      web_settings->http_accept_language, NULL);
+        #endif
         break;
     case PROP_CLEAR_PRIVATE_DATA:
         web_settings->clear_private_data = g_value_get_int (value);
@@ -1686,6 +1717,12 @@ midori_web_settings_get_property (GObject*    object,
         g_value_set_boolean (value, katze_object_get_boolean (web_settings,
                              "WebKitWebSettings::enable-developer-extras"));
         break;
+    #if WEBKIT_CHECK_VERSION (1, 1, 6)
+    case PROP_ENABLE_SPELL_CHECKING:
+        g_value_set_boolean (value, katze_object_get_boolean (web_settings,
+                             "WebKitWebSettings::enable-spell-checking"));
+        break;
+    #endif
     #if WEBKIT_CHECK_VERSION (1, 1, 8)
     case PROP_ENABLE_HTML5_DATABASE:
         g_value_set_boolean (value, katze_object_get_boolean (web_settings,

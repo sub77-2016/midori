@@ -134,7 +134,6 @@ settings_and_accels_new (const gchar* config,
             GEnumClass* enum_class = G_ENUM_CLASS (
                 g_type_class_peek (pspec->value_type));
             GEnumValue* enum_value;
-
             str = g_key_file_get_string (key_file, "settings", property, NULL);
             enum_value = g_enum_get_value_by_name (enum_class, str);
             if (enum_value)
@@ -142,9 +141,7 @@ settings_and_accels_new (const gchar* config,
             else
                 g_warning (_("Value '%s' is invalid for %s"),
                            str, property);
-
             g_free (str);
-            g_type_class_unref (enum_class);
         }
         else
             g_warning (_("Invalid configuration value '%s'"), property);
@@ -230,7 +227,7 @@ settings_save_to_file (MidoriWebSettings* settings,
         else if (type == G_TYPE_PARAM_ENUM)
         {
             GEnumClass* enum_class = G_ENUM_CLASS (
-                g_type_class_ref (pspec->value_type));
+                g_type_class_peek (pspec->value_type));
             gint integer;
             GEnumValue* enum_value;
             g_object_get (settings, property, &integer, NULL);
@@ -391,7 +388,20 @@ search_engines_save_to_file (KatzeArray*  search_engines,
     return saved;
 }
 
-static sqlite3*
+static void
+midori_history_clear_cb (KatzeArray* array,
+                         sqlite3*    db)
+{
+    char* errmsg = NULL;
+    if (sqlite3_exec (db, "DELETE FROM history; DELETE FROM search",
+                      NULL, NULL, &errmsg) != SQLITE_OK)
+    {
+        g_printerr (_("Failed to clear history: %s\n"), errmsg);
+        sqlite3_free (errmsg);
+    }
+}
+
+static gboolean
 midori_history_initialize (KatzeArray*  array,
                            const gchar* filename,
                            const gchar* bookmarks_filename,
@@ -411,7 +421,7 @@ midori_history_initialize (KatzeArray*  array,
             *errmsg = g_strdup_printf (_("Failed to open database: %s\n"),
                                        sqlite3_errmsg (db));
         sqlite3_close (db);
-        return NULL;
+        return FALSE;
     }
 
     sqlite3_exec (db, "PRAGMA journal_mode = TRUNCATE;", NULL, NULL, errmsg);
@@ -426,7 +436,7 @@ midori_history_initialize (KatzeArray*  array,
                       "CREATE TABLE IF NOT EXISTS "
                       "search (keywords text, uri text, day integer);",
                       NULL, NULL, errmsg) != SQLITE_OK)
-        return NULL;
+        return FALSE;
 
     sqlite3_prepare_v2 (db, "SELECT day FROM history LIMIT 1", -1, &stmt, NULL);
     result = sqlite3_step (stmt);
@@ -452,18 +462,20 @@ midori_history_initialize (KatzeArray*  array,
     sql = g_strdup_printf ("ATTACH DATABASE '%s' AS bookmarks", bookmarks_filename);
     sqlite3_exec (db, sql, NULL, NULL, errmsg);
     g_free (sql);
+    g_object_set_data (G_OBJECT (array), "db", db);
+    g_signal_connect (array, "clear",
+                      G_CALLBACK (midori_history_clear_cb), db);
 
-    return db;
+    return TRUE;
 }
 
 static void
-midori_history_terminate (sqlite3* db,
-                          gint     max_history_age)
+midori_history_terminate (KatzeArray* array,
+                          gint        max_history_age)
 {
-    gchar* sqlcmd;
+    sqlite3* db = g_object_get_data (G_OBJECT (array), "db");
     char* errmsg = NULL;
-
-    sqlcmd = g_strdup_printf (
+    gchar* sqlcmd = g_strdup_printf (
         "DELETE FROM history WHERE "
         "(julianday(date('now')) - julianday(date(date,'unixepoch')))"
         " >= %d", max_history_age);
@@ -475,6 +487,15 @@ midori_history_terminate (sqlite3* db,
     }
     g_free (sqlcmd);
     sqlite3_close (db);
+}
+
+static void
+midori_bookmarks_add_item_cb (KatzeArray* array,
+                              KatzeItem*  item,
+                              sqlite3*    db)
+{
+    midori_bookmarks_insert_item_db (db, item,
+        katze_item_get_meta_string (item, "folder"));
 }
 
 static void
@@ -530,6 +551,8 @@ midori_bookmarks_initialize (KatzeArray*  array,
                       "desc text, app integer, toolbar integer);",
                       NULL, NULL, errmsg) != SQLITE_OK)
         return NULL;
+    g_signal_connect (array, "add-item",
+                      G_CALLBACK (midori_bookmarks_add_item_cb), db);
     g_signal_connect (array, "remove-item",
                       G_CALLBACK (midori_bookmarks_remove_item_cb), db);
     return db;
@@ -863,6 +886,7 @@ midori_soup_session_prepare (SoupSession*       session,
     {
         "/etc/pki/tls/certs/ca-bundle.crt",
         "/etc/ssl/certs/ca-certificates.crt",
+        "/usr/local/share/certs/ca-root-nss.crt",
         NULL
     };
     guint i;
@@ -1048,53 +1072,6 @@ midori_load_cookie_jar (gpointer data)
 }
 
 static gboolean
-midori_load_netscape_plugins (gpointer data)
-{
-    MidoriApp* app = MIDORI_APP (data);
-    KatzeArray* extensions = katze_object_get_object (app, "extensions");
-    /* FIXME: WebKit should have API to obtain the list of plugins. */
-    /* FIXME: Monitor folders for newly added and removes files */
-    GtkWidget* web_view = webkit_web_view_new ();
-    WebKitWebFrame* web_frame = webkit_web_view_get_main_frame (WEBKIT_WEB_VIEW (web_view));
-    JSContextRef js_context = webkit_web_frame_get_global_context (web_frame);
-    /* This snippet joins the available plugins into a string like this:
-        URI1|title1,URI2|title2
-    FIXME: Ensure separators contained in the string can't break it */
-    gchar* value = sokoke_js_script_eval (js_context,
-        "function plugins (l) { var f = new Array (); for (i in l) "
-        "{ var p = l[i].name + '|' + l[i].filename; "
-        "if (f.indexOf (p) == -1) f.push (p); } return f; }"
-        "plugins (navigator.plugins)", NULL);
-    gchar** items = g_strsplit (value, ",", 0);
-    guint i = 0;
-
-    if (items != NULL)
-    while (items[i] != NULL)
-    {
-        gchar** parts = g_strsplit (items[i], "|", 2);
-        if (parts && *parts && !g_str_equal (parts[1], "undefined"))
-        {
-            MidoriExtension* extension;
-            gchar* desc = parts[1];
-            gsize j = 0;
-            while (desc[j++])
-                if (desc[j-1] == ';')
-                    desc[j-1] = '\n';
-            extension = g_object_new (MIDORI_TYPE_EXTENSION,
-                "name", parts[0], "description", desc, NULL);
-            g_object_set_data (G_OBJECT (extension), "static", (void*)0xdeadbeef);
-            katze_array_add_item (extensions, extension);
-        }
-        g_strfreev (parts);
-        i++;
-    }
-    g_strfreev (items);
-    g_object_unref (extensions);
-
-    return FALSE;
-}
-
-static gboolean
 midori_load_extensions (gpointer data)
 {
     MidoriApp* app = MIDORI_APP (data);
@@ -1196,9 +1173,6 @@ midori_load_extensions (gpointer data)
         g_free (extension_path);
     }
     g_strfreev (active_extensions);
-
-    if (g_getenv ("MIDORI_UNARMED") == NULL)
-        g_idle_add (midori_load_netscape_plugins, app);
 
     #ifdef G_ENABLE_DEBUG
     if (startup_timer)
@@ -1302,11 +1276,12 @@ midori_load_session (gpointer data)
         midori_browser_add_item (browser, item);
     }
     current = katze_item_get_meta_integer (KATZE_ITEM (_session), "current");
-    if (current < 0)
-        current = 0;
-    midori_browser_set_current_page (browser, current);
     if (!(item = katze_array_get_nth_item (_session, current)))
+    {
+        current = 0;
         item = katze_array_get_nth_item (_session, 0);
+    }
+    midori_browser_set_current_page (browser, current);
     if (!g_strcmp0 (katze_item_get_uri (item), ""))
         midori_browser_activate_action (browser, "Location");
 
@@ -1407,6 +1382,8 @@ midori_web_app_browser_notify_load_status_cb (MidoriBrowser* browser,
     {
         GtkWidget* view = midori_browser_get_current_tab (browser);
         GdkPixbuf* icon = midori_view_get_icon (MIDORI_VIEW (view));
+        if (midori_view_is_blank (MIDORI_VIEW (view)))
+            icon = NULL;
         gtk_window_set_icon (GTK_WINDOW (browser), icon);
     }
 }
@@ -1514,7 +1491,6 @@ midori_inactivity_timeout (gpointer data)
             guint i = 0;
             GtkWidget* view;
             KatzeArray* history = katze_object_get_object (mit->browser, "history");
-            sqlite3* db;
             KatzeArray* trash = katze_object_get_object (mit->browser, "trash");
             GList* data_items = sokoke_register_privacy_item (NULL, NULL, NULL);
 
@@ -1522,9 +1498,8 @@ midori_inactivity_timeout (gpointer data)
                 gtk_widget_destroy (view);
             midori_browser_set_current_uri (mit->browser, mit->uri);
             /* Clear all private data */
-            if (history && (db = g_object_get_data (G_OBJECT (history), "db")))
-                sqlite3_exec (db, "DELETE FROM history; DELETE FROM search",
-                              NULL, NULL, NULL);
+            if (history != NULL)
+                katze_array_clear (history);
             if (trash != NULL)
                 katze_array_clear (trash);
             for (; data_items != NULL; data_items = g_list_next (data_items))
@@ -1858,7 +1833,7 @@ main (int    argc,
         }
         else
         {
-            settings = katze_object_get_object (browser, "settings");
+            settings = g_object_ref (midori_browser_get_settings (browser));
             g_object_set (settings,
                           "show-menubar", FALSE,
                           "show-navigationbar", FALSE,
@@ -2008,7 +1983,7 @@ main (int    argc,
         if (g_access (old_bookmarks, F_OK) == 0)
         {
             midori_bookmarks_import (old_bookmarks, db);
-            g_unlink(old_bookmarks);
+            /* Leave old bookmarks around */
         }
         g_free (old_bookmarks);
         g_object_set_data (G_OBJECT (bookmarks), "db", db);
@@ -2052,14 +2027,13 @@ main (int    argc,
     katze_assign (config_file, g_build_filename (config, "history.db", NULL));
 
     errmsg = NULL;
-    if ((db = midori_history_initialize (history, config_file, bookmarks_file ,&errmsg)) == NULL)
+    if (!midori_history_initialize (history, config_file, bookmarks_file, &errmsg))
     {
         g_string_append_printf (error_messages,
             _("The history couldn't be loaded: %s\n"), errmsg);
         g_free (errmsg);
     }
     g_free (bookmarks_file);
-    g_object_set_data (G_OBJECT (history), "db", db);
     midori_startup_timer ("History read: \t%f");
 
     /* In case of errors */
@@ -2203,7 +2177,7 @@ main (int    argc,
 
     settings = katze_object_get_object (app, "settings");
     g_object_get (settings, "maximum-history-age", &max_history_age, NULL);
-    midori_history_terminate (db, max_history_age);
+    midori_history_terminate (history, max_history_age);
     /* Removing KatzeHttpCookies makes it save outstanding changes */
     soup_session_remove_feature_by_type (webkit_get_default_session (),
                                          KATZE_TYPE_HTTP_COOKIES);

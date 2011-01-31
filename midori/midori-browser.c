@@ -179,11 +179,6 @@ midori_bookmarks_export_array_db (sqlite3*     db,
                                   const gchar* folder);
 
 void
-midori_bookmarks_insert_item_db (sqlite3*   db,
-                                 KatzeItem* item,
-                                 gchar*     folder);
-
-void
 midori_browser_open_bookmark (MidoriBrowser* browser,
                               KatzeItem*     item);
 
@@ -476,6 +471,7 @@ midori_browser_update_history_title (MidoriBrowser* browser,
     g_return_if_fail (katze_item_get_uri (item) != NULL);
 
     db = g_object_get_data (G_OBJECT (browser->history), "db");
+    g_return_if_fail (db != NULL);
     if (!stmt)
     {
         const gchar* sqlcmd;
@@ -909,8 +905,6 @@ midori_browser_edit_bookmark_dialog_new (MidoriBrowser* browser,
     if (gtk_dialog_run (GTK_DIALOG (dialog)) == GTK_RESPONSE_ACCEPT)
     {
         gchar* selected;
-        GtkTreeView* treeview;
-        GtkTreeModel* model;
 
         if (!new_bookmark)
             katze_array_remove_item (browser->bookmarks, bookmark);
@@ -930,23 +924,13 @@ midori_browser_edit_bookmark_dialog_new (MidoriBrowser* browser,
         }
 
         selected = gtk_combo_box_get_active_text (GTK_COMBO_BOX (combo_folder));
-
         if (!strcmp (selected, _("Toplevel folder")))
-            selected = g_strdup ("");
-
-        midori_bookmarks_insert_item_db (db, bookmark, selected);
-
-        if (new_bookmark)
-        {
-            treeview = g_object_get_data (G_OBJECT (browser->bookmarks), "treeview");
-            model = gtk_tree_view_get_model (GTK_TREE_VIEW (treeview));
-            gtk_tree_store_insert_with_values (GTK_TREE_STORE (model),
-                NULL, NULL, G_MAXINT, 0, bookmark, -1);
-        }
+            katze_assign (selected, g_strdup (""));
+        katze_item_set_meta_string (bookmark, "folder", selected);
+        katze_array_add_item (browser->bookmarks, bookmark);
 
         if (gtk_toggle_button_get_active (GTK_TOGGLE_BUTTON (check_toolbar)))
-            if (!gtk_widget_get_visible (browser->bookmarkbar)
-             && browser->bookmarks != NULL)
+            if (!gtk_widget_get_visible (browser->bookmarkbar))
                 _action_set_active (browser, "Bookmarkbar", TRUE);
         g_free (selected);
         return_status = TRUE;
@@ -2218,13 +2202,45 @@ static void
 _action_add_desktop_shortcut_activate (GtkAction*     action,
                                        MidoriBrowser* browser)
 {
-    #if defined (GDK_WINDOWING_X11)
+    #if HAVE_HILDON
     /* TODO: Implement */
+    #elif defined (GDK_WINDOWING_X11)
+    GtkWidget* tab = midori_browser_get_current_tab (browser);
+    KatzeItem* item = midori_view_get_proxy_item (MIDORI_VIEW (tab));
+    const gchar* app_name = katze_item_get_name (item);
+    gchar* app_exec = g_strconcat ("midori -a ", katze_item_get_uri (item), NULL);
+    const gchar* icon_uri = midori_view_get_icon_uri (MIDORI_VIEW (tab));
+    gchar* app_icon;
+    GKeyFile* keyfile = g_key_file_new ();
+    gchar* filename = g_strconcat (app_name, ".desktop", NULL);
+    gchar* app_dir;
+    int i = 0;
+    while (filename[i] != '\0')
+    {
+        if (filename[i] == '/')
+            filename[i] = '_';
+        i++;
+    }
+    app_dir = g_build_filename (g_get_user_data_dir (),
+                                "applications", filename, NULL);
+    app_icon = katze_net_get_cached_path (NULL, icon_uri, "icons");
+    if (!g_file_test (app_icon, G_FILE_TEST_EXISTS))
+        katze_assign (app_icon, g_strdup (STOCK_WEB_BROWSER));
+    g_key_file_set_string (keyfile, "Desktop Entry", "Version", "1.0");
+    g_key_file_set_string (keyfile, "Desktop Entry", "Type", "Application");
+    g_key_file_set_string (keyfile, "Desktop Entry", "Name", app_name);
+    g_key_file_set_string (keyfile, "Desktop Entry", "Exec", app_exec);
+    g_key_file_set_string (keyfile, "Desktop Entry", "TryExec", "midori");
+    g_key_file_set_string (keyfile, "Desktop Entry", "Icon", app_icon);
+    g_key_file_set_string (keyfile, "Desktop Entry", "Categories", "Network;");
+    sokoke_key_file_save_to_file (keyfile, app_dir, NULL);
+    g_free (app_dir);
+    g_free (filename);
+    g_free (app_exec);
+    g_key_file_free (keyfile);
     #elif defined(GDK_WINDOWING_QUARTZ)
     /* TODO: Implement */
     #elif defined (GDK_WINDOWING_WIN32)
-    /* TODO: Implement */
-    #elif HAVE_HILDON
     /* TODO: Implement */
     #endif
 }
@@ -2921,9 +2937,8 @@ _action_compact_menu_populate_popup (GtkAction*     action,
       { "WindowNew" },
       { "PrivateBrowsing" },
       { "Open" },
-      #if HAVE_HILDON
       { "Find" },
-      #else
+      #if !HAVE_HILDON
       { "Print" },
       { NULL },
       { "Panel" },
@@ -3989,6 +4004,7 @@ _action_bookmarks_import_activate (GtkAction*     action,
     gint icon_width = 16;
     guint i;
     KatzeItem* item;
+    KatzeArray* bookmarks;
     sqlite3* db;
     const gchar* sqlcmd;
     KatzeArray* bookmarkdirs;
@@ -4038,7 +4054,7 @@ _action_bookmarks_import_activate (GtkAction*     action,
         g_free (path);
     }
     gtk_list_store_insert_with_values (model, NULL, G_MAXINT,
-        0, _("Import from a file"), 1, NULL, 2, NULL, 3, icon_width, -1);
+        0, _("Import from XBEL or HTML file"), 1, NULL, 2, NULL, 3, icon_width, -1);
     gtk_combo_box_set_active (combobox, 0);
     gtk_box_pack_start (GTK_BOX (hbox), combo, TRUE, TRUE, 0);
     gtk_container_add (GTK_CONTAINER (content_area), hbox);
@@ -4095,14 +4111,17 @@ _action_bookmarks_import_activate (GtkAction*     action,
         }
 
         error = NULL;
-        if (path && !midori_array_from_file (browser->bookmarks, path, NULL, &error))
+        bookmarks = katze_array_new (KATZE_TYPE_ARRAY);
+        if (path && !midori_array_from_file (bookmarks, path, NULL, &error))
         {
             sokoke_message_dialog (GTK_MESSAGE_ERROR,
                 _("Failed to import bookmarks"), error ? error->message : "");
             if (error)
                 g_error_free (error);
         }
-        midori_bookmarks_import_array_db (db, browser->bookmarks, selected);
+        midori_bookmarks_import_array_db (db, bookmarks, selected);
+        katze_array_update (browser->bookmarks);
+        g_object_unref (bookmarks);
         g_free (selected);
         g_free (path);
     }
@@ -4118,6 +4137,7 @@ _action_bookmarks_export_activate (GtkAction*     action,
     gchar* path = NULL;
     GError* error;
     sqlite3* db;
+    KatzeArray* bookmarks;
 
     if (!browser->bookmarks || !gtk_widget_get_visible (GTK_WIDGET (browser)))
         return;
@@ -4135,14 +4155,16 @@ _action_bookmarks_export_activate (GtkAction*     action,
 
     error = NULL;
     db = g_object_get_data (G_OBJECT (browser->history), "db");
-    midori_bookmarks_export_array_db (db, browser->bookmarks, "");
-    if (!midori_array_to_file (browser->bookmarks, path, "xbel", &error))
+    bookmarks = katze_array_new (KATZE_TYPE_ARRAY);
+    midori_bookmarks_export_array_db (db, bookmarks, "");
+    if (!midori_array_to_file (bookmarks, path, "xbel", &error))
     {
         sokoke_message_dialog (GTK_MESSAGE_ERROR,
             _("Failed to export bookmarks"), error ? error->message : "");
         if (error)
             g_error_free (error);
     }
+    g_object_unref (bookmarks);
     g_free (path);
 }
 
@@ -4184,24 +4206,7 @@ midori_browser_clear_private_data_response_cb (GtkWidget*     dialog,
         button = g_object_get_data (G_OBJECT (dialog), "history");
         if (gtk_toggle_button_get_active (button))
         {
-            const gchar* sqlcmd = "DELETE FROM history";
-            sqlite3* db = g_object_get_data (G_OBJECT (browser->history), "db");
-            char* errmsg = NULL;
-
-            if (sqlite3_exec (db, sqlcmd, NULL, NULL, &errmsg) != SQLITE_OK)
-            {
-                g_printerr (_("Failed to clear history: %s\n"), errmsg);
-                sqlite3_free (errmsg);
-            }
-            else
-            {
-                sqlcmd = "DELETE FROM search";
-                if (sqlite3_exec (db, sqlcmd, NULL, NULL, &errmsg) != SQLITE_OK)
-                {
-                    g_printerr (_("Failed to clear search history: %s\n"), errmsg);
-                    sqlite3_free (errmsg);
-                }
-            }
+            katze_array_clear (browser->history);
             clear_prefs |= MIDORI_CLEAR_HISTORY;
         }
         button = g_object_get_data (G_OBJECT (dialog), "trash");
@@ -4403,10 +4408,11 @@ _action_tab_duplicate_activate (GtkAction*     action,
 {
     GtkWidget* view = midori_browser_get_current_tab (browser);
     MidoriNewView where = MIDORI_NEW_VIEW_TAB;
-    GtkWidget* new_view = midori_view_new_with_uri (
-        midori_view_get_display_uri (MIDORI_VIEW (view)),
-        NULL, browser->settings);
+    GtkWidget* new_view = midori_view_new_with_title (
+        NULL, browser->settings, FALSE);
+    const gchar* uri = midori_view_get_display_uri (MIDORI_VIEW (view));
     g_signal_emit_by_name (view, "new-view", new_view, where);
+    midori_view_set_uri (MIDORI_VIEW (new_view), uri);
 }
 
 static void
@@ -4514,8 +4520,8 @@ _action_help_link_activate (GtkAction*     action,
             uri = free_uri = g_filename_to_uri (path, NULL, NULL);
             if (g_access (path, F_OK) != 0)
             {
-                if (g_access (DOCDIR "/midori/user/midori.html", F_OK) == 0)
-                    uri = "file://" DOCDIR "/midori/user/midori.html";
+                if (g_access (DOCDIR "/user/midori.html", F_OK) == 0)
+                    uri = "file://" DOCDIR "/user/midori.html";
                 else
             #endif
                     uri = "error:nodocs share/doc/midori/user/midori.html";
@@ -4526,16 +4532,16 @@ _action_help_link_activate (GtkAction*     action,
         }
         #else
         #ifdef DOCDIR
-        uri = "file://" DOCDIR "/midori/user/midori.html";
-        if (g_access (DOCDIR "/midori/user/midori.html", F_OK) != 0)
+        uri = "file://" DOCDIR "/user/midori.html";
+        if (g_access (DOCDIR "/user/midori.html", F_OK) != 0)
         #endif
-            uri = "error:nodocs " DOCDIR "/midori/user/midori.html";
+            uri = "error:nodocs " DOCDIR "/user/midori.html";
         #endif
     }
     else if  (!strncmp ("HelpFAQ", action_name, 7))
         uri = "http://wiki.xfce.org/midori/faq";
     else if  (!strncmp ("HelpBugs", action_name, 8))
-        uri = "http://www.twotoasts.de/bugs/";
+        uri = PACKAGE_BUGREPORT;
     else
         uri = NULL;
 
@@ -4584,7 +4590,7 @@ midori_panel_notify_page_cb (MidoriPanel*   panel,
                              GParamSpec*    pspec,
                              MidoriBrowser* browser)
 {
-    gint page = katze_object_get_boolean (panel, "page");
+    gint page = midori_panel_get_current_page (panel);
     if (page > -1)
         g_object_set (browser->settings, "last-panel-page", page, NULL);
 }
@@ -4750,10 +4756,7 @@ midori_browser_notebook_button_press_event_after_cb (GtkNotebook*    notebook,
     if (/*(event->type == GDK_2BUTTON_PRESS && event->button == 1)
     || */(event->type == GDK_BUTTON_PRESS && event->button == 2))
     {
-        gint n;
-        GtkWidget* view = midori_view_new_with_uri ("", NULL, browser->settings);
-        g_object_set_data (G_OBJECT (view), "midori-view-append", (void*)1);
-        n = midori_browser_add_tab (browser, view);
+        gint n = midori_browser_add_uri (browser, "");
         midori_browser_set_current_page (browser, n);
 
         return TRUE;
@@ -4816,7 +4819,7 @@ static const GtkActionEntry entries[] =
         N_("Add to Speed _dial"), "<Ctrl>h",
         N_("Add shortcut to speed dial"), G_CALLBACK (_action_add_speed_dial_activate) },
     { "AddDesktopShortcut", NULL,
-        N_("Add Shortcut to the _desktop"), "<Ctrl>h",
+        N_("Add Shortcut to the _desktop"), "<Ctrl>j",
         N_("Add shortcut to the desktop"), G_CALLBACK (_action_add_desktop_shortcut_activate) },
     { "AddNewsFeed", NULL,
         N_("Subscribe to News _feed"), NULL,
@@ -4850,9 +4853,6 @@ static const GtkActionEntry entries[] =
         NULL, "<Ctrl>x",
         N_("Cut the selected text"), G_CALLBACK (_action_cut_activate) },
     { "Copy", GTK_STOCK_COPY,
-        NULL, "<Ctrl>c",
-        N_("Copy the selected text"), G_CALLBACK (_action_copy_activate) },
-    { "Copy_", GTK_STOCK_COPY,
         NULL, "<Ctrl>c",
         N_("Copy the selected text"), G_CALLBACK (_action_copy_activate) },
     { "Paste", GTK_STOCK_PASTE,
@@ -5330,6 +5330,7 @@ midori_browser_new_history_item (MidoriBrowser* browser,
     day = sokoke_time_t_to_julian (&now);
 
     db = g_object_get_data (G_OBJECT (browser->history), "db");
+    g_return_if_fail (db != NULL);
     if (!stmt)
     {
         const gchar* sqlcmd;
@@ -5702,7 +5703,7 @@ midori_browser_init (MidoriBrowser* browser)
     action = g_object_new (KATZE_TYPE_ARRAY_ACTION,
         "name", "CompactMenu",
         "label", _("_Menu"),
-        "stock-id", STOCK_WEB_BROWSER,
+        "stock-id", GTK_STOCK_PROPERTIES,
         "tooltip", _("Menu"),
         "array", katze_array_new (KATZE_TYPE_ITEM),
         NULL);
@@ -5776,8 +5777,9 @@ midori_browser_init (MidoriBrowser* browser)
     #endif
     _action_set_sensitive (browser, "EncodingCustom", FALSE);
     _action_set_visible (browser, "LastSession", FALSE);
-    /* FIXME: Show once implemented */
+    #if !HAVE_HILDON && !defined (GDK_WINDOWING_X11)
     _action_set_visible (browser, "AddDesktopShortcut", FALSE);
+    #endif
 
     _action_set_visible (browser, "Bookmarks", browser->bookmarks != NULL);
     _action_set_visible (browser, "BookmarkAdd", browser->bookmarks != NULL);
@@ -6454,6 +6456,8 @@ midori_browser_set_bookmarks (MidoriBrowser* browser,
     if (!bookmarks)
         return;
 
+    if (katze_object_get_boolean (browser->settings, "show-bookmarkbar"))
+        _action_set_active (browser, "Bookmarkbar", TRUE);
     g_object_ref (bookmarks);
     g_signal_connect (settings, "notify::show-bookmarkbar",
         G_CALLBACK (midori_browser_show_bookmarkbar_notify_value_cb), browser);
@@ -6712,23 +6716,24 @@ midori_browser_add_item (MidoriBrowser* browser,
     g_return_val_if_fail (KATZE_IS_ITEM (item), -1);
 
     uri = katze_item_get_uri (item);
+    if (!uri)
+        uri = "about:blank";
     title = katze_item_get_name (item);
+    view = midori_view_new_with_title (title, browser->settings,
+        g_object_get_data (G_OBJECT (item), "midori-view-append") ? TRUE : FALSE);
+    page = midori_browser_add_tab (browser, view);
+
     /* Blank pages should not be delayed */
     if (katze_item_get_meta_integer (item, "delay") > 0
-     && uri != NULL && strcmp (uri, "about:blank") != 0)
+     && strcmp (uri, "about:blank") != 0)
     {
         gchar* new_uri = g_strdup_printf ("pause:%s", uri);
-        view = midori_view_new_with_uri (new_uri, title, browser->settings);
+        midori_view_set_uri (MIDORI_VIEW (view), new_uri);
         g_free (new_uri);
     }
     else
-        view = midori_view_new_with_uri (uri, title, browser->settings);
+        midori_view_set_uri (MIDORI_VIEW (view), uri);
 
-    /* FIXME: We should have public API for that */
-    if (g_object_get_data (G_OBJECT (item), "midori-view-append"))
-        g_object_set_data (G_OBJECT (view), "midori-view-append", (void*)1);
-
-    page = midori_browser_add_tab (browser, view);
     proxy_item = midori_view_get_proxy_item (MIDORI_VIEW (view));
     if ((keys = katze_item_get_meta_keys (item)))
     {
@@ -6756,12 +6761,15 @@ midori_browser_add_uri (MidoriBrowser* browser,
                         const gchar*   uri)
 {
     GtkWidget* view;
+    gint n;
 
     g_return_val_if_fail (MIDORI_IS_BROWSER (browser), -1);
     g_return_val_if_fail (uri != NULL, -1);
 
-    view = midori_view_new_with_uri (uri, NULL, browser->settings);
-    return midori_browser_add_tab (browser, view);
+    view = midori_view_new_with_title (NULL, browser->settings, FALSE);
+    n = midori_browser_add_tab (browser, view);
+    midori_view_set_uri (MIDORI_VIEW (view), uri);
+    return n;
 }
 
 /**
@@ -6872,7 +6880,13 @@ void
 midori_browser_set_current_page (MidoriBrowser* browser,
                                  gint           n)
 {
+    gint n_pages;
     GtkWidget* view;
+
+    g_return_if_fail (MIDORI_IS_BROWSER (browser));
+
+    n_pages = gtk_notebook_get_n_pages (GTK_NOTEBOOK (browser->notebook));
+    g_return_if_fail (n < n_pages);
 
     gtk_notebook_set_current_page (GTK_NOTEBOOK (browser->notebook), n);
     view = gtk_notebook_get_nth_page (GTK_NOTEBOOK (browser->notebook), n);

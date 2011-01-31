@@ -172,8 +172,8 @@ extension_activate (gconstpointer data)
 {
     MidoriApp* app = midori_app_new ();
     MidoriExtension* extension = MIDORI_EXTENSION (data);
-    /* g_signal_emit_by_name (extension, "activate", app);
-    midori_extension_deactivate (extension); */
+    g_signal_emit_by_name (extension, "activate", app);
+    midori_extension_deactivate (extension);
     g_object_unref (app);
 }
 
@@ -237,6 +237,8 @@ main (int    argc,
     g_test_init (&argc, &argv, NULL);
     gtk_init_check (&argc, &argv);
     if (!g_thread_supported ()) g_thread_init (NULL);
+    soup_session_add_feature_by_type (webkit_get_default_session (),
+        SOUP_TYPE_COOKIE_JAR);
 
     g_test_add_func ("/extensions/create", extension_create);
     g_test_add_func ("/extensions/settings", extension_settings);
