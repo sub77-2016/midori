@@ -1,10 +1,10 @@
 diff --git a/data/search b/data/search
-index c793829..2cd3cbc 100644
+index e759642..59341ee 100644
 --- a/data/search
 +++ b/data/search
-@@ -26,3 +26,17 @@ text=Dictionary, Encyclopedia and Thesaurus
+@@ -27,3 +27,17 @@ name=The Free Dictionary
+ text=Dictionary, Encyclopedia and Thesaurus
  uri=http://www.thefreedictionary.com/%s
- icon=
  token=fd
 +
 +[Debian Packages]
