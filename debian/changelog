@@ -10,6 +10,7 @@ midori (0.3.0-1.1) UNRELEASED; urgency=low
     - remove waf stuff, midori waf has been updated so it's no longer needed
       to dynamically patch waf for HPPA.
     - install $(DISTRO)-config to /etc/xdg/midori to tune the default homepage
+    - add -O1 to LDFLAGS.
   * debian/{Ubuntu,Debian}-config added, with default homepage setting.
   * debian/patches:
     - add-debian-search refreshed.
@@ -17,7 +18,7 @@ midori (0.3.0-1.1) UNRELEASED; urgency=low
   * debian/control:
     - drop quilt build-dep, useless now.
 
- -- Yves-Alexis Perez <corsac@debian.org>  Mon, 31 Jan 2011 08:08:20 +0100
+ -- Yves-Alexis Perez <corsac@debian.org>  Mon, 31 Jan 2011 10:49:05 +0100
 
 midori (0.2.7-1.1) unstable; urgency=low
 

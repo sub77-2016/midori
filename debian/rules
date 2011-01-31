@@ -3,8 +3,8 @@
 LDFLAGS=$(shell dpkg-buildflags --get LDFLAGS)
 CFLAGS=$(shell dpkg-buildflags --get CFLAGS)
 CFLAGS+=$(HARDENING_CFLAGS)
-#LDFLAGS+=-Wl,-z,defs -Wl,--as-needed $(HARDENING_LDFLAGS)
-LDFLAGS+=-Wl,--as-needed $(HARDENING_LDFLAGS)
+#LDFLAGS+=-Wl,-z,defs -Wl,--as-needed -Wl,-O1 $(HARDENING_LDFLAGS)
+LDFLAGS+=-Wl,--as-needed -Wl,-O1 $(HARDENING_LDFLAGS)
 
 # waf, thank you _so_ much
 CCFLAGS=$(CFLAGS)
