@@ -7,7 +7,7 @@ midori (0.3.0-1.2) unstable; urgency=low
   * debian/rules:
     - remove .lock-script in clean target.
 
- -- Yves-Alexis Perez <corsac@debian.org>  Wed, 02 Feb 2011 10:14:47 +0100
+ -- Yves-Alexis Perez <corsac@debian.org>  Wed, 02 Feb 2011 21:01:25 +0100
 
 midori (0.3.0-1.1) unstable; urgency=low
 
