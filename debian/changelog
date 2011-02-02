@@ -1,3 +1,14 @@
+midori (0.3.0-1.2) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * debian/patches:
+    - 0001-Only-no-adblock-if-main-frame-in-provisional-state added, fix
+      adblock extension.                                        closes: #611682
+  * debian/rules:
+    - remove .lock-script in clean target.
+
+ -- Yves-Alexis Perez <corsac@debian.org>  Wed, 02 Feb 2011 10:14:47 +0100
+
 midori (0.3.0-1.1) unstable; urgency=low
 
   * Non-maintainer upload.

@@ -41,6 +41,7 @@ override_dh_auto_clean:
 	$(WAF) --nocache distclean
 	rm -rf _build_
 	rm -rf .waf*
+	rm -rf .lock-wscript
 
 override_dh_auto_configure:
 	$(WAF) --nocache configure --prefix /usr
