@@ -2,13 +2,13 @@
 
 LDFLAGS=$(shell dpkg-buildflags --get LDFLAGS)
 CFLAGS=$(shell dpkg-buildflags --get CFLAGS)
-CFLAGS+=$(HARDENING_CFLAGS)
-#LDFLAGS+=-Wl,-z,defs -Wl,--as-needed -Wl,-O1 $(HARDENING_LDFLAGS)
-LDFLAGS+=-Wl,--as-needed -Wl,-O1 $(HARDENING_LDFLAGS)
+LDFLAGS+=-Wl,--as-needed -Wl,-O1
 
 # waf, thank you _so_ much
-CCFLAGS=$(CFLAGS)
-LINKFLAGS=$(LDFLAGS)
+export LINKFLAGS=$(LDFLAGS)
+export CCFLAGS=$(CFLAGS)
+
+export DEB_BUILD_HARDENING=1
 
 CMD=$(shell echo $@ | sed 's/override_//')
 
@@ -44,10 +44,10 @@ override_dh_auto_clean:
 	rm -rf .lock-wscript
 
 override_dh_auto_configure:
-	$(WAF) --nocache configure --prefix /usr
+	$(WAF) --nocache configure --debug-level=none --prefix /usr
 
 override_dh_auto_build:
-	$(WAF) build --nocache --debug full
+	$(WAF) build --nocache -v
 
 #override_dh_auto_test:
 #	xvfb-run $(WAF) --nocache check

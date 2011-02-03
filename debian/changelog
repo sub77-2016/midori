@@ -1,6 +1,16 @@
 midori (0.3.0-1.2) unstable; urgency=low
 
   * Non-maintainer upload.
+  * debian/control:
+    - replace hardening-includes build-dep by hardening-wrapper.
+  * debian/rules:
+    - enable hardening.
+
+ -- Yves-Alexis Perez <corsac@debian.org>  Thu, 03 Feb 2011 23:43:07 +0100
+
+midori (0.3.0-1.2) unstable; urgency=low
+
+  * Non-maintainer upload.
   * debian/patches:
     - 0001-Only-no-adblock-if-main-frame-in-provisional-state added, fix
       adblock extension.                                        closes: #611682
