@@ -2,8 +2,11 @@ midori (0.3.1-0.1) UNRELEASED; urgency=low
 
   * Non maintainer upload.
   * New upstream release.
+  * debian/patches:
+    - 0001-Only-no-adblock-if-main-frame-in-provisional-state added, included
+      upstream.
 
- -- Yves-Alexis Perez <corsac@debian.org>  Sat, 19 Feb 2011 23:40:19 +0100
+ -- Yves-Alexis Perez <corsac@debian.org>  Sat, 19 Feb 2011 23:43:48 +0100
 
 midori (0.3.0-1.3) unstable; urgency=low
 
