@@ -153,7 +153,8 @@ sokoke_message_dialog_response_cb (GtkWidget* dialog,
 void
 sokoke_message_dialog (GtkMessageType message_type,
                        const gchar*   short_message,
-                       const gchar*   detailed_message)
+                       const gchar*   detailed_message,
+                       gboolean       modal)
 {
     GtkWidget* dialog = gtk_message_dialog_new (
         NULL, 0, message_type,
@@ -165,9 +166,18 @@ sokoke_message_dialog (GtkMessageType message_type,
         "%s", short_message);
     gtk_message_dialog_format_secondary_text (GTK_MESSAGE_DIALOG (dialog),
                                               "%s", detailed_message);
-    g_signal_connect (dialog, "response",
-                      G_CALLBACK (sokoke_message_dialog_response_cb), NULL);
-    gtk_widget_show (dialog);
+    if (modal)
+    {
+        gtk_dialog_run (GTK_DIALOG (dialog));
+        gtk_widget_destroy (dialog);
+    }
+    else
+    {
+        g_signal_connect (dialog, "response",
+                          G_CALLBACK (sokoke_message_dialog_response_cb), NULL);
+        gtk_widget_show (dialog);
+    }
+
 }
 
 /**
@@ -391,7 +401,10 @@ sokoke_show_uri (GdkScreen*   screen,
         GTK_STOCK_CANCEL, GTK_RESPONSE_CANCEL,
         GTK_STOCK_OPEN, GTK_RESPONSE_ACCEPT, NULL);
     box = gtk_dialog_get_content_area (GTK_DIALOG (dialog));
-    filename = g_filename_from_uri (uri, NULL, NULL);
+    if (g_str_has_prefix (uri, "file:///"))
+        filename = g_filename_from_uri (uri, NULL, NULL);
+    else
+        filename = g_strdup (uri);
     ms = g_strdup_printf (_("Choose an application or command to open \"%s\":"),
                           filename);
     gtk_box_pack_start (GTK_BOX (box), gtk_label_new (ms), TRUE, FALSE, 4);
@@ -434,7 +447,7 @@ sokoke_spawn_program (const gchar* command,
         {
             sokoke_message_dialog (GTK_MESSAGE_ERROR,
                                    _("Could not run external program."),
-                                   "Failed to initialize libosso");
+                                   "Failed to initialize libosso", FALSE);
             return FALSE;
         }
 
@@ -444,7 +457,7 @@ sokoke_spawn_program (const gchar* command,
             osso_deinitialize (osso);
             sokoke_message_dialog (GTK_MESSAGE_ERROR,
                                    _("Could not run external program."),
-                                   "Failed to get dbus connection from osso context");
+                                   "Failed to get dbus connection from osso context", FALSE);
             return FALSE;
         }
 
@@ -472,7 +485,7 @@ sokoke_spawn_program (const gchar* command,
         {
             sokoke_message_dialog (GTK_MESSAGE_ERROR,
                 _("Could not run external program."),
-                error ? error->message : "");
+                error ? error->message : "", FALSE);
             if (error)
                 g_error_free (error);
             return FALSE;
@@ -501,7 +514,7 @@ sokoke_spawn_program (const gchar* command,
         {
             sokoke_message_dialog (GTK_MESSAGE_ERROR,
                                    _("Could not run external program."),
-                                   error->message);
+                                   error->message, FALSE);
             g_error_free (error);
             g_free (command_ready);
             return FALSE;
@@ -515,7 +528,7 @@ sokoke_spawn_program (const gchar* command,
         {
             sokoke_message_dialog (GTK_MESSAGE_ERROR,
                                    _("Could not run external program."),
-                                   error->message);
+                                   error->message, FALSE);
             g_error_free (error);
         }
 
@@ -960,7 +973,16 @@ sokoke_get_desktop (void)
     static SokokeDesktop desktop = SOKOKE_DESKTOP_UNTESTED;
     if (G_UNLIKELY (desktop == SOKOKE_DESKTOP_UNTESTED))
     {
-        /* Are we running in Xfce? */
+        desktop = SOKOKE_DESKTOP_UNKNOWN;
+
+        /* Are we running in Xfce >= 4.8? */
+        if (!g_strcmp0 (g_getenv ("DESKTOP_SESSION"), "xfce"))
+        {
+            desktop = SOKOKE_DESKTOP_XFCE;
+        }
+        else
+        {
+        /* Are we running in Xfce <= 4.6? */
         GdkDisplay* display = gdk_display_get_default ();
         Display* xdisplay = GDK_DISPLAY_XDISPLAY (display);
         Window root_window = RootWindow (xdisplay, 0);
@@ -974,12 +996,12 @@ sokoke_get_desktop (void)
             save_mode_atom, 0, (~0L),
             False, AnyPropertyType, &actual_type, &actual_format,
             &n_items, &bytes, (unsigned char**)&value);
-        desktop = SOKOKE_DESKTOP_UNKNOWN;
         if (status == Success)
         {
             if (n_items == 6 && !strncmp (value, "xfce4", 6))
                 desktop = SOKOKE_DESKTOP_XFCE;
             XFree (value);
+        }
         }
     }
 

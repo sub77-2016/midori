@@ -37,7 +37,6 @@ struct _MidoriWebSettings
     gboolean show_transferbar : 1;
     gboolean show_statusbar : 1;
     MidoriToolbarStyle toolbar_style : 3;
-    gboolean progress_in_location : 1;
     gboolean search_engines_in_completion : 1;
     gboolean compact_sidepanel : 1;
     gboolean show_panel_controls : 1;
@@ -46,11 +45,10 @@ struct _MidoriWebSettings
     MidoriStartup load_on_startup : 2;
     gboolean show_crash_dialog : 1;
     gboolean speed_dial_in_new_tabs : 1;
-    gboolean ask_for_destination_folder : 1;
-    gboolean notify_transfer_completed : 1;
     MidoriPreferredEncoding preferred_encoding : 3;
     gboolean always_show_tabbar : 1;
     gboolean close_buttons_on_tabs : 1;
+    gboolean close_buttons_left : 1;
     MidoriNewPage open_new_pages_in : 2;
     MidoriNewPage open_external_pages_in : 2;
     gboolean middle_click_opens_selection : 1;
@@ -117,7 +115,6 @@ enum
     PROP_SHOW_STATUSBAR,
 
     PROP_TOOLBAR_STYLE,
-    PROP_PROGRESS_IN_LOCATION,
     PROP_SEARCH_ENGINES_IN_COMPLETION,
     PROP_TOOLBAR_ITEMS,
     PROP_COMPACT_SIDEPANEL,
@@ -130,8 +127,6 @@ enum
     PROP_SHOW_CRASH_DIALOG,
     PROP_SPEED_DIAL_IN_NEW_TABS,
     PROP_DOWNLOAD_FOLDER,
-    PROP_ASK_FOR_DESTINATION_FOLDER,
-    PROP_NOTIFY_TRANSFER_COMPLETED,
     PROP_DOWNLOAD_MANAGER,
     PROP_TEXT_EDITOR,
     PROP_NEWS_AGGREGATOR,
@@ -140,6 +135,7 @@ enum
 
     PROP_ALWAYS_SHOW_TABBAR,
     PROP_CLOSE_BUTTONS_ON_TABS,
+    PROP_CLOSE_BUTTONS_LEFT,
     PROP_OPEN_NEW_PAGES_IN,
     PROP_OPEN_EXTERNAL_PAGES_IN,
     PROP_MIDDLE_CLICK_OPENS_SELECTION,
@@ -444,7 +440,7 @@ midori_web_settings_class_init (MidoriWebSettingsClass* class)
                                      "show-menubar",
                                      _("Show Menubar"),
                                      _("Whether to show the menubar"),
-                                     TRUE,
+                                     FALSE,
                                      flags));
 
     g_object_class_install_property (gobject_class,
@@ -480,6 +476,8 @@ midori_web_settings_class_init (MidoriWebSettingsClass* class)
      * Whether to show the transferbar.
      *
      * Since: 0.1.5
+     *
+     * Deprecated: 0.3.1
      */
     g_object_class_install_property (gobject_class,
                                      PROP_SHOW_TRANSFERBAR,
@@ -511,27 +509,13 @@ midori_web_settings_class_init (MidoriWebSettingsClass* class)
                                      flags));
 
     /**
-    * MidoriWebSettings:progress-in-location:
-    *
-    * Whether to show loading progress in the location entry.
-    *
-    * Since: 0.1.3
-    */
-    g_object_class_install_property (gobject_class,
-                                     PROP_PROGRESS_IN_LOCATION,
-                                     g_param_spec_boolean (
-                                     "progress-in-location",
-                                     _("Show progress in location entry"),
-                                     _("Whether to show loading progress in the location entry"),
-                                     TRUE,
-                                     flags));
-
-    /**
     * MidoriWebSettings:search-engines-in-completion:
     *
     * Whether to show search engines in the location completion.
     *
     * Since: 0.1.6
+    *
+    * Deprecated: 0.3.1
     */
     g_object_class_install_property (gobject_class,
                                      PROP_SEARCH_ENGINES_IN_COMPLETION,
@@ -548,7 +532,7 @@ midori_web_settings_class_init (MidoriWebSettingsClass* class)
                                      "toolbar-items",
                                      _("Toolbar Items"),
                                      _("The items to show on the toolbar"),
-                                     "TabNew,Back,Forward,Next,ReloadStop,BookmarkAdd,Location,Search,Trash",
+                                     "TabNew,Back,Forward,Next,ReloadStop,BookmarkAdd,Location,Search,Trash,CompactMenu",
                                      flags));
 
     g_object_class_install_property (gobject_class,
@@ -676,52 +660,6 @@ midori_web_settings_class_init (MidoriWebSettingsClass* class)
                                      G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
     #endif
 
-    /**
-     * MidoriWebSettings:ask-for-destination-folder:
-     *
-     * Whether to ask for the destination folder when downloading a file.
-     *
-     * Note: Only since 0.2.0 is this value actually used.
-     *
-     * Since: 0.1.7
-     *
-     * Deprecated: 0.3.0
-     */
-    g_object_class_install_property (gobject_class,
-                                     PROP_ASK_FOR_DESTINATION_FOLDER,
-                                     g_param_spec_boolean (
-                                     "ask-for-destination-folder",
-                                     _("Ask for the destination folder"),
-        _("Whether to ask for the destination folder when downloading a file"),
-                                     FALSE,
-    #if WEBKIT_CHECK_VERSION (1, 1, 15)
-                                     flags));
-    #else
-                                     G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
-    #endif
-
-    /**
-     * MidoriWebSettings:notify-transfer-completed:
-     *
-     * Whether to show a notification when a transfer has been completed.
-     *
-     * Since: 0.1.7
-     *
-     * Deprecated: 0.3.0
-     */
-    g_object_class_install_property (gobject_class,
-                                     PROP_NOTIFY_TRANSFER_COMPLETED,
-                                     g_param_spec_boolean (
-                                     "notify-transfer-completed",
-                                     _("Notify when a transfer has been completed"),
-        _("Whether to show a notification when a transfer has been completed"),
-                                     TRUE,
-    #if WEBKIT_CHECK_VERSION (1, 1, 3)
-                                     flags));
-    #else
-                                     G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
-    #endif
-
     g_object_class_install_property (gobject_class,
                                      PROP_DOWNLOAD_MANAGER,
                                      g_param_spec_string (
@@ -793,6 +731,27 @@ midori_web_settings_class_init (MidoriWebSettingsClass* class)
                                      _("Whether tabs have close buttons"),
                                      TRUE,
                                      flags));
+
+    /**
+     * MidoriWebSettings:close-buttons-left:
+     *
+     * Whether to show close buttons on the left side.
+     *
+     * Since: 0.3.1
+     */
+    g_object_class_install_property (gobject_class,
+                                     PROP_CLOSE_BUTTONS_LEFT,
+                                     g_param_spec_boolean (
+                                     "close-buttons-left",
+                                     "Close buttons on the left",
+                                     "Whether to show close buttons on the left side",
+                                     #if HAVE_OSX
+                                     TRUE,
+                                     #else
+                                     FALSE,
+                                     #endif
+                                     flags));
+
 
     g_object_class_install_property (gobject_class,
                                      PROP_OPEN_NEW_PAGES_IN,
@@ -1168,7 +1127,6 @@ notify_default_encoding_cb (GObject*    object,
 static void
 midori_web_settings_init (MidoriWebSettings* web_settings)
 {
-    web_settings->notify_transfer_completed = TRUE;
     web_settings->download_folder = g_strdup (midori_get_download_dir ());
     web_settings->http_proxy = NULL;
     web_settings->show_panel_controls = TRUE;
@@ -1339,9 +1297,6 @@ midori_web_settings_set_property (GObject*      object,
     case PROP_TOOLBAR_STYLE:
         web_settings->toolbar_style = g_value_get_enum (value);
         break;
-    case PROP_PROGRESS_IN_LOCATION:
-        web_settings->progress_in_location = g_value_get_boolean (value);
-        break;
     case PROP_SEARCH_ENGINES_IN_COMPLETION:
         web_settings->search_engines_in_completion = g_value_get_boolean (value);
         break;
@@ -1375,12 +1330,6 @@ midori_web_settings_set_property (GObject*      object,
         break;
     case PROP_DOWNLOAD_FOLDER:
         katze_assign (web_settings->download_folder, g_value_dup_string (value));
-        break;
-    case PROP_ASK_FOR_DESTINATION_FOLDER:
-        web_settings->ask_for_destination_folder = g_value_get_boolean (value);
-        break;
-    case PROP_NOTIFY_TRANSFER_COMPLETED:
-        web_settings->notify_transfer_completed = g_value_get_boolean (value);
         break;
     case PROP_DOWNLOAD_MANAGER:
         katze_assign (web_settings->download_manager, g_value_dup_string (value));
@@ -1426,6 +1375,9 @@ midori_web_settings_set_property (GObject*      object,
         break;
     case PROP_CLOSE_BUTTONS_ON_TABS:
         web_settings->close_buttons_on_tabs = g_value_get_boolean (value);
+        break;
+    case PROP_CLOSE_BUTTONS_LEFT:
+        web_settings->close_buttons_left = g_value_get_boolean (value);
         break;
     case PROP_OPEN_NEW_PAGES_IN:
         web_settings->open_new_pages_in = g_value_get_enum (value);
@@ -1617,9 +1569,6 @@ midori_web_settings_get_property (GObject*    object,
     case PROP_TOOLBAR_STYLE:
         g_value_set_enum (value, web_settings->toolbar_style);
         break;
-    case PROP_PROGRESS_IN_LOCATION:
-        g_value_set_boolean (value, web_settings->progress_in_location);
-        break;
     case PROP_SEARCH_ENGINES_IN_COMPLETION:
         g_value_set_boolean (value, web_settings->search_engines_in_completion);
         break;
@@ -1654,12 +1603,6 @@ midori_web_settings_get_property (GObject*    object,
     case PROP_DOWNLOAD_FOLDER:
         g_value_set_string (value, web_settings->download_folder);
         break;
-    case PROP_ASK_FOR_DESTINATION_FOLDER:
-        g_value_set_boolean (value, web_settings->ask_for_destination_folder);
-        break;
-    case PROP_NOTIFY_TRANSFER_COMPLETED:
-        g_value_set_boolean (value, web_settings->notify_transfer_completed);
-        break;
     case PROP_DOWNLOAD_MANAGER:
         g_value_set_string (value, web_settings->download_manager);
         break;
@@ -1681,6 +1624,9 @@ midori_web_settings_get_property (GObject*    object,
         break;
     case PROP_CLOSE_BUTTONS_ON_TABS:
         g_value_set_boolean (value, web_settings->close_buttons_on_tabs);
+        break;
+    case PROP_CLOSE_BUTTONS_LEFT:
+        g_value_set_boolean (value, web_settings->close_buttons_left);
         break;
     case PROP_OPEN_NEW_PAGES_IN:
         g_value_set_enum (value, web_settings->open_new_pages_in);

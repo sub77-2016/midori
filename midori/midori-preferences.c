@@ -365,15 +365,6 @@ midori_preferences_set_settings (MidoriPreferences* preferences,
     INDENTED_ADD (label);
     button = katze_property_proxy (settings, "download-folder", "folder");
     SPANNED_ADD (button);
-    label = katze_property_proxy (settings, "ask-for-destination-folder", NULL);
-    INDENTED_ADD (label);
-    #if HAVE_LIBNOTIFY
-    if (notify_is_initted () || g_find_program_in_path ("notify-send"))
-    {
-        button = katze_property_proxy (settings, "notify-transfer-completed", NULL);
-        SPANNED_ADD (button);
-    }
-    #endif
     #endif
 
     /* Page "Appearance" */
@@ -455,10 +446,6 @@ midori_preferences_set_settings (MidoriPreferences* preferences,
     #if !HAVE_HILDON
     INDENTED_ADD (katze_property_label (settings, "toolbar-style"));
     button = katze_property_proxy (settings, "toolbar-style", NULL);
-    SPANNED_ADD (button);
-    button = katze_property_proxy (settings, "progress-in-location", NULL);
-    INDENTED_ADD (button);
-    button = katze_property_proxy (settings, "search-engines-in-completion", NULL);
     SPANNED_ADD (button);
     #endif
     FRAME_NEW (_("Browsing"));

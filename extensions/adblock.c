@@ -654,16 +654,17 @@ adblock_is_matched_by_key (const gchar*  opts,
         {
             if (g_regex_match_full (regex, req_uri, -1, 0, 0, NULL, NULL))
             {
-                g_free (uri);
                 g_free (sig);
                 if (opts && adblock_check_filter_options (regex, opts, req_uri, page_uri))
                 {
+                    g_free (uri);
                     g_list_free (regex_bl);
                     return FALSE;
                 }
                 else
                 {
                     adblock_debug ("blocked by regexp=%s -- %s", g_regex_get_pattern (regex), uri);
+                    g_free (uri);
                     g_list_free (regex_bl);
                     return TRUE;
                 }
@@ -753,7 +754,8 @@ adblock_resource_request_starting_cb (WebKitWebView*         web_view,
     const char *page_uri;
 
     /* Never filter the main page itself */
-    if (web_frame == webkit_web_view_get_main_frame (web_view))
+    if (web_frame == webkit_web_view_get_main_frame (web_view)
+     && webkit_web_frame_get_load_status (web_frame) == WEBKIT_LOAD_PROVISIONAL)
         return;
 
     req_uri = webkit_network_request_get_uri (request);

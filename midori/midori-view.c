@@ -92,7 +92,6 @@ struct _MidoriView
     gboolean speed_dial_in_new_tabs;
     gchar* download_manager;
     gchar* news_aggregator;
-    gboolean ask_for_destination_folder;
     gboolean middle_click_opens_selection;
     gboolean open_tabs_in_the_background;
     gboolean close_buttons_on_tabs;
@@ -1353,6 +1352,7 @@ midori_view_display_error (MidoriView*     view,
         #endif
         gchar* res_root;
         gchar* stock_root;
+        gchar* title_escaped;
         gchar* result;
 
         #if WEBKIT_CHECK_VERSION (1, 1, 14)
@@ -1365,14 +1365,16 @@ midori_view_display_error (MidoriView*     view,
         stock_root = g_strdup_printf ("http://localhost:%d/stock", port);
         #endif
 
+        title_escaped = g_markup_escape_text (title, -1);
         result = sokoke_replace_variables (template,
-            "{title}", title,
+            "{title}", title_escaped,
             "{message}", message,
             "{description}", description,
             "{tryagain}", try_again,
             "{res}", res_root,
             "{stock}", stock_root,
             NULL);
+        g_free (title_escaped);
         g_free (template);
 
         midori_view_load_alternate_string (view,
@@ -1990,11 +1992,8 @@ midori_web_view_menu_save_activate_cb (GtkWidget*  widget,
     WebKitDownload* download = webkit_download_new (request);
     gboolean handled;
     g_object_unref (request);
-    if (view->ask_for_destination_folder)
-        g_object_set_data (G_OBJECT (download), "save-as-download", (void*)0xdeadbeef);
+    g_object_set_data (G_OBJECT (download), "save-as-download", (void*)0xdeadbeef);
     g_signal_emit (view, signals[DOWNLOAD_REQUESTED], 0, download, &handled);
-    if (!view->ask_for_destination_folder)
-        webkit_download_start (download);
 }
 
 static void
@@ -2025,11 +2024,8 @@ midori_web_view_menu_image_save_activate_cb (GtkWidget*  widget,
     WebKitDownload* download = webkit_download_new (request);
     gboolean handled;
     g_object_unref (request);
-    if (view->ask_for_destination_folder)
-        g_object_set_data (G_OBJECT (download), "save-as-download", (void*)0xdeadbeef);
+    g_object_set_data (G_OBJECT (download), "save-as-download", (void*)0xdeadbeef);
     g_signal_emit (view, signals[DOWNLOAD_REQUESTED], 0, download, &handled);
-    if (!view->ask_for_destination_folder)
-        webkit_download_start (download);
     g_free (uri);
 }
 
@@ -2051,11 +2047,8 @@ midori_web_view_menu_video_save_activate_cb (GtkWidget*  widget,
     WebKitDownload* download = webkit_download_new (request);
     gboolean handled;
     g_object_unref (request);
-    if (view->ask_for_destination_folder)
-        g_object_set_data (G_OBJECT (download), "save-as-download", (void*)0xdeadbeef);
+    g_object_set_data (G_OBJECT (download), "save-as-download", (void*)0xdeadbeef);
     g_signal_emit (view, signals[DOWNLOAD_REQUESTED], 0, download, &handled);
-    if (!view->ask_for_destination_folder)
-        webkit_download_start (download);
     g_free (uri);
 }
 
@@ -2421,8 +2414,7 @@ midori_view_populate_popup (MidoriView* view,
             _("Copy Link de_stination"), NULL,
             G_CALLBACK (midori_web_view_menu_link_copy_activate_cb), widget);
         midori_view_insert_menu_item (menu_shell, -1,
-            view->ask_for_destination_folder ? _("_Save Link destination")
-            : _("_Download Link destination"), NULL,
+            _("_Save Link destination"), NULL,
             G_CALLBACK (midori_web_view_menu_save_activate_cb), widget);
         if (view->download_manager && *view->download_manager)
             midori_view_insert_menu_item (menu_shell, -1,
@@ -2441,8 +2433,7 @@ midori_view_populate_popup (MidoriView* view,
             _("Copy Image _Address"), NULL,
             G_CALLBACK (midori_web_view_menu_image_copy_activate_cb), widget);
         midori_view_insert_menu_item (menu_shell, -1,
-            view->ask_for_destination_folder ? _("Save I_mage")
-            : _("Download I_mage"), GTK_STOCK_SAVE,
+            _("Save I_mage"), GTK_STOCK_SAVE,
             G_CALLBACK (midori_web_view_menu_image_save_activate_cb), widget);
     }
 
@@ -2893,6 +2884,7 @@ webkit_web_view_mime_type_decision_cb (GtkWidget*               web_view,
     description = g_content_type_get_description (content_type);
     #if GTK_CHECK_VERSION (2, 14, 0)
     icon = g_content_type_get_icon (content_type);
+    g_themed_icon_append_name (G_THEMED_ICON (icon), "document-x-generic");
     image = gtk_image_new_from_gicon (icon, GTK_ICON_SIZE_DIALOG);
     g_object_unref (icon);
     gtk_widget_show (image);
@@ -3319,7 +3311,6 @@ _midori_view_set_settings (MidoriView*        view,
         "kinetic-scrolling", &kinetic_scrolling,
         "close-buttons-on-tabs", &view->close_buttons_on_tabs,
         "open-new-pages-in", &view->open_new_pages_in,
-        "ask-for-destination-folder", &view->ask_for_destination_folder,
         "middle-click-opens-selection", &view->middle_click_opens_selection,
         "open-tabs-in-the-background", &view->open_tabs_in_the_background,
         "find-while-typing", &view->find_while_typing,
@@ -3396,8 +3387,6 @@ midori_view_settings_notify_cb (MidoriWebSettings* settings,
     }
     else if (name == g_intern_string ("open-new-pages-in"))
         view->open_new_pages_in = g_value_get_enum (&value);
-    else if (name == g_intern_string ("ask-for-destination-folder"))
-        view->ask_for_destination_folder = g_value_get_boolean (&value);
     else if (name == g_intern_string ("middle-click-opens-selection"))
         view->middle_click_opens_selection = g_value_get_boolean (&value);
     else if (name == g_intern_string ("open-tabs-in-the-background"))
@@ -3469,6 +3458,7 @@ midori_view_web_inspector_construct_window (gpointer       inspector,
                                             MidoriView*    view)
 {
     gchar* title;
+    gchar* label;
     GtkWidget* window;
     GtkWidget* toplevel;
     GdkScreen* screen;
@@ -3477,10 +3467,12 @@ midori_view_web_inspector_construct_window (gpointer       inspector,
     GdkPixbuf* icon;
     GdkPixbuf* gray_icon;
 
-    title = g_strdup_printf (_("Inspect page - %s"), "");
+    label = g_strdup (midori_view_get_display_title (view));
+    title = g_strdup_printf (_("Inspect page - %s"), label);
     window = gtk_window_new (GTK_WINDOW_TOPLEVEL);
     gtk_window_set_title (GTK_WINDOW (window), title);
     g_free (title);
+    g_free (label);
 
     toplevel = gtk_widget_get_toplevel (GTK_WIDGET (view));
     if (gtk_widget_is_toplevel (toplevel))
@@ -3879,7 +3871,7 @@ midori_view_set_uri (MidoriView*  view,
                 data = g_strdup_printf (
                     "<html><head><title>about:version</title></head>"
                     "<body><h1>about:version</h1>"
-                    "<p>Version numbers in brackets show the version used at runtime.</p>"
+                    "<p>%s</p>"
                     "<img src=\"res://logo-shade.png\" "
                     "style=\"position: absolute; right: 15px; bottom: 15px; z-index: -9;\">"
                     "<table>"
@@ -3897,6 +3889,7 @@ midori_view_set_uri (MidoriView*  view,
                     "<tr><td>Identification</td><td>%s</td></tr>"
                     "</table>"
                     "</body></html>",
+                    _("Version numbers in brackets show the version used at runtime."),
                     command_line,
                     DEBUGGING,
                     WEBKIT_MAJOR_VERSION,
@@ -3962,7 +3955,8 @@ midori_view_set_uri (MidoriView*  view,
             result = midori_view_execute_script (view, &uri[11], &exception);
             if (!result)
             {
-                sokoke_message_dialog (GTK_MESSAGE_ERROR, "javascript:", exception);
+                sokoke_message_dialog (GTK_MESSAGE_ERROR, "javascript:",
+                                       exception, FALSE);
                 g_free (exception);
             }
         }
@@ -4582,15 +4576,18 @@ midori_view_get_proxy_tab_label (MidoriView* view)
         align = gtk_alignment_new (1.0, 0.0, 0.0, 0.0);
         gtk_container_add (GTK_CONTAINER (align), view->tab_close);
 
-        #if HAVE_OSX
-        gtk_box_pack_end (GTK_BOX (hbox), view->tab_icon, FALSE, FALSE, 0);
-        gtk_box_pack_end (GTK_BOX (hbox), view->tab_title, FALSE, TRUE, 0);
-        gtk_box_pack_start (GTK_BOX (hbox), align, FALSE, FALSE, 0);
-        #else
-        gtk_box_pack_start (GTK_BOX (hbox), view->tab_icon, FALSE, FALSE, 0);
-        gtk_box_pack_start (GTK_BOX (hbox), view->tab_title, FALSE, TRUE, 0);
-        gtk_box_pack_end (GTK_BOX (hbox), align, FALSE, FALSE, 0);
-        #endif
+        if (katze_object_get_boolean (view->settings, "close-buttons-left"))
+        {
+            gtk_box_pack_end (GTK_BOX (hbox), view->tab_icon, FALSE, FALSE, 0);
+            gtk_box_pack_end (GTK_BOX (hbox), view->tab_title, FALSE, TRUE, 0);
+            gtk_box_pack_start (GTK_BOX (hbox), align, FALSE, FALSE, 0);
+        }
+        else
+        {
+            gtk_box_pack_start (GTK_BOX (hbox), view->tab_icon, FALSE, FALSE, 0);
+            gtk_box_pack_start (GTK_BOX (hbox), view->tab_title, FALSE, TRUE, 0);
+            gtk_box_pack_end (GTK_BOX (hbox), align, FALSE, FALSE, 0);
+        }
         gtk_widget_show_all (GTK_WIDGET (event_box));
 
         if (view->minimized)

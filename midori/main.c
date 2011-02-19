@@ -86,9 +86,16 @@ settings_and_accels_new (const gchar* config,
     {
         if (error->code == G_FILE_ERROR_NOENT)
         {
+            GError* inner_error = NULL;
             katze_assign (config_file, sokoke_find_config_filename (NULL, "config"));
             g_key_file_load_from_file (key_file, config_file,
-                                       G_KEY_FILE_KEEP_COMMENTS, NULL);
+                                       G_KEY_FILE_KEEP_COMMENTS, &inner_error);
+            if (inner_error != NULL)
+            {
+                printf (_("The configuration couldn't be loaded: %s\n"),
+                        inner_error->message);
+                g_error_free (inner_error);
+            }
         }
         else
             printf (_("The configuration couldn't be loaded: %s\n"),
@@ -589,8 +596,15 @@ settings_notify_cb (MidoriWebSettings* settings,
                     GParamSpec*        pspec,
                     MidoriApp*         app)
 {
-    gchar* config_file = build_config_filename ("config");
     GError* error = NULL;
+    gchar* config_file;
+
+    /* Skip state related properties to avoid disk IO */
+    if ((pspec && g_str_has_prefix (pspec->name, "last-window-"))
+     || (pspec && g_str_has_prefix (pspec->name, "last-panel-")))
+        return;
+
+    config_file = build_config_filename ("config");
     if (!settings_save_to_file (settings, app, config_file, &error))
     {
         g_warning (_("The configuration couldn't be saved. %s"), error->message);
@@ -886,6 +900,7 @@ midori_soup_session_prepare (SoupSession*       session,
     {
         "/etc/pki/tls/certs/ca-bundle.crt",
         "/etc/ssl/certs/ca-certificates.crt",
+        "/etc/ssl/certs/ca-bundle.crt",
         "/usr/local/share/certs/ca-root-nss.crt",
         NULL
     };
@@ -1639,6 +1654,7 @@ main (int    argc,
     MidoriWebSettings* settings;
     gchar* config_file;
     gchar* bookmarks_file;
+    gboolean bookmarks_exist;
     MidoriStartup load_on_startup;
     KatzeArray* search_engines;
     KatzeArray* bookmarks;
@@ -1722,7 +1738,10 @@ main (int    argc,
     /* libSoup uses threads, so we need to initialize threads. */
     if (!g_thread_supported ()) g_thread_init (NULL);
     sokoke_register_stock_items ();
-    g_set_application_name (_("Midori"));
+    if (webapp && config)
+        g_set_application_name (_("Midori (Private Browsing)"));
+    else
+        g_set_application_name (_("Midori"));
 
     #ifdef G_ENABLE_DEBUG
     if (startup_timer)
@@ -1733,7 +1752,7 @@ main (int    argc,
     {
         g_print (
           "%s %s\n\n"
-          "Copyright (c) 2007-2010 Christian Dywan\n\n"
+          "Copyright (c) 2007-2011 Christian Dywan\n\n"
           "%s\n"
           "\t%s\n\n"
           "%s\n"
@@ -1757,12 +1776,15 @@ main (int    argc,
             const gchar* name = gtk_action_get_name (action);
             const gchar* space = "                       ";
             gchar* padding = g_strndup (space, strlen (space) - strlen (name));
-            gchar* label = katze_strip_mnemonics (gtk_action_get_label (action));
-            const gchar* tooltip = gtk_action_get_tooltip (action);
-            g_print ("%s%s%s%s%s\n", name, padding, label,
+            gchar* label = katze_object_get_string (action, "label");
+            gchar* stripped = katze_strip_mnemonics (label);
+            gchar* tooltip = katze_object_get_string (action, "tooltip");
+            g_print ("%s%s%s%s%s\n", name, padding, stripped,
                      tooltip ? ": " : "", tooltip ? tooltip : "");
+            g_free (tooltip);
             g_free (padding);
             g_free (label);
+            g_free (stripped);
         }
         g_list_free (actions);
         gtk_widget_destroy (GTK_WIDGET (browser));
@@ -1966,6 +1988,7 @@ main (int    argc,
 
     bookmarks = katze_array_new (KATZE_TYPE_ARRAY);
     bookmarks_file = g_build_filename (config, "bookmarks.db", NULL);
+    bookmarks_exist = g_access (bookmarks_file, F_OK) == 0;
     errmsg = NULL;
     if ((db = midori_bookmarks_initialize (bookmarks, bookmarks_file, &errmsg)) == NULL)
     {
@@ -1973,8 +1996,9 @@ main (int    argc,
             _("Bookmarks couldn't be loaded: %s\n"), errmsg);
         g_free (errmsg);
     }
-    else
+    else if (!bookmarks_exist)
     {
+        /* Initial creation, import old bookmarks */
         gchar* old_bookmarks;
         if (g_path_is_absolute (BOOKMARK_FILE))
             old_bookmarks = g_strdup (BOOKMARK_FILE);
@@ -1986,8 +2010,8 @@ main (int    argc,
             /* Leave old bookmarks around */
         }
         g_free (old_bookmarks);
-        g_object_set_data (G_OBJECT (bookmarks), "db", db);
     }
+    g_object_set_data (G_OBJECT (bookmarks), "db", db);
     midori_startup_timer ("Bookmarks read: \t%f");
 
     config_file = NULL;
