@@ -2,6 +2,7 @@ midori (0.3.2-0.1) UNRELEASED; urgency=low
 
   * Non maintainer upload.
   * New upstream release.
+    - fix bookmarks multiplication.                             closes: #613739
   * debian/patches:
     - 0001-Only-no-adblock-if-main-frame-in-provisional-state added, included
       upstream.
