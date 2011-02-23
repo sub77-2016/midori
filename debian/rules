@@ -69,3 +69,6 @@ override_dh_installdeb: debian/midori.postinst
 
 override_dh_strip:
 	$(CMD) --dbg-package=midori-dbg
+
+override_dh_installchangelogs:
+	dh_installchangelogs -X ChangeLog

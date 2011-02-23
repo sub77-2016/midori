@@ -1,9 +1,12 @@
-midori (0.3.2-1) UNRELEASED; urgency=low
+midori (0.3.2-0.1) UNRELEASED; urgency=low
 
   * debian/patches:
     - 0001-Don-t-limit-search-engines-shown-in-completion-popup added.
+  * debian/rules:
+    - ignore ChangeLog in dh_installchangelogs since make install already
+      installs it.
 
- -- Yves-Alexis Perez <corsac@debian.org>  Mon, 21 Feb 2011 23:12:47 +0100
+ -- Yves-Alexis Perez <corsac@debian.org>  Wed, 23 Feb 2011 07:20:13 +0100
 
 midori (0.3.2-0.1) unstable; urgency=low
 
