@@ -3,12 +3,12 @@ midori (0.3.3-0.1) UNRELEASED; urgency=low
   * Non-maintainer upload.
   * New upstream release.
   * debian/rules:
-    - ignore ChangeLog in dh_installchangelogs since make install already
-      installs it.
+    - install ChangeLog file as changelog and remove the one installed by make
+      install.
   * debian/control:
     - drop dpkg PreDepends.
 
- -- Yves-Alexis Perez <corsac@debian.org>  Tue, 15 Mar 2011 19:29:35 +0100
+ -- Yves-Alexis Perez <corsac@debian.org>  Tue, 15 Mar 2011 22:21:42 +0100
 
 midori (0.3.2-0.1) unstable; urgency=low
 
