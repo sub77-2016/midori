@@ -79,19 +79,49 @@ midori_transferbar_download_notify_progress_cb (WebKitDownload* download,
     gchar* total;
     gchar* size_text;
     gchar* text;
+    gchar* transfer;
+    gdouble* last_time;
+    guint64* last_size;
+    gdouble timestamp;
+    guint64 size;
 
     gtk_progress_bar_set_fraction (GTK_PROGRESS_BAR (progress),
         webkit_download_get_progress (download));
+    size = webkit_download_get_current_size (download);
+
+    if (size == webkit_download_get_total_size (download))
+    {
+        gtk_widget_set_tooltip_text (progress,
+            gtk_progress_bar_get_text (GTK_PROGRESS_BAR (progress)));
+        return;
+    }
 
     current = g_format_size_for_display (webkit_download_get_current_size (download));
     total = g_format_size_for_display (webkit_download_get_total_size (download));
-    size_text = g_strdup_printf (_("%s of %s"), current, total);
+    last_time = g_object_get_data (G_OBJECT (download), "last-time");
+    last_size = g_object_get_data (G_OBJECT (download), "last-size");
+    timestamp = webkit_download_get_elapsed_time (download);
+    if (timestamp != *last_time)
+        transfer = g_format_size_for_display ((size - *last_size) / (timestamp - *last_time));
+    else
+        /* i18n: Unknown number of bytes, used for transfer rate like ?B/s */
+        transfer = g_strdup (_("?B"));
+    /* i18n: Download tooltip, 4KB of 43MB, 130KB/s */
+    size_text = g_strdup_printf (_("%s of %s, %s/s"), current, total, transfer);
+    if (timestamp - *last_time > 5.0)
+    {
+        *last_time = timestamp;
+        *last_size = size;
+    }
     g_free (current);
     g_free (total);
     text = g_strdup_printf ("%s (%s)",
         gtk_progress_bar_get_text (GTK_PROGRESS_BAR (progress)),
         size_text);
     gtk_widget_set_tooltip_text (progress, text);
+    g_free (size_text);
+    g_free (transfer);
+    g_free (text);
 }
 
 static void
@@ -107,6 +137,11 @@ midori_transferbar_download_notify_status_cb (WebKitDownload* download,
         case WEBKIT_DOWNLOAD_STATUS_FINISHED:
         {
             MidoriBrowser* browser = midori_browser_get_for_widget (button);
+            #if WEBKIT_CHECK_VERSION (1, 1, 14)
+            WebKitNetworkRequest* request;
+            #endif
+            const gchar* original_uri;
+            gchar** fingerprint;
 
             icon = gtk_image_new_from_stock (GTK_STOCK_OPEN, GTK_ICON_SIZE_MENU);
             gtk_button_set_image (GTK_BUTTON (button), icon);
@@ -125,6 +160,53 @@ midori_transferbar_download_notify_status_cb (WebKitDownload* download,
                                        _("Transfer completed"), msg);
                 g_free (msg);
             }
+
+            /* Link Fingerprint */
+            #if WEBKIT_CHECK_VERSION (1, 1, 14)
+            request = webkit_download_get_network_request (download);
+            original_uri = g_object_get_data (G_OBJECT (request), "midori-original-uri");
+            #else
+            original_uri = webkit_download_get_uri (download);
+            #endif
+            fingerprint = g_strsplit (original_uri, "#!md5!", 2);
+            if (fingerprint && fingerprint[0] && fingerprint[1])
+            {
+                gchar* filename = g_filename_from_uri (
+                    webkit_download_get_destination_uri (download), NULL, NULL);
+                gchar* contents;
+                gsize length;
+                gboolean y = g_file_get_contents (filename, &contents, &length, NULL);
+                gchar* checksum = g_compute_checksum_for_data (G_CHECKSUM_MD5,
+                    (guchar*)contents, length);
+                g_free (filename);
+                g_free (contents);
+                if (!y || !g_str_equal (fingerprint[1], checksum))
+                    gtk_image_set_from_stock (GTK_IMAGE (icon),
+                        GTK_STOCK_DIALOG_WARNING, GTK_ICON_SIZE_MENU);
+                g_free (checksum);
+            }
+            else
+            {
+                gchar* filename = g_filename_from_uri (
+                    webkit_download_get_destination_uri (download), NULL, NULL);
+                g_strfreev (fingerprint);
+                fingerprint = g_strsplit (original_uri, "#!sha1!", 2);
+                if (fingerprint && fingerprint[0] && fingerprint[1])
+                {
+                    gchar* contents;
+                    gsize length;
+                    gboolean y = g_file_get_contents (filename, &contents, &length, NULL);
+                    gchar* checksum = g_compute_checksum_for_data (G_CHECKSUM_SHA1,
+                        (guchar*)contents, length);
+                    g_free (contents);
+                    if (!y || !g_str_equal (fingerprint[1], checksum))
+                        gtk_image_set_from_stock (GTK_IMAGE (icon),
+                            GTK_STOCK_DIALOG_WARNING, GTK_ICON_SIZE_MENU);
+                    g_free (checksum);
+                }
+                g_free (filename);
+            }
+            g_strfreev (fingerprint);
             break;
         }
         case WEBKIT_DOWNLOAD_STATUS_CANCELLED:
@@ -151,7 +233,19 @@ midori_transferbar_download_button_clicked_cb (GtkWidget*    button,
         case WEBKIT_DOWNLOAD_STATUS_FINISHED:
         {
             const gchar* uri = webkit_download_get_destination_uri (download);
-            if (sokoke_show_uri (gtk_widget_get_screen (button),
+            GtkWidget* icon = gtk_button_get_image (GTK_BUTTON (button));
+            gchar* stock_id;
+            gtk_image_get_stock (GTK_IMAGE (icon), &stock_id, NULL);
+            if (g_str_equal (stock_id, GTK_STOCK_DIALOG_WARNING))
+            {
+                sokoke_message_dialog (GTK_MESSAGE_WARNING,
+                    _("The downloaded file is erroneous."),
+                    _("The checksum provided with the link did not match. " \
+                      "This means the file is probably incomplete or was " \
+                      "modified afterwards."),
+                    TRUE);
+            }
+            else if (sokoke_show_uri (gtk_widget_get_screen (button),
                 uri, gtk_get_current_event_time (), NULL))
                 gtk_widget_destroy (button);
             break;
@@ -224,6 +318,8 @@ midori_transferbar_add_download_item (MidoriTransferbar* transferbar,
         G_CALLBACK (midori_transferbar_download_notify_status_cb), info);
     g_signal_connect (button, "clicked",
         G_CALLBACK (midori_transferbar_download_button_clicked_cb), info);
+    g_object_set_data_full (G_OBJECT (download), "last-time", g_new0 (gdouble, 1), g_free);
+    g_object_set_data_full (G_OBJECT (download), "last-size", g_new0 (guint64, 1), g_free);
 }
 
 static void
