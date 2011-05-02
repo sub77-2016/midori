@@ -1,5 +1,5 @@
 /*
- Copyright (C) 2007-2010 Christian Dywan <christian@twotoasts.de>
+ Copyright (C) 2007-2011 Christian Dywan <christian@twotoasts.de>
  Copyright (C) 2008 Dale Whittaker <dayul@users.sf.net>
  Copyright (C) 2009 Jérôme Geulfucci <jeromeg@xfce.org>
 
@@ -94,11 +94,11 @@ struct _MidoriBrowser
     KatzeArray* trash;
     KatzeArray* search_engines;
     KatzeArray* history;
+    GKeyFile* speeddial;
     gboolean show_tabs;
 
     gboolean show_navigationbar;
     gboolean show_statusbar;
-    gboolean speed_dial_in_new_tabs;
     guint maximum_history_age;
     gchar* location_entry_search;
     gchar* news_aggregator;
@@ -128,6 +128,7 @@ enum
     PROP_TRASH,
     PROP_SEARCH_ENGINES,
     PROP_HISTORY,
+    PROP_SPEED_DIAL,
     PROP_SHOW_TABS,
 };
 
@@ -142,7 +143,9 @@ enum
     ADD_DOWNLOAD,
     SEND_NOTIFICATION,
     POPULATE_TOOL_MENU,
+    POPULATE_TOOLBAR_MENU,
     QUIT,
+    SHOW_PREFERENCES,
 
     LAST_SIGNAL
 };
@@ -212,16 +215,14 @@ static void
 midori_browser_set_bookmarks (MidoriBrowser* browser,
                               KatzeArray*    bookmarks);
 
-GdkPixbuf*
-midori_search_action_get_icon (KatzeItem*    item,
-                               GtkWidget*    widget,
-                               const gchar** icon_name);
-
 static void
 midori_browser_add_speed_dial (MidoriBrowser* browser);
 
 gboolean
 midori_transferbar_confirm_delete (MidoriTransferbar* transferbar);
+
+static void
+_midori_browser_update_notebook (MidoriBrowser* browser);
 
 #if WEBKIT_CHECK_VERSION (1, 1, 3)
 void
@@ -243,7 +244,6 @@ static void
 _toggle_tabbar_smartly (MidoriBrowser* browser)
 {
     guint n;
-    gboolean always_show_tabbar;
 
     if (!browser->show_tabs)
         return;
@@ -251,9 +251,7 @@ _toggle_tabbar_smartly (MidoriBrowser* browser)
     n = gtk_notebook_get_n_pages (GTK_NOTEBOOK (browser->notebook));
     if (n < 2)
     {
-        g_object_get (browser->settings, "always-show-tabbar",
-            &always_show_tabbar, NULL);
-        if (always_show_tabbar)
+        if (katze_object_get_boolean (browser->settings, "always-show-tabbar"))
             n++;
     }
     gtk_notebook_set_show_tabs (GTK_NOTEBOOK (browser->notebook), n > 1);
@@ -298,7 +296,7 @@ _midori_browser_update_interface (MidoriBrowser* browser)
         midori_view_get_next_page (view) != NULL);
 
     gtk_action_set_visible (_action_by_name (browser, "AddSpeedDial"),
-        browser->speed_dial_in_new_tabs && !midori_view_is_blank (view));
+        !midori_view_is_blank (view));
     /* Currently views that don't support source, don't support
        saving either. If that changes, we need to think of something. */
     _action_set_sensitive (browser, "SaveAs", midori_view_can_view_source (view));
@@ -374,8 +372,8 @@ _midori_browser_set_statusbar_text (MidoriBrowser* browser,
                                     const gchar*   text)
 {
     GtkWidget* widget = gtk_window_get_focus (GTK_WINDOW (browser));
-    gboolean is_location = widget ?
-        GTK_IS_COMBO_BOX (gtk_widget_get_parent (widget)) : FALSE;
+    gboolean is_location = widget && GTK_IS_ENTRY (widget)
+        && GTK_IS_ALIGNMENT (gtk_widget_get_parent (widget));
 
     katze_assign (browser->statusbar_text, sokoke_format_uri_for_display (text));
 
@@ -574,16 +572,30 @@ midori_view_notify_uri_cb (GtkWidget*     widget,
 }
 
 static void
+midori_browser_set_title (MidoriBrowser* browser,
+                          const gchar*   title)
+{
+    #if WEBKIT_CHECK_VERSION (1, 1, 2)
+    if (katze_object_get_boolean (browser->settings, "enable-private-browsing"))
+    {
+        gchar* window_title = g_strconcat (title, " - ",
+                                           g_get_application_name (), NULL);
+        gtk_window_set_title (GTK_WINDOW (browser), window_title);
+        g_free (window_title);
+    }
+    else
+    #endif
+        gtk_window_set_title (GTK_WINDOW (browser), title);
+}
+
+static void
 midori_view_notify_title_cb (GtkWidget*     widget,
                              GParamSpec*    pspec,
                              MidoriBrowser* browser)
 {
     MidoriView* view = MIDORI_VIEW (widget);
-    const gchar* uri;
     const gchar* title;
-    gchar* window_title;
 
-    uri = midori_view_get_display_uri (view);
     title = midori_view_get_display_title (view);
 
     if (midori_view_get_load_status (view) == MIDORI_LOAD_COMMITTED)
@@ -615,12 +627,22 @@ midori_view_notify_title_cb (GtkWidget*     widget,
     }
 
     if (widget == midori_browser_get_current_tab (browser))
+        midori_browser_set_title (browser, title);
+}
+
+static void
+midori_view_notify_minimized_cb (GtkWidget*     widget,
+                                 GParamSpec*    pspec,
+                                 MidoriBrowser* browser)
+{
+    if (katze_object_get_boolean (widget, "minimized"))
     {
-        window_title = g_strconcat (title, " - ",
-            g_get_application_name (), NULL);
-        gtk_window_set_title (GTK_WINDOW (browser), window_title);
-        g_free (window_title);
+        GtkNotebook* notebook = GTK_NOTEBOOK (browser->notebook);
+        GtkWidget* label = gtk_notebook_get_tab_label (notebook, widget);
+        gtk_widget_set_size_request (label, -1, -1);
     }
+    else
+        _midori_browser_update_notebook (browser);
 }
 
 static void
@@ -803,7 +825,7 @@ midori_browser_edit_bookmark_dialog_new (MidoriBrowser* browser,
     {
         GtkListStore* model;
         GtkCellRenderer* renderer;
-        guint i, n;
+        guint n;
         sqlite3_stmt* statement;
         gint result;
         const gchar* sqlcmd;
@@ -823,7 +845,6 @@ midori_browser_edit_bookmark_dialog_new (MidoriBrowser* browser,
             0, _("Toplevel folder"), 1, PANGO_ELLIPSIZE_END, -1);
         gtk_combo_box_set_active (GTK_COMBO_BOX (combo_folder), 0);
 
-        i = 0;
         n = 1;
         sqlcmd = "SELECT title from bookmarks where uri=''";
         result = sqlite3_prepare_v2 (db, sqlcmd, -1, &statement, NULL);
@@ -1109,79 +1130,37 @@ midori_view_save_as_cb (GtkWidget*   menuitem,
 }
 
 static gchar*
-midori_browser_speed_dial_get_next_free_slot (void)
+midori_browser_speed_dial_get_next_free_slot (MidoriView* view)
 {
-    GRegex* regex;
-    GMatchInfo* match_info;
-    gchar* speed_dial_body;
-    gchar* body_fname;
-    gchar* slot_id = NULL;
+    MidoriBrowser* browser = midori_browser_get_for_widget (GTK_WIDGET (view));
+    GKeyFile* key_file;
+    guint cols, rows, slot = 1;
 
-    body_fname = g_build_filename (sokoke_set_config_dir (NULL),
-                                   "speeddial.json", NULL);
-
-    if (g_access (body_fname, F_OK) != 0)
+    g_object_get (browser, "speed-dial", &key_file, NULL);
+    rows = g_key_file_get_integer (key_file, "settings", "rows", NULL);
+    cols = g_key_file_get_integer (key_file, "settings", "columns", NULL);
+    while (slot <= cols * rows)
     {
-        gchar* filename = g_build_filename ("midori", "res", "speeddial.json", NULL);
-        gchar* filepath = sokoke_find_data_filename (filename);
-        g_free (filename);
-        if (g_file_get_contents (filepath, &speed_dial_body, NULL, NULL))
+        gchar* dial_id = g_strdup_printf ("Dial %d", slot);
+        if (!g_key_file_has_group (key_file, dial_id))
         {
-            g_file_set_contents (body_fname, speed_dial_body, -1, NULL);
-
-            g_free (speed_dial_body);
+            g_free (dial_id);
+            return g_strdup_printf ("s%d", slot);
         }
-        g_free (filepath);
-        g_free (body_fname);
-        return g_strdup ("s1");
+        g_free (dial_id);
+        slot++;
     }
-    else
-        g_file_get_contents (body_fname, &speed_dial_body, NULL, NULL);
-
-    regex = g_regex_new ("\"id\":\"(s[0-9]{1,2})\",\"href\":\"#\"",
-                         G_REGEX_MULTILINE, 0, NULL);
-
-    if (g_regex_match (regex, speed_dial_body, 0, &match_info))
-    {
-        slot_id = g_match_info_fetch (match_info, 1);
-        g_match_info_free (match_info);
-    }
-
-    if (!g_strcmp0 (slot_id, ""))
-        g_free (slot_id);
-
-    g_free (body_fname);
-    g_free (speed_dial_body);
-    g_free (regex);
-
-    return slot_id;
+    return NULL;
 }
 
 static void
 midori_browser_add_speed_dial (MidoriBrowser* browser)
 {
     GdkPixbuf* img;
-    gchar* replace_from;
-    gchar* replace_by;
-    gsize len;
-
     GtkWidget* view = midori_browser_get_current_tab (browser);
-
     gchar* uri = g_strdup (midori_view_get_display_uri (MIDORI_VIEW (view)));
     gchar* title = g_strdup (midori_view_get_display_title (MIDORI_VIEW (view)));
-    gchar* slot_id = midori_browser_speed_dial_get_next_free_slot ();
-
-    GRegex* reg_quotes = g_regex_new ("'", 0, 0, NULL);
-    GRegex* reg_others = g_regex_new ("[\\\"\\\\]", 0, 0, NULL);
-    gchar* temp_title = g_regex_replace_literal (reg_others, title,
-                                                 -1, 0, " ", 0, NULL);
-    g_free (title);
-    title = g_regex_replace_literal (reg_quotes, temp_title, -1, 0,
-                                     "\\\\'", 0, NULL);
-
-    g_free (temp_title);
-    g_regex_unref (reg_quotes);
-    g_regex_unref (reg_others);
+    gchar* slot_id = midori_browser_speed_dial_get_next_free_slot (MIDORI_VIEW (view));
 
     if (slot_id == NULL)
     {
@@ -1190,82 +1169,42 @@ midori_browser_add_speed_dial (MidoriBrowser* browser)
         return;
     }
 
-    if ((len = g_utf8_strlen (title, -1)) > 15)
-    {
-        /**
-          * The case when a quote was escaped with a backslash and the
-          * backslash becomes the last character of the ellipsized string.
-          * This causes JSON parsing to fail.
-          * For example: "My Foo Bar \'b\..."
-          **/
-        GRegex* reg_unsafe = g_regex_new ("([\\\\]+\\.)", 0, 0, NULL);
-
-        gchar* temp;
-        gchar* ellipsized = g_malloc0 ( len + 1);
-
-        g_utf8_strncpy (ellipsized, title, 15);
-        g_free (title);
-
-        temp = g_strdup_printf ("%s...", ellipsized);
-        g_free  (ellipsized);
-
-        title = g_regex_replace_literal (reg_unsafe, temp, -1, 0, ".", 0, NULL);
-        g_free (temp);
-
-        g_regex_unref (reg_unsafe);
-    }
-
     if ((img = midori_view_get_snapshot (MIDORI_VIEW (view), 240, 160)))
     {
-        GRegex* regex;
-        gchar* replace;
-        gchar* file_content;
-        gchar* encoded;
-        gchar* speed_dial_body;
-        gchar* body_fname;
-        gsize sz;
+        gint i;
+        GKeyFile* key_file;
+        gchar* dial_id = g_strdup_printf ("Dial %s", slot_id + 1);
+        gchar* config_file = g_build_filename (sokoke_set_config_dir (NULL),
+                                               "speeddial", NULL);
+        gchar* file_path = sokoke_build_thumbnail_path (uri);
+        gchar* thumb_dir = g_build_path (G_DIR_SEPARATOR_S, g_get_user_cache_dir (),
+                                         PACKAGE_NAME, "thumbnails", NULL);
+        g_object_get (browser, "speed-dial", &key_file, NULL);
 
-        body_fname = g_build_filename (sokoke_set_config_dir (NULL),
-                                       "speeddial.json", NULL);
+        g_key_file_set_string (key_file, dial_id, "uri", uri);
+        g_key_file_set_string (key_file, dial_id, "title", title);
 
-        if (g_file_get_contents (body_fname, &speed_dial_body, NULL, NULL))
-        {
-            gint i;
+        if (!g_file_test (thumb_dir, G_FILE_TEST_EXISTS))
+            katze_mkdir_with_parents (thumb_dir, 0700);
 
-            gdk_pixbuf_save_to_buffer (img, &file_content, &sz, "png", NULL, NULL);
-            encoded = g_base64_encode ((guchar *)file_content, sz);
+        gdk_pixbuf_save (img, file_path, "png", NULL, "compression", "7", NULL);
+        sokoke_key_file_save_to_file (key_file, config_file, NULL);
 
-            replace_from = g_strdup_printf (
-                "\\{\"id\":\"%s\",\"href\":\"#\",\"title\":\"\",\"img\":\"\"\\}",
-                slot_id);
-            replace_by = g_strdup_printf (
-                "{\"id\":\"%s\",\"href\":\"%s\",\"title\":\"%s\",\"img\":\"%s\"}",
-                slot_id, uri, title, encoded);
+        i = 0;
+        while ((view = gtk_notebook_get_nth_page (GTK_NOTEBOOK (
+                                                  browser->notebook), i++)))
+            if (midori_view_is_blank (MIDORI_VIEW (view)))
+                midori_view_reload (MIDORI_VIEW (view), FALSE);
 
-            regex = g_regex_new (replace_from, G_REGEX_MULTILINE, 0, NULL);
-            replace = g_regex_replace (regex, speed_dial_body, -1,
-                                       1, replace_by, 0, NULL);
 
-            g_file_set_contents (body_fname, replace, -1, NULL);
-
-            i = 0;
-            while ((view = gtk_notebook_get_nth_page (GTK_NOTEBOOK (
-                                                      browser->notebook), i++)))
-                if (midori_view_is_blank (MIDORI_VIEW (view)))
-                    midori_view_reload (MIDORI_VIEW (view), FALSE);
-
-            g_object_unref (img);
-            g_regex_unref (regex);
-            g_free (encoded);
-            g_free (file_content);
-            g_free (speed_dial_body);
-            g_free (replace_from);
-            g_free (replace_by);
-            g_free (replace);
-        }
-        g_free (body_fname);
+        g_object_unref (img);
+        g_free (file_path);
+        g_free (thumb_dir);
+        g_free (config_file);
+        g_free (dial_id);
     }
     g_free (uri);
+    g_free (title);
     g_free (slot_id);
 }
 
@@ -1315,6 +1254,19 @@ midori_view_attach_inspector_cb (GtkWidget*     view,
     gtk_widget_show_all (browser->inspector);
     browser->inspector_view = inspector_view;
     gtk_widget_destroy (toplevel);
+}
+
+static void
+midori_view_detach_inspector_cb (GtkWidget*     view,
+                                 GtkWidget*     inspector_view,
+                                 MidoriBrowser* browser)
+{
+    GtkWidget* scrolled = gtk_widget_get_parent (GTK_WIDGET (inspector_view));
+    GtkWidget* paned = gtk_widget_get_parent (scrolled);
+    browser->inspector_view = gtk_viewport_new (NULL, NULL);
+    gtk_container_remove (GTK_CONTAINER (scrolled), GTK_WIDGET (inspector_view));
+    gtk_container_add (GTK_CONTAINER (scrolled), browser->inspector_view);
+    gtk_widget_hide (paned);
 }
 
 static void
@@ -1375,6 +1327,7 @@ static void
 midori_view_new_view_cb (GtkWidget*     view,
                          GtkWidget*     new_view,
                          MidoriNewView  where,
+                         gboolean       user_initiated,
                          MidoriBrowser* browser)
 {
     midori_browser_view_copy_history (new_view, view, TRUE);
@@ -1390,6 +1343,22 @@ midori_view_new_view_cb (GtkWidget*     view,
         gint n = midori_browser_add_tab (browser, new_view);
         if (where != MIDORI_NEW_VIEW_BACKGROUND)
             midori_browser_set_current_page (browser, n);
+    }
+
+    if (!user_initiated)
+    {
+        GdkWindow* window = gtk_widget_get_window (GTK_WIDGET (browser));
+        GdkWindowState state = gdk_window_get_state (window);
+        if ((state | GDK_WINDOW_STATE_MAXIMIZED)
+         || (state | GDK_WINDOW_STATE_FULLSCREEN))
+        {
+            if (where == MIDORI_NEW_VIEW_WINDOW)
+                g_signal_emit (browser, signals[SEND_NOTIFICATION], 0,
+                    _("New Window"), _("A new window has been opened"));
+            else if (!browser->show_tabs)
+                g_signal_emit (browser, signals[SEND_NOTIFICATION], 0,
+                    _("New Tab"), _("A new tab has been opened"));
+        }
     }
 }
 
@@ -1519,12 +1488,10 @@ midori_browser_tab_destroy_cb (GtkWidget*     widget,
                                MidoriBrowser* browser)
 {
     KatzeItem* item;
-    const gchar* uri;
 
     if (browser->proxy_array && MIDORI_IS_VIEW (widget))
     {
         item = midori_view_get_proxy_item (MIDORI_VIEW (widget));
-        uri = katze_item_get_uri (item);
         if (browser->trash && !midori_view_is_blank (MIDORI_VIEW (widget)))
             katze_array_add_item (browser->trash, item);
         katze_array_remove_item (browser->proxy_array, item);
@@ -1547,6 +1514,34 @@ midori_browser_tab_destroy_cb (GtkWidget*     widget,
     if (browser->proxy_array && !midori_browser_get_current_tab (browser))
         midori_browser_add_uri (browser, "");
     return FALSE;
+}
+
+static void
+_midori_browser_update_notebook (MidoriBrowser* browser)
+{
+    guint i;
+    gint new_size = 0;
+    gint n = gtk_notebook_get_n_pages (GTK_NOTEBOOK(browser->notebook));
+    const gint max_size = 150;
+    const gint min_size = 32;
+    GtkAllocation notebook_size;
+
+    gtk_widget_get_allocation (browser->notebook, &notebook_size);
+    if (n > 0) new_size = notebook_size.width / n - 7;
+    if (new_size < min_size) new_size = min_size;
+    if (new_size > max_size) new_size = max_size;
+
+    for (i = 0; i < n; i++)
+    {
+        GtkWidget* view;
+        GtkWidget* label;
+        view = gtk_notebook_get_nth_page (GTK_NOTEBOOK(browser->notebook), i);
+        label = gtk_notebook_get_tab_label (GTK_NOTEBOOK(browser->notebook), view);
+        /* Don't resize empty bin, which is used for thumbnail tabs */
+        if (GTK_IS_BIN (label) && gtk_bin_get_child (GTK_BIN (label))
+         && !katze_object_get_boolean (view, "minimized"))
+            gtk_widget_set_size_request (label, new_size, -1);
+    }
 }
 
 static void
@@ -1577,6 +1572,8 @@ _midori_browser_add_tab (MidoriBrowser* browser,
                       midori_view_notify_uri_cb, browser,
                       "signal::notify::title",
                       midori_view_notify_title_cb, browser,
+                      "signal::notify::minimized",
+                      midori_view_notify_minimized_cb, browser,
                       "signal::notify::zoom-level",
                       midori_view_notify_zoom_level_cb, browser,
                       "signal::notify::statusbar-text",
@@ -1585,6 +1582,8 @@ _midori_browser_add_tab (MidoriBrowser* browser,
                       midori_view_activate_action_cb, browser,
                       "signal::attach-inspector",
                       midori_view_attach_inspector_cb, browser,
+                      "signal::detach-inspector",
+                      midori_view_detach_inspector_cb, browser,
                       "signal::new-tab",
                       midori_view_new_tab_cb, browser,
                       "signal::new-window",
@@ -1627,6 +1626,7 @@ _midori_browser_add_tab (MidoriBrowser* browser,
         G_CALLBACK (midori_browser_tab_destroy_cb), browser);
 
     _midori_browser_update_actions (browser);
+    _midori_browser_update_notebook (browser);
 }
 
 static void
@@ -1634,6 +1634,7 @@ _midori_browser_remove_tab (MidoriBrowser* browser,
                             GtkWidget*     view)
 {
     gtk_widget_destroy (view);
+    _midori_browser_update_notebook (browser);
 }
 
 /**
@@ -1669,8 +1670,25 @@ midori_browser_key_press_event (GtkWidget*   widget,
                                 GdkEventKey* event)
 {
     GtkWindow* window = GTK_WINDOW (widget);
+    MidoriBrowser* browser = MIDORI_BROWSER (widget);
     GtkWidgetClass* widget_class;
     guint clean_state;
+
+    /* Interpret Ctrl(+Shift)+Tab as tab switching for compatibility */
+    if (midori_browser_get_nth_tab (browser, 1) != NULL
+     && event->keyval == GDK_Tab
+     && (event->state & GDK_CONTROL_MASK))
+    {
+        gtk_action_activate (_action_by_name (browser, "TabNext"));
+        return TRUE;
+    }
+    else if (event->keyval == GDK_ISO_Left_Tab
+     && (event->state & GDK_CONTROL_MASK)
+     && (event->state & GDK_SHIFT_MASK))
+    {
+        gtk_action_activate (_action_by_name (browser, "TabPrevious"));
+        return TRUE;
+    }
 
     if (gtk_window_get_focus (GTK_WINDOW (widget)) == NULL)
         gtk_widget_grab_focus (midori_browser_get_current_tab (MIDORI_BROWSER (widget)));
@@ -1833,7 +1851,7 @@ midori_browser_class_init (MidoriBrowserClass* class)
      * @message: the message for the notification
      *
      * Emitted when a browser wants to display a notification message,
-     * e.g. when a download has been completed.
+     * e.g. when a download has been completed or a new tab was opened.
      *
      * Since: 0.1.7
      */
@@ -1869,6 +1887,25 @@ midori_browser_class_init (MidoriBrowserClass* class)
         g_cclosure_marshal_VOID__OBJECT,
         G_TYPE_NONE, 1,
         GTK_TYPE_MENU);
+    /**
+     * MidoriBrowser::populate-toolbar-menu:
+     * @browser: the object on which the signal is emitted
+     * @menu: the #GtkMenu to populate
+     *
+     * Emitted when a toolbar menu is displayed on right-click.
+     *
+     * Since: 0.3.4
+     */
+    signals[POPULATE_TOOLBAR_MENU] = g_signal_new (
+        "populate-toolbar-menu",
+        G_TYPE_FROM_CLASS (class),
+        (GSignalFlags)(G_SIGNAL_RUN_LAST),
+        0,
+        0,
+        NULL,
+        g_cclosure_marshal_VOID__OBJECT,
+        G_TYPE_NONE, 1,
+        GTK_TYPE_MENU);
 
     signals[QUIT] = g_signal_new (
         "quit",
@@ -1879,6 +1916,27 @@ midori_browser_class_init (MidoriBrowserClass* class)
         NULL,
         g_cclosure_marshal_VOID__VOID,
         G_TYPE_NONE, 0);
+
+    /**
+     * MidoriBrowser::show-preferences:
+     * @browser: the object on which the signal is emitted
+     * @preferences: the #KatzePreferences to populate
+     *
+     * Emitted when a preference dialogue displayed, to allow
+     * adding of a new page, to be used sparingly.
+     *
+     * Since: 0.3.4
+     */
+    signals[SHOW_PREFERENCES] = g_signal_new (
+        "show-preferences",
+        G_TYPE_FROM_CLASS (class),
+        (GSignalFlags)(G_SIGNAL_RUN_LAST),
+        0,
+        0,
+        NULL,
+        g_cclosure_marshal_VOID__OBJECT,
+        G_TYPE_NONE, 1,
+        KATZE_TYPE_PREFERENCES);
 
     class->add_tab = _midori_browser_add_tab;
     class->remove_tab = _midori_browser_remove_tab;
@@ -2086,6 +2144,22 @@ midori_browser_class_init (MidoriBrowserClass* class)
                                      flags));
 
     /**
+    * MidoriBrowser:speed-dial:
+    *
+    * The speed dial configuration file.
+    *
+    * Since: 0.3.4
+    */
+    g_object_class_install_property (gobject_class,
+                                     PROP_SPEED_DIAL,
+                                     g_param_spec_pointer (
+                                     "speed-dial",
+                                     "Speeddial",
+                                     "Pointer to key-value object with speed dial items",
+                                     G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+
+
+    /**
      * MidoriBrowser:show-tabs:
      *
      * Whether or not to show tabs.
@@ -2262,7 +2336,14 @@ midori_browser_subscribe_to_news_feed (MidoriBrowser* browser,
                                        const gchar*   uri)
 {
     if (browser->news_aggregator && *browser->news_aggregator)
-        sokoke_spawn_program (browser->news_aggregator, uri);
+    {
+        /* Special-case Liferea because a helper script may be required */
+        if (g_str_equal (browser->news_aggregator, "liferea")
+         && g_find_program_in_path ("liferea-add-feed"))
+            sokoke_spawn_program ("liferea-add-feed", uri);
+        else
+            sokoke_spawn_program (browser->news_aggregator, uri);
+    }
     else
     {
         gchar* description = g_strdup_printf ("%s\n\n%s", uri,
@@ -2656,6 +2737,8 @@ midori_browser_toolbar_popup_context_menu_cb (GtkWidget*     widget,
         _action_by_name (browser, "Statusbar"));
     gtk_menu_shell_append (GTK_MENU_SHELL (menu), menuitem);
 
+    g_signal_emit (browser, signals[POPULATE_TOOLBAR_MENU], 0, menu);
+
     katze_widget_popup (widget, GTK_MENU (menu), NULL,
         button == -1 ? KATZE_MENU_POSITION_LEFT : KATZE_MENU_POSITION_CURSOR);
     return TRUE;
@@ -2677,7 +2760,8 @@ midori_browser_menu_item_select_cb (GtkWidget*     menuitem,
         if (item)
         {
             tooltip = g_strdup (katze_item_get_uri (item));
-            sokoke_prefetch_uri (tooltip, NULL, NULL);
+            sokoke_prefetch_uri (midori_browser_get_settings (browser),
+                                 tooltip, NULL, NULL);
         }
     }
     _midori_browser_set_statusbar_text (browser, tooltip);
@@ -2918,6 +3002,10 @@ _action_window_populate_popup (GtkAction*     action,
     gtk_menu_shell_prepend (GTK_MENU_SHELL (menu), menuitem);
     gtk_widget_show (menuitem);
     menuitem = gtk_action_create_menu_item (
+        _action_by_name (browser, "NextView"));
+    gtk_menu_shell_prepend (GTK_MENU_SHELL (menu), menuitem);
+    gtk_widget_show (menuitem);
+    menuitem = gtk_action_create_menu_item (
         _action_by_name (browser, "TabNext"));
     gtk_menu_shell_prepend (GTK_MENU_SHELL (menu), menuitem);
     gtk_widget_show (menuitem);
@@ -2953,31 +3041,42 @@ _action_compact_menu_populate_popup (GtkAction*     action,
     static const GtkActionEntry actions[] = {
       { "TabNew" },
       { "WindowNew" },
-      { "PrivateBrowsing" },
+      { NULL },
       { "Open" },
       { "Find" },
       #if !HAVE_HILDON
       { "Print" },
-      { NULL },
-      { "Panel" },
-      { "-" },
-      { "ClearPrivateData" },
       #if WEBKIT_CHECK_VERSION (1, 1, 17)
       { "InspectPage" },
       #endif
-      { "Fullscreen" },
+      #endif
+      { NULL },
+      { "PrivateBrowsing" },
+      #if !HAVE_HILDON
+      { "ClearPrivateData" },
+      { NULL },
       { "BookmarksImport"},
       { "BookmarksExport"},
+      { NULL },
+      { "Fullscreen" },
+      { "Panel" },
+      { "-" },
       #endif
+      { NULL },
+      #if !HAVE_HILDON
       { "HelpFAQ" },
+      { "HelpBugs"},
+      #endif
       { "About" },
       { "Preferences" },
       #if HAVE_HILDON
+      { NULL },
       { "auto-load-images" },
       { "enable-scripts" },
       { "enable-plugins" },
       #endif
     };
+
     guint i;
 
     for (i = 0; i < G_N_ELEMENTS (actions); i++)
@@ -3047,6 +3146,7 @@ _action_preferences_activate (GtkAction*     action,
     if (!dialog)
     {
         dialog = midori_preferences_new (GTK_WINDOW (browser), browser->settings);
+        g_signal_emit (browser, signals[SHOW_PREFERENCES], 0, dialog);
         g_signal_connect (dialog, "response",
             G_CALLBACK (midori_preferences_response_help_cb), browser);
         g_signal_connect (dialog, "destroy",
@@ -3328,7 +3428,6 @@ _action_source_view_activate (GtkAction*     action,
 
         source = midori_view_new (NULL);
         midori_view_set_settings (MIDORI_VIEW (source), browser->settings);
-        midori_view_set_uri (MIDORI_VIEW (source), "");
         web_view = midori_view_get_web_view (MIDORI_VIEW (source));
         webkit_web_view_set_view_source_mode (WEBKIT_WEB_VIEW (web_view), TRUE);
         webkit_web_view_load_uri (WEBKIT_WEB_VIEW (web_view), uri);
@@ -3359,12 +3458,23 @@ _action_source_view_activate (GtkAction*     action,
         gchar* filename = g_filename_from_uri (uri, NULL, NULL);
         sokoke_spawn_program (text_editor, filename);
         g_free (filename);
+        g_free (text_editor);
         return;
     }
     katze_net_load_uri (NULL, uri, NULL,
         (KatzeNetTransferCb)midori_browser_source_transfer_cb, browser);
     g_free (text_editor);
 }
+
+#if WEBKIT_CHECK_VERSION (1, 1, 6)
+static void
+_action_caret_browsing_activate (GtkAction*     action,
+                                 MidoriBrowser* browser)
+{
+    g_object_set (browser->settings, "enable-caret-browsing",
+        !katze_object_get_boolean (browser->settings, "enable-caret-browsing"), NULL);
+}
+#endif
 
 static void
 _action_fullscreen_activate (GtkAction*     action,
@@ -3475,20 +3585,6 @@ _action_location_activate (GtkAction*     action,
 {
     if (!gtk_widget_get_visible (browser->navigationbar))
         gtk_widget_show (browser->navigationbar);
-}
-
-static void
-_action_location_active_changed (GtkAction*     action,
-                                 gint           idx,
-                                 MidoriBrowser* browser)
-{
-    const gchar* uri;
-
-    if (idx > -1)
-    {
-        uri = midori_location_action_get_uri (MIDORI_LOCATION_ACTION (action));
-        midori_browser_set_current_uri (browser, uri);
-    }
 }
 
 static void
@@ -4312,7 +4408,6 @@ _action_clear_private_data_activate (GtkAction*     action,
     {
         GtkWidget* content_area;
         GdkScreen* screen;
-        GtkIconTheme* icon_theme;
         GtkSizeGroup* sizegroup;
         GtkWidget* hbox;
         GtkWidget* alignment;
@@ -4337,7 +4432,6 @@ _action_clear_private_data_activate (GtkAction*     action,
         screen = gtk_widget_get_screen (GTK_WIDGET (browser));
         if (screen)
         {
-            icon_theme = gtk_icon_theme_get_for_screen (screen);
             gtk_window_set_icon_name (GTK_WINDOW (dialog), GTK_STOCK_CLEAR);
         }
         sizegroup = gtk_size_group_new (GTK_SIZE_GROUP_HORIZONTAL);
@@ -4473,6 +4567,13 @@ _action_tab_current_activate (GtkAction*     action,
 }
 
 static void
+_action_next_view_activate (GtkAction*     action,
+                              MidoriBrowser* browser)
+{
+    gtk_widget_grab_focus (midori_browser_get_current_tab (browser));
+}
+
+static void
 _action_tab_minimize_activate (GtkAction*     action,
                                MidoriBrowser* browser)
 {
@@ -4490,7 +4591,7 @@ _action_tab_duplicate_activate (GtkAction*     action,
     GtkWidget* new_view = midori_view_new_with_title (
         NULL, browser->settings, FALSE);
     const gchar* uri = midori_view_get_display_uri (MIDORI_VIEW (view));
-    g_signal_emit_by_name (view, "new-view", new_view, where);
+    g_signal_emit_by_name (view, "new-view", new_view, where, TRUE);
     midori_view_set_uri (MIDORI_VIEW (new_view), uri);
 }
 
@@ -4661,6 +4762,26 @@ midori_panel_notify_position_cb (GObject*       hpaned,
             (GSourceFunc)midori_browser_panel_timeout, hpaned, NULL);
 }
 
+static gboolean
+midori_panel_cycle_child_focus_cb (GtkWidget*     hpaned,
+                                   gboolean       reversed,
+                                   MidoriBrowser* browser)
+{
+    /* Default cycle goes between all GtkPaned widgets.
+       If focus is in the panel, focus the location as if it's a paned.
+       If nothing is focussed, simply go to the location.
+       Be sure to suppress the default because the signal can recurse. */
+    GtkWidget* focus = gtk_window_get_focus (GTK_WINDOW (browser));
+    if (gtk_widget_get_ancestor (focus, MIDORI_TYPE_PANEL)
+     || !gtk_widget_get_ancestor (focus, GTK_TYPE_PANED))
+    {
+        g_signal_stop_emission_by_name (hpaned, "cycle-child-focus");
+        gtk_action_activate (_action_by_name (browser, "Location"));
+        return TRUE;
+    }
+    return FALSE;
+}
+
 static void
 midori_panel_notify_page_cb (MidoriPanel*   panel,
                              GParamSpec*    pspec,
@@ -4770,8 +4891,6 @@ gtk_notebook_switch_page_after_cb (GtkWidget*       notebook,
     MidoriView* view;
     const gchar* uri;
     GtkAction* action;
-    const gchar* title;
-    gchar* window_title;
 
     if (!(widget = midori_browser_get_current_tab (browser)))
         return;
@@ -4780,15 +4899,11 @@ gtk_notebook_switch_page_after_cb (GtkWidget*       notebook,
     uri = g_object_get_data (G_OBJECT (widget), "midori-browser-typed-text");
     if (!uri)
         uri = midori_view_get_display_uri (view);
+    midori_browser_set_title (browser, midori_view_get_display_title (view));
     action = _action_by_name (browser, "Location");
     midori_location_action_set_text (MIDORI_LOCATION_ACTION (action), uri);
     midori_location_action_set_icon (MIDORI_LOCATION_ACTION (action),
                                      midori_view_get_icon (view));
-
-    title = midori_view_get_display_title (view);
-    window_title = g_strconcat (title, " - ", g_get_application_name (), NULL);
-    gtk_window_set_title (GTK_WINDOW (browser), window_title);
-    g_free (window_title);
 
     if (browser->proxy_array)
         katze_item_set_meta_integer (KATZE_ITEM (browser->proxy_array), "current",
@@ -4959,8 +5074,8 @@ static const GtkActionEntry entries[] =
         NULL, "<Ctrl>p",
         N_("Print the current page"), G_CALLBACK (_action_print_activate) },
     { "Quit", GTK_STOCK_QUIT,
-        NULL, "<Ctrl>q",
-        N_("Quit the application"), G_CALLBACK (_action_quit_activate) },
+        N_("Close a_ll Windows"), "<Ctrl><Shift>q",
+        N_("Close all open windows"), G_CALLBACK (_action_quit_activate) },
 
     { "Edit", NULL, N_("_Edit"), NULL, NULL, G_CALLBACK (_action_edit_activate) },
         #if WEBKIT_CHECK_VERSION (1, 1, 14)
@@ -5027,6 +5142,11 @@ static const GtkActionEntry entries[] =
     { "SourceView", NULL,
         N_("View So_urce"), "<Ctrl><Alt>U",
         N_("View the source code of the page"), G_CALLBACK (_action_source_view_activate) },
+    #if WEBKIT_CHECK_VERSION (1, 1, 6)
+    { "CaretBrowsing", NULL,
+        N_("Ca_ret Browsing"), "F7",
+        N_("Toggle text cursor navigation"), G_CALLBACK (_action_caret_browsing_activate) },
+    #endif
     { "Fullscreen", GTK_STOCK_FULLSCREEN,
         NULL, "F11",
         N_("Toggle fullscreen view"), G_CALLBACK (_action_fullscreen_activate) },
@@ -5110,6 +5230,9 @@ static const GtkActionEntry entries[] =
     { "TabCurrent", NULL,
         N_("Focus _Current Tab"), "<Ctrl>Home",
         N_("Focus the current tab"), G_CALLBACK (_action_tab_current_activate) },
+    { "NextView", NULL,
+        N_("Focus _Next view"), "F6",
+        N_("Cycle focus between views"), G_CALLBACK (_action_next_view_activate) },
     { "TabMinimize", NULL,
         N_("Only show the Icon of the _Current Tab"), "",
         N_("Only show the icon of the current tab"), G_CALLBACK (_action_tab_minimize_activate) },
@@ -5128,7 +5251,7 @@ static const GtkActionEntry entries[] =
         N_("_Frequent Questions"), "F1",
         N_("Show the Frequently Asked Questions"), G_CALLBACK (_action_help_link_activate) },
     { "HelpBugs", NULL,
-        N_("_Report a Bug"), NULL,
+        N_("_Report a Problem..."), NULL,
         N_("Open Midori's bug tracker"), G_CALLBACK (_action_help_link_activate) },
     { "About", GTK_STOCK_ABOUT,
         NULL, "",
@@ -5271,6 +5394,14 @@ midori_browser_size_allocate_cb (MidoriBrowser* browser,
 }
 
 static void
+gtk_notebook_size_allocated_cb (GtkWidget*     widget,
+                                GdkRectangle*  allocation,
+                                MidoriBrowser* browser)
+{
+    _midori_browser_update_notebook (browser);
+}
+
+static void
 midori_browser_destroy_cb (MidoriBrowser* browser)
 {
     g_object_set_data (G_OBJECT (browser), "midori-browser-destroyed", (void*)1);
@@ -5285,6 +5416,9 @@ midori_browser_destroy_cb (MidoriBrowser* browser)
     /* Destroy tabs second, so child widgets don't need special care */
     g_signal_handlers_disconnect_by_func (browser->notebook,
                                           midori_browser_notebook_reorder_tab_cb,
+                                          NULL);
+    g_signal_handlers_disconnect_by_func (browser->notebook,
+                                          gtk_notebook_size_allocated_cb,
                                           NULL);
     gtk_container_foreach (GTK_CONTAINER (browser->notebook),
                            (GtkCallback) gtk_widget_destroy, NULL);
@@ -5398,6 +5532,7 @@ static const gchar* ui_markup =
             "<menuitem action='TabPrevious'/>"
             "<menuitem action='TabNext'/>"
             "<menuitem action='TabCurrent'/>"
+            "<menuitem action='NextView'/>"
             "<menuitem action='TabMinimize'/>"
             "<menuitem action='TabDuplicate'/>"
             "<menuitem action='TabCloseOther'/>"
@@ -5407,6 +5542,9 @@ static const gchar* ui_markup =
             "<menuitem action='Preferences'/>"
             "<menuitem action='InspectPage'/>"
             "<menuitem action='ReloadUncached'/>"
+            #if WEBKIT_CHECK_VERSION (1, 1, 6)
+            "<menuitem action='CaretBrowsing'/>"
+            #endif
             "</menu>"
         "</menubar>"
         "<toolbar name='toolbar_navigation'>"
@@ -5492,9 +5630,6 @@ static void
 midori_browser_set_history (MidoriBrowser* browser,
                             KatzeArray*    history)
 {
-    time_t now;
-    gint64 day;
-
     if (browser->history == history)
         return;
 
@@ -5512,9 +5647,6 @@ midori_browser_set_history (MidoriBrowser* browser,
 
     g_signal_connect (browser->history, "clear",
                       G_CALLBACK (midori_browser_history_clear_cb), browser);
-
-    now = time (NULL);
-    day = sokoke_time_t_to_julian (&now);
 
     g_object_set (_action_by_name (browser, "Location"), "history",
                   browser->history, NULL);
@@ -5632,6 +5764,7 @@ midori_browser_init (MidoriBrowser* browser)
     GtkUIManager* ui_manager;
     GtkAccelGroup* accel_group;
     guint i;
+    GClosure* accel_closure;
     GError* error;
     GtkAction* action;
     #if !HAVE_HILDON
@@ -5651,6 +5784,7 @@ midori_browser_init (MidoriBrowser* browser)
     browser->bookmarks = NULL;
     browser->trash = NULL;
     browser->search_engines = NULL;
+    browser->speeddial = NULL;
 
     /* Setup the window metrics */
     g_signal_connect (browser, "realize",
@@ -5688,16 +5822,16 @@ midori_browser_init (MidoriBrowser* browser)
     gtk_ui_manager_insert_action_group (ui_manager, browser->action_group, 0);
 
     g_object_set_data (G_OBJECT (accel_group), "midori-browser", browser);
+    accel_closure = g_cclosure_new (G_CALLBACK (
+        midori_browser_accel_switch_tab_activate_cb), browser, NULL);
     for (i = 0; i < 10; i++)
     {
         gchar* accel_path = g_strdup_printf ("<Manual>/Browser/SwitchTab%d", i);
-        GClosure* closure = g_cclosure_new (
-            G_CALLBACK (midori_browser_accel_switch_tab_activate_cb),
-            browser, NULL);
         gtk_accel_map_add_entry (accel_path, GDK_0 + i, GDK_MOD1_MASK);
-        gtk_accel_group_connect_by_path (accel_group, accel_path, closure);
+        gtk_accel_group_connect_by_path (accel_group, accel_path, accel_closure);
         g_free (accel_path);
     }
+    g_closure_unref (accel_closure);
 
     error = NULL;
     if (!gtk_ui_manager_add_ui_from_string (ui_manager, ui_markup, -1, &error))
@@ -5725,8 +5859,6 @@ midori_browser_init (MidoriBrowser* browser)
     g_object_connect (action,
                       "signal::activate",
                       _action_location_activate, browser,
-                      "signal::active-changed",
-                      _action_location_active_changed, browser,
                       "signal::focus-in",
                       _action_location_focus_in, browser,
                       "signal::focus-out",
@@ -5964,6 +6096,9 @@ midori_browser_init (MidoriBrowser* browser)
     g_signal_connect (hpaned, "notify::position",
                       G_CALLBACK (midori_panel_notify_position_cb),
                       browser);
+    g_signal_connect (hpaned, "cycle-child-focus",
+                      G_CALLBACK (midori_panel_cycle_child_focus_cb),
+                      browser);
     gtk_box_pack_start (GTK_BOX (vbox), hpaned, TRUE, TRUE, 0);
     gtk_widget_show (hpaned);
     browser->panel = g_object_new (MIDORI_TYPE_PANEL,
@@ -6003,6 +6138,9 @@ midori_browser_init (MidoriBrowser* browser)
                             browser);
     g_signal_connect (browser->notebook, "page-reordered",
                       G_CALLBACK (midori_browser_notebook_page_reordered_cb),
+                      browser);
+    g_signal_connect (browser->notebook, "size-allocate",
+                      G_CALLBACK (gtk_notebook_size_allocated_cb),
                       browser);
     g_signal_connect_after (browser->notebook, "button-press-event",
         G_CALLBACK (midori_browser_notebook_button_press_event_after_cb),
@@ -6097,6 +6235,7 @@ midori_browser_finalize (GObject* object)
     katze_object_assign (browser->trash, NULL);
     katze_object_assign (browser->search_engines, NULL);
     katze_object_assign (browser->history, NULL);
+    browser->speeddial = NULL;
 
     katze_assign (browser->news_aggregator, NULL);
 
@@ -6222,6 +6361,7 @@ _midori_browser_update_settings (MidoriBrowser* browser)
     gboolean close_buttons_on_tabs;
     KatzeItem* item;
 
+    g_free (browser->location_entry_search);
     g_free (browser->news_aggregator);
 
     g_object_get (browser->settings,
@@ -6240,7 +6380,6 @@ _midori_browser_update_settings (MidoriBrowser* browser)
                   "show-bookmarkbar", &show_bookmarkbar,
                   "show-panel", &show_panel,
                   "show-statusbar", &browser->show_statusbar,
-                  "speed-dial-in-new-tabs", &browser->speed_dial_in_new_tabs,
                   "toolbar-style", &toolbar_style,
                   "toolbar-items", &toolbar_items,
                   "last-web-search", &last_web_search,
@@ -6374,8 +6513,6 @@ midori_browser_settings_notify (MidoriWebSettings* web_settings,
         browser->show_navigationbar = g_value_get_boolean (&value);
     else if (name == g_intern_string ("show-statusbar"))
         browser->show_statusbar = g_value_get_boolean (&value);
-    else if (name == g_intern_string ("speed-dial-in-new-tabs"))
-        browser->speed_dial_in_new_tabs = g_value_get_boolean (&value);
     else if (name == g_intern_string ("search-engines-in-completion"))
     {
         if (g_value_get_boolean (&value))
@@ -6527,12 +6664,7 @@ midori_browser_show_bookmarkbar_notify_value_cb (MidoriWebSettings* settings,
                                                  GParamSpec*        pspec,
                                                  MidoriBrowser*     browser)
 {
-    gboolean show_bookmarkbar;
-
-    g_object_get (browser->settings, "show-bookmarkbar",
-                  &show_bookmarkbar, NULL);
-
-    if (!show_bookmarkbar)
+    if (!katze_object_get_boolean (browser->settings, "show-bookmarkbar"))
         midori_bookmarkbar_clear (browser->bookmarkbar);
     else
         midori_bookmarkbar_populate (browser);
@@ -6663,6 +6795,9 @@ midori_browser_set_property (GObject*      object,
     case PROP_HISTORY:
         midori_browser_set_history (browser, g_value_get_object (value));
         break;
+    case PROP_SPEED_DIAL:
+        browser->speeddial = g_value_get_pointer (value);
+        break;
     case PROP_SHOW_TABS:
         browser->show_tabs = g_value_get_boolean (value);
         if (browser->show_tabs)
@@ -6737,6 +6872,9 @@ midori_browser_get_property (GObject*    object,
         break;
     case PROP_HISTORY:
         g_value_set_object (value, browser->history);
+        break;
+    case PROP_SPEED_DIAL:
+        g_value_set_pointer (value, browser->speeddial);
         break;
     case PROP_SHOW_TABS:
         g_value_set_boolean (value, browser->show_tabs);
@@ -6920,6 +7058,69 @@ midori_browser_set_action_visible (MidoriBrowser* browser,
     _action_set_visible (browser, name, visible);
     _action_set_sensitive (browser, name, visible);
 }
+
+/**
+ * midori_browser_block_action:
+ * @browser: a #MidoriBrowser
+ * @name: the action to be blocked
+ *
+ * Blocks built-in behavior of the specified action without
+ * disabling it, which gives you a chance to connect your
+ * own signal handling.
+ * Call midori_browser_unblock_action() to undo the effect.
+ *
+ * Since: 0.3.4
+ **/
+void
+midori_browser_block_action (MidoriBrowser* browser,
+                             GtkAction*     action)
+{
+    const gchar* name;
+    guint i;
+
+    g_return_if_fail (MIDORI_IS_BROWSER (browser));
+    g_return_if_fail (GTK_IS_ACTION (action));
+
+    name = gtk_action_get_name (action);
+    for (i = 0; i < entries_n; i++)
+        if (g_str_equal (entries[i].name, name))
+        {
+            g_signal_handlers_block_by_func (action, entries[i].callback, browser);
+            return;
+        }
+    g_critical ("%s: Action \"%s\" can't be blocked.", G_STRFUNC, name);
+}
+
+/**
+ * midori_browser_unblock_action:
+ * @browser: a #MidoriBrowser
+ * @name: the action to be unblocked
+ *
+ * Restores built-in behavior of the specified action after
+ * previously blocking it with midori_browser_block_action().
+ *
+ * Since: 0.3.4
+ **/
+void
+midori_browser_unblock_action (MidoriBrowser* browser,
+                               GtkAction*     action)
+{
+    const gchar* name;
+    guint i;
+
+    g_return_if_fail (MIDORI_IS_BROWSER (browser));
+    g_return_if_fail (GTK_IS_ACTION (action));
+
+    name = gtk_action_get_name (action);
+    for (i = 0; i < entries_n; i++)
+        if (g_str_equal (entries[i].name, name))
+        {
+            g_signal_handlers_unblock_by_func (action, entries[i].callback, browser);
+            return;
+        }
+    g_critical ("%s: Action \"%s\" can't be unblocked.", G_STRFUNC, name);
+}
+
 
 /**
  * midori_browser_get_action_group:

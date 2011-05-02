@@ -249,13 +249,21 @@ katze_preferences_prepare (KatzePreferences* preferences)
  * Adds a new category with the specified label to the dialog.
  *
  * Since: 0.2.1
+ *
+ * Since 0.3.4 a #GtkBox is returned that can be packed into.
  **/
-void
+GtkWidget*
 katze_preferences_add_category (KatzePreferences* preferences,
                                 const gchar*      label,
                                 const gchar*      icon)
 {
-    KatzePreferencesPrivate* priv = preferences->priv;
+    KatzePreferencesPrivate* priv;
+
+    g_return_val_if_fail (KATZE_IS_PREFERENCES (preferences), NULL);
+    g_return_val_if_fail (label != NULL, NULL);
+    g_return_val_if_fail (icon != NULL, NULL);
+
+    priv = preferences->priv;
 
     #if HAVE_HILDON
     GtkWidget* widget;
@@ -300,6 +308,8 @@ katze_preferences_add_category (KatzePreferences* preferences,
         g_object_set_data (G_OBJECT (priv->toolbutton), "notebook", priv->notebook);
     #endif
     #endif
+
+    return priv->page;
 }
 
 #if !HAVE_HILDON
@@ -325,21 +335,27 @@ katze_hig_frame_new (const gchar* title)
 /**
  * katze_preferences_add_group:
  * @preferences: a #KatzePreferences instance
- * @label: a group label
+ * @label: a group label, or %NULL
  *
  * Adds a new group with the specified label to the dialog.
  *
  * Since: 0.2.1
+ *
+ * Since 0.3.4 you can pass %NULL to hide the label.
  **/
 void
 katze_preferences_add_group (KatzePreferences* preferences,
                              const gchar*      label)
 {
     #if !HAVE_HILDON
-    KatzePreferencesPrivate* priv = preferences->priv;
+    KatzePreferencesPrivate* priv;
 
+    g_return_if_fail (KATZE_IS_PREFERENCES (preferences));
+
+    priv = preferences->priv;
     priv->sizegroup2 = gtk_size_group_new (GTK_SIZE_GROUP_HORIZONTAL);
-    priv->frame = katze_hig_frame_new (label);
+    priv->frame = label ? katze_hig_frame_new (label) :
+        g_object_new (GTK_TYPE_FRAME, "shadow-type", GTK_SHADOW_NONE, NULL);
     gtk_container_set_border_width (GTK_CONTAINER (priv->frame), 4);
     gtk_box_pack_start (GTK_BOX (priv->page), priv->frame, FALSE, FALSE, 0);
     priv->box = gtk_vbox_new (FALSE, 4);

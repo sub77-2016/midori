@@ -221,8 +221,26 @@ midori_extensions_treeview_render_tick_cb (GtkTreeViewColumn* column,
     g_object_set (renderer,
         "activatable", midori_extension_is_prepared (extension),
         "active", midori_extension_is_active (extension) || g_object_get_data (G_OBJECT (extension), "static"),
+        "xpad", 4,
         NULL);
 
+    g_object_unref (extension);
+}
+
+static void
+midori_extensions_treeview_render_icon_cb (GtkTreeViewColumn* column,
+                                           GtkCellRenderer*   renderer,
+                                           GtkTreeModel*      model,
+                                           GtkTreeIter*       iter,
+                                           GtkWidget*         treeview)
+{
+    MidoriExtension* extension;
+    gtk_tree_model_get (model, iter, 0, &extension, -1);
+
+    g_object_set (renderer, "stock-id", STOCK_EXTENSION,
+                            "stock-size", GTK_ICON_SIZE_BUTTON,
+                            "sensitive", midori_extension_is_prepared (extension),
+                            "xpad", 4, NULL);
     g_object_unref (extension);
 }
 
@@ -338,6 +356,7 @@ midori_extensions_init (MidoriExtensions* extensions)
 {
     /* Create the treeview */
     GtkTreeViewColumn* column;
+    GtkCellRenderer* renderer_icon;
     GtkCellRenderer* renderer_text;
     GtkCellRenderer* renderer_toggle;
     GtkListStore* liststore = gtk_list_store_new (1, G_TYPE_OBJECT);
@@ -355,6 +374,13 @@ midori_extensions_init (MidoriExtensions* extensions)
         extensions->treeview, NULL);
     g_signal_connect (renderer_toggle, "toggled",
         G_CALLBACK (midori_extensions_cell_renderer_toggled_cb), extensions);
+    gtk_tree_view_append_column (GTK_TREE_VIEW (extensions->treeview), column);
+    column = gtk_tree_view_column_new ();
+    renderer_icon = gtk_cell_renderer_pixbuf_new ();
+    gtk_tree_view_column_pack_start (column, renderer_icon, FALSE);
+    gtk_tree_view_column_set_cell_data_func (column, renderer_icon,
+        (GtkTreeCellDataFunc)midori_extensions_treeview_render_icon_cb,
+        extensions->treeview, NULL);
     gtk_tree_view_append_column (GTK_TREE_VIEW (extensions->treeview), column);
     column = gtk_tree_view_column_new ();
     gtk_tree_view_column_set_sizing (column, GTK_TREE_VIEW_COLUMN_AUTOSIZE);

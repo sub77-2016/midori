@@ -14,7 +14,12 @@
 #include "sokoke.h"
 
 #include <glib/gi18n.h>
+#include <glib/gstdio.h>
 #include <string.h>
+
+#if HAVE_UNISTD_H
+    #include <unistd.h>
+#endif
 
 #if HAVE_CONFIG_H
     #include <config.h>
@@ -48,7 +53,7 @@ struct _MidoriWebSettings
     MidoriPreferredEncoding preferred_encoding : 3;
     gboolean always_show_tabbar : 1;
     gboolean close_buttons_on_tabs : 1;
-    gboolean close_buttons_left : 1;
+    gint close_buttons_left;
     MidoriNewPage open_new_pages_in : 2;
     MidoriNewPage open_external_pages_in : 2;
     gboolean middle_click_opens_selection : 1;
@@ -81,11 +86,18 @@ struct _MidoriWebSettings
     gchar* news_aggregator;
     gchar* location_entry_search;
     gchar* http_proxy;
+    #if WEBKIT_CHECK_VERSION (1, 3, 11)
+    gint maximum_cache_size;
+    #endif
     gchar* http_accept_language;
     gchar* ident_string;
 
     gint clear_private_data;
     gchar* clear_data;
+    #if !WEBKIT_CHECK_VERSION (1, 3, 13)
+    gboolean enable_dns_prefetching;
+    #endif
+    gboolean strip_referer;
 };
 
 struct _MidoriWebSettingsClass
@@ -163,12 +175,15 @@ enum
 
     PROP_PROXY_TYPE,
     PROP_HTTP_PROXY,
+    PROP_MAXIMUM_CACHE_SIZE,
     PROP_IDENTIFY_AS,
     PROP_USER_AGENT,
     PROP_PREFERRED_LANGUAGES,
 
     PROP_CLEAR_PRIVATE_DATA,
-    PROP_CLEAR_DATA
+    PROP_CLEAR_DATA,
+    PROP_ENABLE_DNS_PREFETCHING,
+    PROP_STRIP_REFERER
 };
 
 GType
@@ -196,7 +211,7 @@ midori_startup_get_type (void)
     if (!type)
     {
         static const GEnumValue values[] = {
-         { MIDORI_STARTUP_BLANK_PAGE, "MIDORI_STARTUP_BLANK_PAGE", N_("Show Blank page") },
+         { MIDORI_STARTUP_BLANK_PAGE, "MIDORI_STARTUP_BLANK_PAGE", N_("Show Speed Dial") },
          { MIDORI_STARTUP_HOMEPAGE, "MIDORI_STARTUP_HOMEPAGE", N_("Show Homepage") },
          { MIDORI_STARTUP_LAST_OPEN_PAGES, "MIDORI_STARTUP_LAST_OPEN_PAGES", N_("Show last open tabs") },
          #if WEBKIT_CHECK_VERSION (1, 1, 6)
@@ -636,6 +651,8 @@ midori_web_settings_class_init (MidoriWebSettingsClass* class)
     * Show spee dial in newly opened tabs.
     *
     * Since: 0.1.7
+    *
+    * Deprecated: 0.3.4
     */
     g_object_class_install_property (gobject_class,
                                      PROP_SPEED_DIAL_IN_NEW_TABS,
@@ -660,6 +677,13 @@ midori_web_settings_class_init (MidoriWebSettingsClass* class)
                                      G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
     #endif
 
+    /**
+    * MidoriWebSettings:download-manager:
+    *
+    * An external download manager that shows up in context menus.
+    *
+    * Deprecated: 0.3.4
+    */
     g_object_class_install_property (gobject_class,
                                      PROP_DOWNLOAD_MANAGER,
                                      g_param_spec_string (
@@ -745,12 +769,8 @@ midori_web_settings_class_init (MidoriWebSettingsClass* class)
                                      "close-buttons-left",
                                      "Close buttons on the left",
                                      "Whether to show close buttons on the left side",
-                                     #if HAVE_OSX
-                                     TRUE,
-                                     #else
                                      FALSE,
-                                     #endif
-                                     flags));
+                                     G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
 
 
     g_object_class_install_property (gobject_class,
@@ -763,6 +783,13 @@ midori_web_settings_class_init (MidoriWebSettingsClass* class)
                                      MIDORI_NEW_PAGE_TAB,
                                      flags));
 
+    /**
+     * MidoriWebSettings:open-external-pages-in:
+     *
+     * Where to open externally opened pages.
+     *
+     * Deprecated: 0.3.4
+     */
     g_object_class_install_property (gobject_class,
                                      PROP_OPEN_EXTERNAL_PAGES_IN,
                                      g_param_spec_enum (
@@ -936,6 +963,13 @@ midori_web_settings_class_init (MidoriWebSettingsClass* class)
                                      TRUE,
                                      flags));
 
+    /**
+     * MidoriWebSettings:accept-cookies:
+     *
+     * What type of cookies to accept.
+     *
+     * Deprecated: 0.3.4
+     **/
     g_object_class_install_property (gobject_class,
                                      PROP_ACCEPT_COOKIES,
                                      g_param_spec_enum (
@@ -1008,6 +1042,24 @@ midori_web_settings_class_init (MidoriWebSettingsClass* class)
                                      _("The proxy server used for HTTP connections"),
                                      NULL,
                                      flags));
+
+    #if WEBKIT_CHECK_VERSION (1, 3, 11)
+    /**
+     * MidoriWebSettings:maximum-cache-size:
+     *
+     * The maximum size of cached pages on disk.
+     *
+     * Since: 0.3.4
+     */
+    g_object_class_install_property (gobject_class,
+                                     PROP_MAXIMUM_CACHE_SIZE,
+                                     g_param_spec_int (
+                                     "maximum-cache-size",
+                                     _("Web Cache"),
+                                     _("The maximum size of cached pages on disk"),
+                                     0, G_MAXINT, 100,
+                                     flags));
+    #endif
 
     /**
     * MidoriWebSettings:identify-as:
@@ -1091,6 +1143,41 @@ midori_web_settings_class_init (MidoriWebSettingsClass* class)
                                      _("The data selected for deletion"),
                                      NULL,
                                      flags));
+    #if !WEBKIT_CHECK_VERSION (1, 3, 13)
+    /**
+     * MidoriWebSettings:enable-dns-prefetching:
+     *
+     * Whether to resolve host names in advance.
+     *
+     * Since: 0.3.4
+     */
+    g_object_class_install_property (gobject_class,
+                                     PROP_ENABLE_DNS_PREFETCHING,
+                                     g_param_spec_boolean (
+                                     "enable-dns-prefetching",
+        "Whether to resolve host names in advance",
+        "Whether host names on a website or in bookmarks should be prefetched",
+                                     TRUE,
+                                     flags));
+    #endif
+
+    /**
+     * MidoriWebSettings:strip-referer:
+     *
+     * Whether to strip referrer details sent to external sites.
+     *
+     * Since: 0.3.4
+     */
+    g_object_class_install_property (gobject_class,
+                                     PROP_STRIP_REFERER,
+                                     g_param_spec_boolean (
+                                     "strip-referer",
+    /* i18n: Reworded: Shorten details propagated when going to another page */
+        _("Strip referrer details sent to external sites"),
+    /* i18n: Referer here is not a typo but a technical term */
+        _("Whether the \"Referer\" header should be shortened to the hostname"),
+                                     FALSE,
+                                     flags));
 
 }
 
@@ -1158,7 +1245,7 @@ midori_web_settings_finalize (GObject* object)
     G_OBJECT_CLASS (midori_web_settings_parent_class)->finalize (object);
 }
 
-#if defined (G_OS_UNIX) && !HAVE_OSX
+#if (!HAVE_OSX && defined (G_OS_UNIX)) || defined (G_OS_WIN32)
 static gchar*
 get_sys_name (void)
 {
@@ -1166,11 +1253,17 @@ get_sys_name (void)
 
     if (!sys_name)
     {
+        #ifdef G_OS_WIN32
+        /* 6.1 Win7, 6.0 Vista, 5.1 XP and 5.0 Win2k */
+        guint version = g_win32_get_windows_version ();
+        sys_name = g_strdup_printf ("NT %d.%d", LOBYTE (version), HIBYTE (version));
+        #else
         struct utsname name;
         if (uname (&name) != -1)
             sys_name = g_strdup(name.sysname);
         else
-            sys_name = "Unix";
+            sys_name = "Linux";
+        #endif
     }
     return sys_name;
 }
@@ -1180,27 +1273,25 @@ static gchar*
 generate_ident_string (MidoriIdentity identify_as)
 {
     const gchar* platform =
-    #ifdef GDK_WINDOWING_X11
-    "X11";
-    #elif defined(GDK_WINDOWING_WIN32)
+    #if HAVE_HILDON
+    "Maemo;"
+    #elif defined (G_OS_WIN32)
     "Windows";
     #elif defined(GDK_WINDOWING_QUARTZ)
-    "Macintosh";
+    "Macintosh;";
     #elif defined(GDK_WINDOWING_DIRECTFB)
-    "DirectFB";
+    "DirectFB;";
     #else
-    "Unknown";
+    "X11;";
     #endif
 
     const gchar* os =
     #if HAVE_OSX
     "Mac OS X";
-    #elif defined (G_OS_UNIX)
+    #elif defined (G_OS_UNIX) || defined (G_OS_WIN32)
     get_sys_name ();
-    #elif defined (G_OS_WIN32)
-    "Windows";
     #else
-    "Unknown";
+    "Linux";
     #endif
 
     const gchar* appname = "Midori/"
@@ -1219,24 +1310,21 @@ generate_ident_string (MidoriIdentity identify_as)
     switch (identify_as)
     {
     case MIDORI_IDENT_MIDORI:
-        return g_strdup_printf ("%s (%s; %s; U; %s) WebKit/%d.%d+",
-            appname, platform, os, lang, webcore_major, webcore_minor);
+        return g_strdup_printf ("Mozilla/5.0 (%s %s) AppleWebKit/%d.%d+ %s",
+            platform, os, webcore_major, webcore_minor, appname);
     case MIDORI_IDENT_SAFARI:
-        return g_strdup_printf ("Mozilla/5.0 (%s; U; %s; %s) "
-            "AppleWebKit/%d+ (KHTML, like Gecko) Safari/%d.%d+ %s",
-            platform, os, lang, webcore_major, webcore_major, webcore_minor, appname);
+        return g_strdup_printf ("Mozilla/5.0 (Macintosh; U; Intel Mac OS X; %s) "
+            "AppleWebKit/%d+ (KHTML, like Gecko) Version/5.0 Safari/%d.%d+ %s",
+            lang, webcore_major, webcore_major, webcore_minor, appname);
     case MIDORI_IDENT_IPHONE:
-        return g_strdup_printf ("Mozilla/5.0 (iPhone; U; %s; %s) "
-            "AppleWebKit/532+ (KHTML, like Gecko) Version/3.0 Mobile/1A538b "
-            "Safari/419.3 %s",
-                                os, lang, appname);
+        return g_strdup_printf ("Mozilla/5.0 (iPhone; U; CPU like Mac OS X; %s) "
+            "AppleWebKit/532+ (KHTML, like Gecko) Version/3.0 Mobile/1A538b Safari/419.3 %s",
+                                lang, appname);
     case MIDORI_IDENT_FIREFOX:
-        return g_strdup_printf ("Mozilla/5.0 (%s; U; %s; %s; rv:1.9.0.2) "
-            "Gecko/2008092313 Firefox/3.8 %s",
-                                platform, os, lang, appname);
+        return g_strdup_printf ("Mozilla/5.0 (%s %s; rv:2.0.1) Gecko/20100101 Firefox/4.0.1 %s",
+                                platform, os, appname);
     case MIDORI_IDENT_EXPLORER:
-        return g_strdup_printf ("Mozilla/4.0 (compatible; "
-            "MSIE 6.0; Windows NT 5.1; %s) %s",
+        return g_strdup_printf ("Mozilla/4.0 (compatible; MSIE 6.0; Windows NT 5.1; %s) %s",
                                 lang, appname);
     default:
         return g_strdup_printf ("%s", appname);
@@ -1376,9 +1464,6 @@ midori_web_settings_set_property (GObject*      object,
     case PROP_CLOSE_BUTTONS_ON_TABS:
         web_settings->close_buttons_on_tabs = g_value_get_boolean (value);
         break;
-    case PROP_CLOSE_BUTTONS_LEFT:
-        web_settings->close_buttons_left = g_value_get_boolean (value);
-        break;
     case PROP_OPEN_NEW_PAGES_IN:
         web_settings->open_new_pages_in = g_value_get_enum (value);
         break;
@@ -1475,6 +1560,11 @@ midori_web_settings_set_property (GObject*      object,
     case PROP_HTTP_PROXY:
         katze_assign (web_settings->http_proxy, g_value_dup_string (value));
         break;
+    #if WEBKIT_CHECK_VERSION (1, 3, 11)
+    case PROP_MAXIMUM_CACHE_SIZE:
+        web_settings->maximum_cache_size = g_value_get_int (value);
+        break;
+    #endif
     case PROP_IDENTIFY_AS:
         web_settings->identify_as = g_value_get_enum (value);
         if (web_settings->identify_as != MIDORI_IDENT_CUSTOM)
@@ -1508,6 +1598,14 @@ midori_web_settings_set_property (GObject*      object,
         break;
     case PROP_CLEAR_DATA:
         katze_assign (web_settings->clear_data, g_value_dup_string (value));
+        break;
+    #if !WEBKIT_CHECK_VERSION (1, 3, 13)
+    case PROP_ENABLE_DNS_PREFETCHING:
+        web_settings->enable_dns_prefetching = g_value_get_boolean (value);
+        break;
+    #endif
+    case PROP_STRIP_REFERER:
+        web_settings->strip_referer = g_value_get_boolean (value);
         break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -1626,7 +1724,42 @@ midori_web_settings_get_property (GObject*    object,
         g_value_set_boolean (value, web_settings->close_buttons_on_tabs);
         break;
     case PROP_CLOSE_BUTTONS_LEFT:
-        g_value_set_boolean (value, web_settings->close_buttons_left);
+        #if HAVE_OSX
+        g_value_set_boolean (value, TRUE);
+        #elif defined (G_OS_WIN32)
+        g_value_set_boolean (value, FALSE);
+        #else
+        if (!web_settings->close_buttons_left)
+        {
+            /* Look for close button in layout specified in index.theme */
+            GdkScreen* screen = gdk_screen_get_default ();
+            GtkSettings* settings = gtk_settings_get_for_screen (screen);
+            gchar* theme = katze_object_get_string (settings, "gtk-theme-name");
+            gchar* folder = gtk_rc_get_theme_dir ();
+            gchar* filename = g_build_filename (folder, theme, "index.theme", NULL);
+            g_free (folder);
+            web_settings->close_buttons_left = 1;
+            if (g_access (filename, F_OK) != 0)
+                katze_assign (filename,
+                   g_build_filename (g_get_home_dir (), ".themes",
+                                     theme, "index.theme", NULL));
+            g_free (theme);
+            if (g_access (filename, F_OK) == 0)
+            {
+                GKeyFile* keyfile = g_key_file_new ();
+                gchar* button_layout;
+                g_key_file_load_from_file (keyfile, filename, 0, NULL);
+                button_layout = g_key_file_get_string (keyfile,
+                    "X-GNOME-Metatheme", "ButtonLayout", NULL);
+                if (button_layout && strstr (button_layout, "close:"))
+                    web_settings->close_buttons_left = 2;
+                g_free (button_layout);
+                g_key_file_free (keyfile);
+            }
+            g_free (filename);
+        }
+        g_value_set_boolean (value, web_settings->close_buttons_left == 2);
+        #endif
         break;
     case PROP_OPEN_NEW_PAGES_IN:
         g_value_set_enum (value, web_settings->open_new_pages_in);
@@ -1720,6 +1853,11 @@ midori_web_settings_get_property (GObject*    object,
     case PROP_HTTP_PROXY:
         g_value_set_string (value, web_settings->http_proxy);
         break;
+    #if WEBKIT_CHECK_VERSION (1, 3, 11)
+    case PROP_MAXIMUM_CACHE_SIZE:
+        g_value_set_int (value, web_settings->maximum_cache_size);
+        break;
+    #endif
     case PROP_IDENTIFY_AS:
         g_value_set_enum (value, web_settings->identify_as);
         break;
@@ -1739,6 +1877,14 @@ midori_web_settings_get_property (GObject*    object,
         break;
     case PROP_CLEAR_DATA:
         g_value_set_string (value, web_settings->clear_data);
+        break;
+    #if !WEBKIT_CHECK_VERSION (1, 3, 13)
+    case PROP_ENABLE_DNS_PREFETCHING:
+        g_value_set_boolean (value, web_settings->enable_dns_prefetching);
+        break;
+    #endif
+    case PROP_STRIP_REFERER:
+        g_value_set_boolean (value, web_settings->strip_referer);
         break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);

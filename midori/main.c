@@ -34,6 +34,11 @@
 #include <webkit/webkit.h>
 #include <sqlite3.h>
 
+#if WEBKIT_CHECK_VERSION (1, 3, 11)
+    #define LIBSOUP_USE_UNSTABLE_REQUEST_API
+    #include <libsoup/soup-cache.h>
+#endif
+
 #if ENABLE_NLS
     #include <libintl.h>
     #include <locale.h>
@@ -695,6 +700,112 @@ midori_trash_remove_item_cb (KatzeArray* trash,
 }
 
 static void
+midori_browser_show_preferences_cb (MidoriBrowser*    browser,
+                                    KatzePreferences* preferences,
+                                    MidoriApp*        app)
+{
+    GtkWidget* scrolled = katze_scrolled_new (NULL, NULL);
+    GtkWidget* addon = g_object_new (MIDORI_TYPE_EXTENSIONS, NULL);
+    GList* children = gtk_container_get_children (GTK_CONTAINER (addon));
+    GtkWidget* page;
+    gtk_widget_reparent (g_list_nth_data (children, 0), scrolled);
+    g_list_free (children);
+    g_object_set (addon, "app", app, NULL);
+    gtk_widget_show (scrolled);
+    page = katze_preferences_add_category (preferences,
+                                           _("Extensions"), STOCK_EXTENSIONS);
+    gtk_box_pack_start (GTK_BOX (page), scrolled, TRUE, TRUE, 4);
+}
+
+static void
+midori_preferences_delete_cookies_changed_cb (GtkComboBox*       combo,
+                                              MidoriWebSettings* settings)
+{
+    gint active = gtk_combo_box_get_active (combo);
+    gint max_age;
+    switch (active)
+    {
+    case 0: max_age =   0; break;
+    case 1: max_age =   1; break;
+    case 2: max_age =   7; break;
+    case 3: max_age =  30; break;
+    case 4: max_age = 365; break;
+    default:
+        max_age = 30;
+    }
+    g_object_set (settings, "maximum-cookie-age", max_age, NULL);
+}
+
+static void
+midori_browser_privacy_preferences_cb (MidoriBrowser*    browser,
+                                       KatzePreferences* preferences,
+                                       MidoriApp*        app)
+{
+    MidoriWebSettings* settings = midori_browser_get_settings (browser);
+    GtkWidget* button;
+    GtkWidget* label;
+    gint max_age = katze_object_get_int (settings, "maximum-cookie-age");
+    guint active;
+    gchar* markup;
+
+    katze_preferences_add_category (preferences, _("Privacy"), GTK_STOCK_INDEX);
+    katze_preferences_add_group (preferences, NULL);
+    button = katze_property_label (settings, "maximum-cookie-age");
+    katze_preferences_add_widget (preferences, button, "indented");
+    button = gtk_combo_box_new_text ();
+    gtk_combo_box_append_text (GTK_COMBO_BOX (button), _("Delete old cookies after 1 hour"));
+    gtk_combo_box_append_text (GTK_COMBO_BOX (button), _("Delete old cookies after 1 day"));
+    gtk_combo_box_append_text (GTK_COMBO_BOX (button), _("Delete old cookies after 1 week"));
+    gtk_combo_box_append_text (GTK_COMBO_BOX (button), _("Delete old cookies after 1 month"));
+    gtk_combo_box_append_text (GTK_COMBO_BOX (button), _("Delete old cookies after 1 year"));
+
+    switch (max_age)
+    {
+    case   0: active = 0; break;
+    case   1: active = 1; break;
+    case   7: active = 2; break;
+    case  30: active = 3; break;
+    case 365: active = 4; break;
+    default:
+        active = 3;
+    }
+    gtk_combo_box_set_active (GTK_COMBO_BOX (button), active);
+    g_signal_connect (button, "changed",
+        G_CALLBACK (midori_preferences_delete_cookies_changed_cb), settings);
+    katze_preferences_add_widget (preferences, button, "spanned");
+
+    markup = g_strdup_printf ("<span size=\"smaller\">%s</span>",
+        _("Cookies store login data, saved games, "
+          "or user profiles for advertisement purposes."));
+    label = gtk_label_new (NULL);
+    gtk_label_set_markup (GTK_LABEL (label), markup);
+    g_free (markup);
+    katze_preferences_add_widget (preferences, label, "filled");
+    #if WEBKIT_CHECK_VERSION (1, 1, 13)
+    button = katze_property_proxy (settings, "enable-offline-web-application-cache", NULL);
+    katze_preferences_add_widget (preferences, button, "indented");
+    #endif
+    #if WEBKIT_CHECK_VERSION (1, 1, 8)
+    button = katze_property_proxy (settings, "enable-html5-local-storage", NULL);
+    katze_preferences_add_widget (preferences, button, "spanned");
+    #if !WEBKIT_CHECK_VERSION (1, 1, 14)
+    button = katze_property_proxy (settings, "enable-html5-database", NULL);
+    katze_preferences_add_widget (preferences, button, "indented");
+    #endif
+    #endif
+    #if HAVE_LIBSOUP_2_27_90
+    button = katze_property_proxy (settings, "strip-referer", NULL);
+    katze_preferences_add_widget (preferences, button, "indented");
+    #endif
+    button = katze_property_label (settings, "maximum-history-age");
+    katze_preferences_add_widget (preferences, button, "indented");
+    button = katze_property_proxy (settings, "maximum-history-age", NULL);
+    katze_preferences_add_widget (preferences, button, "spanned");
+    label = gtk_label_new (_("days"));
+    katze_preferences_add_widget (preferences, label, "spanned");
+}
+
+static void
 midori_app_add_browser_cb (MidoriApp*     app,
                            MidoriBrowser* browser,
                            KatzeNet*      net)
@@ -722,10 +833,10 @@ midori_app_add_browser_cb (MidoriApp*     app,
     #endif
 
     /* Extensions */
-    addon = g_object_new (MIDORI_TYPE_EXTENSIONS, NULL);
-    gtk_widget_show (addon);
-    g_object_set (addon, "app", app, NULL);
-    midori_panel_append_page (MIDORI_PANEL (panel), MIDORI_VIEWABLE (addon));
+    g_signal_connect (browser, "show-preferences",
+        G_CALLBACK (midori_browser_privacy_preferences_cb), app);
+    g_signal_connect (browser, "show-preferences",
+        G_CALLBACK (midori_browser_show_preferences_cb), app);
 
     g_object_unref (panel);
 }
@@ -880,6 +991,29 @@ midori_soup_session_settings_accept_language_cb (SoupSession*       session,
         g_free (languages);
     soup_message_headers_append (msg->request_headers, "Accept-Language", accpt);
     g_free (accpt);
+
+    #if HAVE_LIBSOUP_2_27_90
+    if (katze_object_get_boolean (settings, "strip-referer"))
+    {
+        const gchar* referer
+            = soup_message_headers_get_one (msg->request_headers, "Referer");
+        SoupURI* destination = soup_message_get_uri (msg);
+        if (referer && destination && !strstr (referer, destination->host))
+        {
+            SoupURI* stripped_uri = soup_uri_new (referer);
+            gchar* stripped_referer;
+            soup_uri_set_path (stripped_uri, NULL);
+            soup_uri_set_query (stripped_uri, NULL);
+            stripped_referer = soup_uri_to_string (stripped_uri, FALSE);
+            soup_uri_free (stripped_uri);
+            if (g_getenv ("MIDORI_SOUP_DEBUG"))
+                g_message ("Referer stripped");
+            soup_message_headers_replace (msg->request_headers, "Referer",
+                                          stripped_referer);
+            g_free (stripped_referer);
+        }
+    }
+    #endif
 }
 
 static void
@@ -896,13 +1030,10 @@ midori_soup_session_debug (SoupSession* session)
     }
 }
 
-static void
-midori_soup_session_prepare (SoupSession*       session,
-                             SoupCookieJar*     cookie_jar,
-                             MidoriWebSettings* settings)
+static gboolean
+midori_load_soup_session (gpointer settings)
 {
-    SoupSessionFeature* feature;
-    gchar* config_file;
+    SoupSession* session = webkit_get_default_session ();
 
     #if WEBKIT_CHECK_VERSION (1, 1, 14) && defined (HAVE_LIBSOUP_2_29_91)
     const gchar* certificate_files[] =
@@ -951,20 +1082,9 @@ midori_soup_session_prepare (SoupSession*       session,
     g_signal_connect (session, "request-queued",
         G_CALLBACK (midori_soup_session_settings_accept_language_cb), settings);
 
-    config_file = build_config_filename ("logins");
-    feature = g_object_new (KATZE_TYPE_HTTP_AUTH, "filename", config_file, NULL);
-    g_free (config_file);
-    soup_session_add_feature (session, feature);
-    g_object_unref (feature);
     midori_soup_session_debug (session);
 
-    feature = g_object_new (KATZE_TYPE_HTTP_COOKIES, NULL);
-    config_file = build_config_filename ("cookies.txt");
-    g_object_set_data_full (G_OBJECT (feature), "filename",
-                            config_file, (GDestroyNotify)g_free);
-    soup_session_add_feature (session, SOUP_SESSION_FEATURE (cookie_jar));
-    soup_session_add_feature (session, feature);
-    g_object_unref (feature);
+    return FALSE;
 }
 
 static void
@@ -1054,6 +1174,9 @@ midori_create_diagnostic_dialog (MidoriWebSettings* settings,
     gtk_box_pack_start (GTK_BOX (box), button, FALSE, FALSE, 4);
     gtk_widget_show_all (box);
     gtk_container_add (GTK_CONTAINER (content_area), box);
+    button = katze_property_proxy (settings, "show-crash-dialog", NULL);
+    gtk_widget_show (button);
+    gtk_container_add (GTK_CONTAINER (content_area), button);
     #ifdef HAVE_HILDON_2_2
     box = gtk_hbox_new (FALSE, 4);
     gtk_box_pack_start (GTK_BOX (GTK_DIALOG (dialog)->vbox), box, TRUE, FALSE, 4);
@@ -1091,13 +1214,43 @@ midori_create_diagnostic_dialog (MidoriWebSettings* settings,
 }
 
 static gboolean
-midori_load_cookie_jar (gpointer data)
+midori_load_soup_session_full (gpointer settings)
 {
     SoupSession* session = webkit_get_default_session ();
-    SoupCookieJar* jar = soup_cookie_jar_new ();
-    g_object_set_data (G_OBJECT (jar), "midori-settings", data);
-    midori_soup_session_prepare (session, jar, MIDORI_WEB_SETTINGS (data));
+    SoupCookieJar* jar;
+    gchar* config_file;
+    SoupSessionFeature* feature;
+
+    midori_load_soup_session (settings);
+
+    config_file = build_config_filename ("logins");
+    feature = g_object_new (KATZE_TYPE_HTTP_AUTH, "filename", config_file, NULL);
+    g_free (config_file);
+    soup_session_add_feature (session, feature);
+    g_object_unref (feature);
+
+    jar = soup_cookie_jar_new ();
+    g_object_set_data (G_OBJECT (jar), "midori-settings", settings);
+    soup_session_add_feature (session, SOUP_SESSION_FEATURE (jar));
     g_object_unref (jar);
+
+    feature = g_object_new (KATZE_TYPE_HTTP_COOKIES, NULL);
+    config_file = build_config_filename ("cookies.txt");
+    g_object_set_data_full (G_OBJECT (feature), "filename",
+                            config_file, (GDestroyNotify)g_free);
+    soup_session_add_feature (session, feature);
+    g_object_unref (feature);
+
+    #if WEBKIT_CHECK_VERSION (1, 3, 11)
+    config_file = g_build_filename (g_get_user_cache_dir (),
+                                    PACKAGE_NAME, "web", NULL);
+    feature = SOUP_SESSION_FEATURE (soup_cache_new (config_file, 0));
+    g_free (config_file);
+    soup_session_add_feature (session, feature);
+    soup_cache_set_max_size (SOUP_CACHE (feature),
+        katze_object_get_int (settings, "maximum-cache-size") * 1024 * 1024);
+    soup_cache_load (SOUP_CACHE (feature));
+    #endif
 
     return FALSE;
 }
@@ -1178,6 +1331,10 @@ midori_load_extensions (gpointer data)
 
                 if (!extension)
                 {
+                    /* No extension, no error: not available, not shown */
+                    if (g_module_error () == NULL)
+                        continue;
+
                     extension = g_object_new (MIDORI_TYPE_EXTENSION,
                                               "name", filename,
                                               "description", g_module_error (),
@@ -1386,12 +1543,11 @@ snapshot_load_finished_cb (GtkWidget*      web_view,
 {
     GError* error;
     GtkPrintOperation* operation = gtk_print_operation_new ();
-    GtkPrintOperationAction action = GTK_PRINT_OPERATION_ACTION_EXPORT;
-    GtkPrintOperationResult result;
 
     gtk_print_operation_set_export_filename (operation, filename);
     error = NULL;
-    result = webkit_web_frame_print_full (web_frame, operation, action, &error);
+    webkit_web_frame_print_full (web_frame, operation,
+        GTK_PRINT_OPERATION_ACTION_EXPORT, &error);
 
     if (error != NULL)
     {
@@ -1467,27 +1623,36 @@ signal_handler (int signal_id)
 }
 #endif
 
-#if 0
-static void
-midori_speeddial_import_from_json (const gchar* json_file,
-                                   const gchar* speeddial_file)
+static GKeyFile*
+speeddial_new_from_file (const gchar* config,
+                         GError**     error)
 {
+
+    GKeyFile* key_file = g_key_file_new ();
+    gchar* config_file = g_build_filename (config, "speeddial", NULL);
     guint i = 0;
     guint columns = 3;
     guint slot_count = 0;
+    guint rows;
+    gchar* slot = NULL;
+    gchar* dial_id = NULL;
+    gchar* uri = NULL;
     gchar* json_content;
     gchar** parts;
-    GKeyFile* key_file = g_key_file_new ();
 
-    g_file_get_contents (json_file, &json_content, NULL, NULL);
+    if (g_key_file_load_from_file (key_file, config_file, G_KEY_FILE_NONE, error))
+    {
+        g_free (config_file);
+        return key_file;
+    }
+
+    katze_assign (config_file, g_build_filename (config, "speeddial.json", NULL));
+    g_file_get_contents (config_file, &json_content, NULL, NULL);
     parts = g_strsplit (json_content ? json_content : "", ",", -1);
     while (parts && parts[i] != NULL)
     {
         gchar* key;
         gchar* val;
-        gchar* slot;
-        gchar* dial_id;
-        gchar* uri;
         gchar** values = g_strsplit (parts[i], "\"", -1);
 
         if (*values[1])
@@ -1510,24 +1675,20 @@ midori_speeddial_import_from_json (const gchar* json_file,
 
             if (g_str_equal (key, "id"))
             {
-                /* FIXME: leaked string */
-                slot = g_strdup (val);
+                katze_assign (slot, g_strdup (val));
                 dial_id = g_strdup_printf ("Dial %s", slot + 1);
                 slot_count++;
             }
-            else if (g_str_equal (key, "href") && (*val && strncmp (val, "#", 1)))
+            else if (g_str_equal (key, "href"))
             {
-                uri = g_strdup (val);
-                g_key_file_set_value (key_file, dial_id, "name", slot);
+                katze_assign (uri, g_strdup (val));
                 g_key_file_set_value (key_file, dial_id, "uri", uri);
             }
-            else if (g_str_equal (key, "img") && *val)
+            else if (g_str_equal (key, "img") && (*val && strncmp (val, "#", 1)))
             {
                 gsize sz;
                 gint state = 0;
                 guint save = 0;
-                gchar* checksum;
-                gchar* filename;
                 gchar* thumb_dir;
                 gchar* thumb_path;
                 gsize base64_size = strlen (val);
@@ -1535,15 +1696,11 @@ midori_speeddial_import_from_json (const gchar* json_file,
 
                 sz = g_base64_decode_step (g_strdup (val), base64_size,
                                            decoded, &state, &save);
-                checksum = g_compute_checksum_for_string (G_CHECKSUM_MD5, slot, -1);
-                filename  = g_strdup_printf ("%s%s", checksum, ".png");
-                g_free (checksum);
                 thumb_dir = g_build_path (G_DIR_SEPARATOR_S, g_get_user_cache_dir (),
                                           PACKAGE_NAME, "thumbnails", NULL);
                 if (!g_file_test (thumb_dir, G_FILE_TEST_EXISTS))
                     katze_mkdir_with_parents (thumb_dir, 0700);
-                thumb_path = g_build_filename (thumb_dir, filename, NULL);
-                g_free (filename);
+                thumb_path = sokoke_build_thumbnail_path (uri);
                 g_file_set_contents (thumb_path, (gchar*)decoded, sz, NULL);
 
                 g_free (decoded);
@@ -1554,23 +1711,23 @@ midori_speeddial_import_from_json (const gchar* json_file,
             {
                 guint thumb_size;
                 gchar* thumb_size_type;
+                gchar* size_tmp = g_strndup (val + 1, strlen (val) - 3);
 
-                /* FIXME: leaked string */
-                thumb_size = atoi (g_strndup (val + 1, strlen (val) - 3));
+                thumb_size = atoi (size_tmp);
+                g_free (size_tmp);
                 if (thumb_size == 80)
                     thumb_size_type = g_strdup ("SMALL");
-                else if (thumb_size == 160)
-                    thumb_size_type = g_strdup ("MEDIUM");
                 else if (thumb_size == 240)
                     thumb_size_type = g_strdup ("BIG");
+                else /* if (thumb_size == 160) */
+                    thumb_size_type = g_strdup ("MEDIUM");
                 g_key_file_set_value (key_file, "settings", "size", thumb_size_type);
 
                 g_free (thumb_size_type);
             }
             else if (g_str_equal (key, "title") && *val)
             {
-                g_key_file_set_value (key_file, dial_id, "name", slot);
-                g_key_file_set_value (key_file, dial_id, key, val + 3);
+                g_key_file_set_value (key_file, dial_id, key, val);
             }
             else if (g_str_equal (key, "width"))
             {
@@ -1585,16 +1742,21 @@ midori_speeddial_import_from_json (const gchar* json_file,
         }
     }
 
+    /* Default to 3 x 3 grid. Calculate rows here, columns is initialized as 3 */
+    rows = slot_count / columns > 3 ? slot_count / columns : 3;
     g_key_file_set_integer (key_file, "settings", "columns", columns);
-    g_key_file_set_integer (key_file, "settings", "rows", slot_count / columns);
+    g_key_file_set_integer (key_file, "settings", "rows", rows);
 
-    sokoke_key_file_save_to_file (key_file, speeddial_file, NULL);
+    katze_assign (config_file, g_build_filename (config, "speeddial", NULL));
+    sokoke_key_file_save_to_file (key_file, config_file, NULL);
 
     g_strfreev (parts);
+    g_free (dial_id);
+    g_free (slot);
+    g_free (config_file);
     g_free (json_content);
-    g_key_file_free (key_file);
+    return key_file;
 }
-#endif
 
 static void
 midori_soup_session_block_uris_cb (SoupSession* session,
@@ -1746,12 +1908,37 @@ midori_clear_html5_databases_cb (void)
 }
 #endif
 
+#if WEBKIT_CHECK_VERSION (1, 3, 11)
+static void
+midori_clear_web_cache_cb (void)
+{
+    SoupSession* session = webkit_get_default_session ();
+    SoupSessionFeature* feature = soup_session_get_feature (session, SOUP_TYPE_CACHE);
+    gchar* path = g_build_filename (g_get_user_cache_dir (), PACKAGE_NAME, "web", NULL);
+    soup_cache_clear (SOUP_CACHE (feature));
+    soup_cache_flush (SOUP_CACHE (feature));
+    sokoke_remove_path (path, TRUE);
+    g_free (path);
+}
+#endif
+
+#if WEBKIT_CHECK_VERSION (1, 3, 13)
+static void
+midori_clear_offline_appcache_cb (void)
+{
+    /* Changing the size implies clearing the cache */
+    unsigned long long maximum = webkit_application_cache_get_maximum_size ();
+    webkit_application_cache_set_maximum_size (maximum - 1);
+}
+#endif
+
 int
 main (int    argc,
       char** argv)
 {
     gchar* webapp;
     gchar* config;
+    gboolean private;
     gboolean diagnostic_dialog;
     gboolean back_from_crash;
     gboolean run;
@@ -1773,6 +1960,8 @@ main (int    argc,
        { "config", 'c', 0, G_OPTION_ARG_FILENAME, &config,
        N_("Use FOLDER as configuration folder"), N_("FOLDER") },
        #endif
+       { "private", 'p', 0, G_OPTION_ARG_NONE, &private,
+       N_("Private browsing, no changes are saved"), NULL },
        { "diagnostic-dialog", 'd', 0, G_OPTION_ARG_NONE, &diagnostic_dialog,
        N_("Show a diagnostic dialog"), NULL },
        { "run", 'r', 0, G_OPTION_ARG_NONE, &run,
@@ -1803,9 +1992,7 @@ main (int    argc,
     MidoriWebSettings* settings;
     gchar* config_file;
     gchar* bookmarks_file;
-#if 0
-    gchar* speeddial_file;
-#endif
+    GKeyFile* speeddial;
     gboolean bookmarks_exist;
     MidoriStartup load_on_startup;
     KatzeArray* search_engines;
@@ -1868,6 +2055,7 @@ main (int    argc,
     /* Parse cli options */
     webapp = NULL;
     config = NULL;
+    private = FALSE;
     back_from_crash = FALSE;
     diagnostic_dialog = FALSE;
     run = FALSE;
@@ -1890,8 +2078,22 @@ main (int    argc,
     /* libSoup uses threads, so we need to initialize threads. */
     if (!g_thread_supported ()) g_thread_init (NULL);
     sokoke_register_stock_items ();
-    if (webapp && config)
+
+    if (config && !g_path_is_absolute (config))
+    {
+        g_critical (_("The specified configuration folder is invalid."));
+        return 1;
+    }
+
+    /* Private browsing, window title, default config folder */
+    if (private)
+    {
         g_set_application_name (_("Midori (Private Browsing)"));
+        if (!config && !webapp)
+            config = g_build_filename (g_get_user_config_dir (), PACKAGE_NAME, NULL);
+        /* Mask the timezone, which can be read by Javascript */
+        g_setenv ("TZ", "UTC", TRUE);
+    }
     else
         g_set_application_name (_("Midori"));
 
@@ -1988,15 +2190,22 @@ main (int    argc,
     sokoke_register_privacy_item ("html5-databases", _("HTML5 _Databases"),
         G_CALLBACK (midori_clear_html5_databases_cb));
     #endif
+    #if WEBKIT_CHECK_VERSION (1, 3, 11)
+    sokoke_register_privacy_item ("web-cache", _("Web Cache"),
+        G_CALLBACK (midori_clear_web_cache_cb));
+    #endif
+    #if WEBKIT_CHECK_VERSION (1, 3, 13)
+    sokoke_register_privacy_item ("offline-appcache", _("Offline Application Cache"),
+        G_CALLBACK (midori_clear_offline_appcache_cb));
+    #endif
 
-    /* Web Application support */
-    if (webapp)
+    /* Web Application or Private Browsing support */
+    if (webapp || private)
     {
         SoupSession* session = webkit_get_default_session ();
         MidoriBrowser* browser = midori_browser_new ();
-        gchar* tmp_uri = midori_prepare_uri (webapp);
-        katze_assign (webapp, tmp_uri);
         midori_startup_timer ("Browser: \t%f");
+
         if (config)
         {
             settings = settings_and_accels_new (config, &extensions);
@@ -2004,35 +2213,64 @@ main (int    argc,
             search_engines = search_engines_new_from_folder (config, NULL);
             g_object_set (browser, "search-engines", search_engines, NULL);
             g_object_unref (search_engines);
+            speeddial = speeddial_new_from_file (config, &error);
+            g_object_set (browser, "speed-dial", speeddial, NULL);
         }
         else
-        {
             settings = g_object_ref (midori_browser_get_settings (browser));
+
+        if (webapp)
+        {
+            gchar* tmp_uri = midori_prepare_uri (webapp);
             g_object_set (settings,
                           "show-menubar", FALSE,
                           "show-navigationbar", FALSE,
                           "toolbar-items", "Back,Forward,ReloadStop,Location,Homepage",
-                          "homepage", webapp,
+                          "homepage", tmp_uri,
                           "show-statusbar", FALSE,
                           "enable-developer-extras", FALSE,
                           NULL);
             midori_browser_set_action_visible (browser, "Menubar", FALSE);
+            midori_browser_add_uri (browser, tmp_uri);
+            g_free (tmp_uri);
+            /* Update window icon according to page */
+            g_signal_connect (browser, "notify::load-status",
+                G_CALLBACK (midori_web_app_browser_notify_load_status_cb), NULL);
         }
+
+        if (private)
+        {
+            g_object_set (settings,
+                          "preferred-languages", "en",
+            #if WEBKIT_CHECK_VERSION (1, 1, 2)
+                          "enable-private-browsing", TRUE,
+            #endif
+            #if WEBKIT_CHECK_VERSION (1, 1, 8)
+                          "enable-html5-database", FALSE,
+                          "enable-html5-local-storage", FALSE,
+                          "enable-offline-web-application-cache", FALSE,
+            #endif
+            /* Arguably DNS prefetching is or isn't a privacy concern. For the
+             * lack of more fine-grained control we'll go the safe route. */
+                          "enable-dns-prefetching", FALSE,
+                          "strip-referer", TRUE, NULL);
+            midori_browser_set_action_visible (browser, "Tools", FALSE);
+            midori_browser_set_action_visible (browser, "ClearPrivateData", FALSE);
+        }
+
+        if (private || !config)
+        {
+            /* Disable saving by setting an unwritable folder */
+            sokoke_set_config_dir ("/");
+        }
+
         g_object_set (settings, "show-panel", FALSE,
                       "last-window-state", MIDORI_WINDOW_NORMAL,
-                      #if WEBKIT_CHECK_VERSION (1, 1, 2)
-                      "enable-private-browsing", TRUE,
-                      #endif
                       NULL);
-        midori_browser_set_action_visible (browser, "Tools", FALSE);
         midori_browser_set_action_visible (browser, "Panel", FALSE);
         g_object_set (browser, "settings", settings, NULL);
         midori_startup_timer ("Setup config: \t%f");
         g_object_unref (settings);
-        sokoke_set_config_dir ("/");
-        g_signal_connect (browser, "notify::load-status",
-            G_CALLBACK (midori_web_app_browser_notify_load_status_cb), NULL);
-        midori_browser_add_uri (browser, webapp);
         g_signal_connect (browser, "quit",
             G_CALLBACK (gtk_main_quit), NULL);
         g_signal_connect (browser, "destroy",
@@ -2044,11 +2282,25 @@ main (int    argc,
             for (i = 0; uris[i] != NULL; i++)
                 midori_browser_activate_action (browser, uris[i]);
         }
+        else if (uris != NULL)
+        {
+            for (i = 0; uris[i] != NULL; i++)
+            {
+                gchar* new_uri = midori_prepare_uri (uris[i]);
+                midori_browser_add_uri (browser, new_uri);
+                g_free (new_uri);
+            }
+        }
+
+        if (midori_browser_get_current_uri (browser) == NULL)
+            midori_browser_add_uri (browser, "about:blank");
+
         if (block_uris)
             g_signal_connect (session, "request-queued",
                 G_CALLBACK (midori_soup_session_block_uris_cb),
                 g_strdup (block_uris));
         midori_setup_inactivity_reset (browser, inactivity_reset, webapp);
+        midori_load_soup_session (settings);
         midori_startup_timer ("App created: \t%f");
         gtk_main ();
         return 0;
@@ -2062,11 +2314,6 @@ main (int    argc,
     if (run)
         return midori_run_script (uris ? *uris : NULL);
 
-    if (config && !g_path_is_absolute (config))
-    {
-        g_critical (_("The specified configuration folder is invalid."));
-        return 1;
-    }
     sokoke_set_config_dir (config);
     if (config)
     {
@@ -2093,7 +2340,6 @@ main (int    argc,
             result = midori_app_send_command (app, uris);
         else if (uris)
         {
-            /* TODO: Open a tab per URI, seperated by pipes */
             /* Encode any IDN addresses because libUnique doesn't like them */
             i = 0;
             while (uris[i] != NULL)
@@ -2217,16 +2463,7 @@ main (int    argc,
     g_free (bookmarks_file);
     midori_startup_timer ("History read: \t%f");
 
-    #if 0
-    speeddial_file = g_build_filename (config, "speeddial", NULL);
-    if (g_access (speeddial_file, F_OK) != 0)
-    {
-        gchar* json_file = g_build_filename (config, "speeddial.json", NULL);
-        midori_speeddial_import_from_json (json_file, speeddial_file);
-        g_free (json_file);
-    }
-    g_free (speeddial_file);
-    #endif
+    speeddial = speeddial_new_from_file (config, &error);
 
     /* In case of errors */
     if (error_messages->len)
@@ -2335,8 +2572,10 @@ main (int    argc,
     if (diagnostic_dialog)
     {
         GtkWidget* dialog = midori_create_diagnostic_dialog (settings, _session);
-        gtk_dialog_run (GTK_DIALOG (dialog));
+        gint response = gtk_dialog_run (GTK_DIALOG (dialog));
         gtk_widget_destroy (dialog);
+        if (response == GTK_RESPONSE_DELETE_EVENT)
+            return 0;
     }
     midori_startup_timer ("Signal setup: \t%f");
 
@@ -2345,6 +2584,7 @@ main (int    argc,
                        "trash", trash,
                        "search-engines", search_engines,
                        "history", history,
+                       "speed-dial", speeddial,
                        NULL);
     g_object_unref (history);
     g_object_unref (search_engines);
@@ -2355,7 +2595,7 @@ main (int    argc,
         G_CALLBACK (midori_app_add_browser_cb), NULL);
     midori_startup_timer ("App prepared: \t%f");
 
-    g_idle_add (midori_load_cookie_jar, settings);
+    g_idle_add (midori_load_soup_session_full, settings);
     g_idle_add (midori_load_extensions, app);
     g_idle_add (midori_load_session, _session);
 
@@ -2405,6 +2645,7 @@ main (int    argc,
     }
 
     g_object_unref (settings);
+    g_key_file_free (speeddial);
     g_object_unref (app);
     g_free (config_file);
     return 0;

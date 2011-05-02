@@ -337,10 +337,8 @@ midori_bookmarks_row_changed_cb (GtkTreeModel*    model,
 {
     KatzeItem* item;
     GtkTreeIter parent;
-    sqlite3* db;
     gchar* parent_name;
 
-    db = g_object_get_data (G_OBJECT (bookmarks->array), "db");
     gtk_tree_model_get (model, iter, 0, &item, -1);
 
     if (gtk_tree_model_iter_parent (model, &parent, iter))
@@ -398,6 +396,17 @@ midori_bookmarks_edit_clicked_cb (GtkWidget*       toolitem,
             browser, item, FALSE, KATZE_ITEM_IS_FOLDER (item));
         g_object_unref (item);
     }
+}
+
+static void
+midori_bookmarks_toolbar_update (MidoriBookmarks *bookmarks)
+{
+    gboolean selected;
+
+    selected = katze_tree_view_get_selected_iter (
+        GTK_TREE_VIEW (bookmarks->treeview), NULL, NULL);
+    gtk_widget_set_sensitive (GTK_WIDGET (bookmarks->delete), selected);
+    gtk_widget_set_sensitive (GTK_WIDGET (bookmarks->edit), selected);
 }
 
 static void
@@ -464,6 +473,7 @@ midori_bookmarks_get_toolbar (MidoriViewable* viewable)
         gtk_toolbar_insert (GTK_TOOLBAR (toolbar), toolitem, -1);
         gtk_widget_show (GTK_WIDGET (toolitem));
         bookmarks->delete = GTK_WIDGET (toolitem);
+        midori_bookmarks_toolbar_update (bookmarks);
         toolitem = gtk_separator_tool_item_new ();
         gtk_separator_tool_item_set_draw (GTK_SEPARATOR_TOOL_ITEM (toolitem), FALSE);
         gtk_tool_item_set_expand (toolitem, TRUE);
@@ -881,6 +891,13 @@ midori_bookmarks_row_collapsed_cb (GtkTreeView *treeview,
         0, 0, NULL, -1);
 }
 
+static void
+midori_bookmarks_selection_changed_cb (GtkTreeSelection *treeview,
+                                       MidoriBookmarks  *bookmarks)
+{
+    midori_bookmarks_toolbar_update (bookmarks);
+}
+
 static gboolean
 midori_bookmarks_filter_timeout_cb (gpointer data)
 {
@@ -929,6 +946,7 @@ midori_bookmarks_init (MidoriBookmarks* bookmarks)
     GtkTreeViewColumn* column;
     GtkCellRenderer* renderer_pixbuf;
     GtkCellRenderer* renderer_text;
+    GtkTreeSelection* selection;
 
     /* Create the filter entry */
     entry = gtk_icon_entry_new ();
@@ -983,6 +1001,10 @@ midori_bookmarks_init (MidoriBookmarks* bookmarks)
                       "signal::row-collapsed",
                       midori_bookmarks_row_collapsed_cb, bookmarks,
                       NULL);
+    selection = gtk_tree_view_get_selection (GTK_TREE_VIEW (treeview));
+    g_signal_connect_after (selection, "changed",
+                            G_CALLBACK (midori_bookmarks_selection_changed_cb),
+                            bookmarks);
     gtk_widget_show (treeview);
     gtk_box_pack_start (GTK_BOX (bookmarks), treeview, TRUE, TRUE, 0);
     bookmarks->treeview = treeview;

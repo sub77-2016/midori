@@ -399,8 +399,7 @@ midori_search_action_manage_activate_cb (GtkWidget*          menuitem,
         gtk_widget_show (dialog);
 }
 
-/* Private function, used by MidoriView */
-/* static */ GdkPixbuf*
+GdkPixbuf*
 midori_search_action_get_icon (KatzeItem*    item,
                                GtkWidget*    widget,
                                const gchar** icon_name,
@@ -674,8 +673,6 @@ midori_search_action_set_search_engines (MidoriSearchAction* search_action,
                                          KatzeArray*         search_engines)
 {
     GSList* proxies;
-    GtkWidget* alignment;
-    GtkWidget* entry;
 
     g_return_if_fail (MIDORI_IS_SEARCH_ACTION (search_action));
     g_return_if_fail (!search_engines ||
@@ -702,16 +699,6 @@ midori_search_action_set_search_engines (MidoriSearchAction* search_action,
     proxies = gtk_action_get_proxies (GTK_ACTION (search_action));
     if (!proxies)
         return;
-
-    do
-    if (GTK_IS_TOOL_ITEM (proxies->data))
-    {
-        alignment = gtk_bin_get_child (GTK_BIN (proxies->data));
-        entry = gtk_bin_get_child (GTK_BIN (alignment));
-
-        /* FIXME: Unset the current item if it isn't in the list */
-    }
-    while ((proxies = g_slist_next (proxies)));
 }
 
 KatzeItem*
@@ -824,13 +811,11 @@ midori_search_action_dialog_render_icon_cb (GtkTreeViewColumn* column,
                                             GtkWidget*         treeview)
 {
     KatzeItem* item;
-    MidoriSearchAction* search_action;
     GdkPixbuf* icon;
     const gchar* icon_name;
 
     gtk_tree_model_get (model, iter, 0, &item, -1);
 
-    search_action = g_object_get_data (G_OBJECT (treeview), "search-action");
     if ((icon = midori_search_action_get_icon (item, treeview, &icon_name, FALSE)))
     {
         g_object_set (renderer, "pixbuf", icon, "yalign", 0.25, NULL);
@@ -1034,6 +1019,7 @@ midori_search_action_get_editor (MidoriSearchAction* search_action,
            we need to update the default search engine after editing it. */
         else if (item == midori_search_action_get_default_item (search_action))
             midori_search_action_set_default_item (search_action, item);
+        g_object_unref (item);
     }
     gtk_widget_destroy (dialog);
 }
@@ -1123,6 +1109,7 @@ midori_search_action_dialog_move_up_cb (GtkWidget*          widget,
 
             i = katze_array_get_item_index (search_engines, item);
             katze_array_move_item (search_engines, item, i - 1);
+            g_object_unref (item);
             /* If the index of the current item has changed it needs to be reset */
             g_object_notify (G_OBJECT (search_action), "current-item");
         }
@@ -1155,6 +1142,7 @@ midori_search_action_dialog_move_down_cb (GtkWidget*          widget,
 
             i = katze_array_get_item_index (search_engines, item);
             katze_array_move_item (search_engines, item, i + 1);
+            g_object_unref (item);
             /* If the index of the current item has changed it needs to be reset */
             g_object_notify (G_OBJECT (search_action), "current-item");
         }
@@ -1165,14 +1153,12 @@ static void
 midori_search_action_dialog_default_cb (GtkWidget*          widget,
                                         MidoriSearchAction* search_action)
 {
-    KatzeArray* search_engines;
     GtkWidget* treeview;
     GtkTreeSelection* selection;
     GtkTreeModel* liststore;
     GtkTreeIter iter;
     KatzeItem* item;
 
-    search_engines = search_action->search_engines;
     treeview = search_action->treeview;
     selection = gtk_tree_view_get_selection (GTK_TREE_VIEW (treeview));
     if (gtk_tree_selection_get_selected (selection, &liststore, &iter))
@@ -1236,6 +1222,7 @@ midori_search_action_dialog_engines_remove_item_cb (KatzeArray* list,
         }
         else
             valid = gtk_tree_model_iter_next (liststore, &iter);
+        g_object_unref (found_item);
     }
 }
 

@@ -592,7 +592,7 @@ sokoke_spawn_program (const gchar* command,
 
 void
 sokoke_spawn_app (const gchar* uri,
-                  gboolean     inherit_config)
+                  gboolean     private)
 {
     const gchar* executable = sokoke_get_argv (NULL)[0];
     /* "midori"
@@ -600,9 +600,9 @@ sokoke_spawn_app (const gchar* uri,
        "c:/Program Files/Midori/bin/midori.exe" */
     gchar* quoted = g_shell_quote (executable);
     gchar* command;
-    if (inherit_config)
+    if (private)
         command = g_strconcat (quoted, " -c ", sokoke_set_config_dir (NULL),
-                                       " -a", NULL);
+                                       " -p", NULL);
     else
         command = g_strconcat (quoted, " -a", NULL);
     g_free (quoted);
@@ -793,7 +793,7 @@ sokoke_resolve_hostname (const gchar* hostname)
     gint host_resolved = 0;
 
     uri = g_strconcat ("http://", hostname, NULL);
-    if (sokoke_prefetch_uri (uri, sokoke_resolve_hostname_cb,
+    if (sokoke_prefetch_uri (NULL, uri, sokoke_resolve_hostname_cb,
                              &host_resolved))
     {
         GTimer* timer = g_timer_new ();
@@ -1957,6 +1957,7 @@ sokoke_file_chooser_dialog_new (const gchar*         title,
 
 /**
  * sokoke_prefetch_uri:
+ * @settings: a #MidoriWebSettings instance, or %NULL
  * @uri: an URI string
  *
  * Attempts to prefetch the specified URI, that is
@@ -1965,7 +1966,8 @@ sokoke_file_chooser_dialog_new (const gchar*         title,
  * Return value: %TRUE on success
  **/
 gboolean
-sokoke_prefetch_uri (const char*         uri,
+sokoke_prefetch_uri (MidoriWebSettings*  settings,
+                     const char*         uri,
                      SoupAddressCallback callback,
                      gpointer            user_data)
 {
@@ -1977,6 +1979,10 @@ sokoke_prefetch_uri (const char*         uri,
 
     if (!uri)
         return FALSE;
+
+    if (settings && !katze_object_get_boolean (settings, "enable-dns-prefetching"))
+        return FALSE;
+
     s_uri = soup_uri_new (uri);
     if (!s_uri || !s_uri->host)
         return FALSE;
@@ -2184,3 +2190,100 @@ sokoke_widget_copy_clipboard (GtkWidget*   widget,
     clipboard = gtk_clipboard_get_for_display (display, GDK_SELECTION_PRIMARY);
     gtk_clipboard_set_text (clipboard, text, -1);
 }
+
+gchar*
+sokoke_build_thumbnail_path (const gchar* name)
+{
+    gchar* path = NULL;
+    if (name != NULL)
+    {
+        gchar* checksum = g_compute_checksum_for_string (G_CHECKSUM_MD5, name, -1);
+        gchar* filename = g_strdup_printf ("%s.png", checksum);
+
+        path = g_build_filename (g_get_user_cache_dir (), "midori", "thumbnails",
+                                 filename, NULL);
+
+        g_free (filename);
+        g_free (checksum);
+    }
+    return path;
+}
+
+gchar*
+midori_download_prepare_tooltip_text (WebKitDownload* download)
+{
+    gdouble* last_time;
+    guint64* last_size;
+    gint hour = 3600, min = 60;
+    gint hours_left, minutes_left, seconds_left;
+    guint64 total_size = webkit_download_get_total_size (download);
+    guint64 current_size  = webkit_download_get_current_size (download);
+    gdouble time_elapsed = webkit_download_get_elapsed_time (download);
+    gdouble time_estimated, time_diff;
+    gchar* current, *total, *download_speed;
+    gchar* hours_str, *minutes_str, *seconds_str;
+    GString* tooltip = g_string_new (NULL);
+
+    time_diff = time_elapsed / current_size;
+    time_estimated = (total_size - current_size) * time_diff;
+
+    hours_left = time_estimated / hour;
+    minutes_left = (time_estimated - (hours_left * hour)) / min;
+    seconds_left = (time_estimated - (hours_left * hour) - (minutes_left * min));
+
+    hours_str = g_strdup_printf (ngettext ("%d hour", "%d hours", hours_left), hours_left);
+    minutes_str = g_strdup_printf (ngettext ("%d minute", "%d minutes", minutes_left), minutes_left);
+    seconds_str = g_strdup_printf (ngettext ("%d second", "%d seconds", seconds_left), seconds_left);
+
+    current = g_format_size_for_display (current_size);
+    total = g_format_size_for_display (total_size);
+    last_time = g_object_get_data (G_OBJECT (download), "last-time");
+    last_size = g_object_get_data (G_OBJECT (download), "last-size");
+
+    /* i18n: Download tooltip (size): 4KB of 43MB */
+    g_string_append_printf (tooltip, _("%s of %s"), current, total);
+    g_free (current);
+    g_free (total);
+
+    if (time_elapsed != *last_time)
+        download_speed = g_format_size_for_display (
+                (current_size - *last_size) / (time_elapsed - *last_time));
+    else
+        /* i18n: Unknown number of bytes, used for transfer rate like ?B/s */
+        download_speed = g_strdup (_("?B"));
+
+    /* i18n: Download tooltip (transfer rate): (130KB/s) */
+    g_string_append_printf (tooltip, _(" (%s/s)"), download_speed);
+    g_free (download_speed);
+
+    if (time_estimated > 0)
+    {
+        gchar* eta;
+        if (hours_left > 0)
+            eta = g_strdup_printf ("%s, %s", hours_str, minutes_str);
+        else if (minutes_left >= 10)
+            eta = g_strdup_printf ("%s", minutes_str);
+        else if (minutes_left < 10 && minutes_left > 0)
+            eta = g_strdup_printf ("%s, %s", minutes_str, seconds_str);
+        else if (seconds_left > 0)
+            eta = g_strdup_printf ("%s", seconds_str);
+        else
+            eta = g_strdup ("");
+        /* i18n: Download tooltip (estimated time) : - 1 hour, 5 minutes remaning */
+        g_string_append_printf (tooltip, _(" - %s remaining"), eta);
+        g_free (eta);
+    }
+
+    g_free (hours_str);
+    g_free (seconds_str);
+    g_free (minutes_str);
+
+    if (time_elapsed - *last_time > 5.0)
+    {
+        *last_time = time_elapsed;
+        *last_size = current_size;
+    }
+
+    return g_string_free (tooltip, FALSE);
+}
+

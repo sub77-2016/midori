@@ -29,7 +29,7 @@ from Configure import find_program_impl
 
 major = 0
 minor = 3
-micro = 3
+micro = 5
 
 APPNAME = 'midori'
 VERSION = str (major) + '.' + str (minor) + '.' + str (micro)
@@ -209,6 +209,7 @@ def configure (conf):
     check_pkg ('libsoup-2.4', '2.27.90', False, var='LIBSOUP_2_27_90')
     check_pkg ('libsoup-2.4', '2.29.3', False, var='LIBSOUP_2_29_3')
     check_pkg ('libsoup-2.4', '2.29.91', False, var='LIBSOUP_2_29_91')
+    conf.define ('LIBSOUP_VERSION', conf.check_cfg (modversion='libsoup-2.4'))
     check_pkg ('libxml-2.0', '2.6')
     check_pkg ('sqlite3', '3.0', True, var='SQLITE')
 
@@ -465,7 +466,6 @@ def build (bld):
 
     bld.install_files ('${MDATADIR}/' + APPNAME + '/res', 'data/error.html')
     bld.install_files ('${MDATADIR}/' + APPNAME + '/res', 'data/speeddial-head.html')
-    bld.install_files ('${MDATADIR}/' + APPNAME + '/res', 'data/speeddial.json')
     bld.install_files ('${MDATADIR}/' + APPNAME + '/res', 'data/mootools.js')
 
     if bld.env['addons']:
