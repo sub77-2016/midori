@@ -3,8 +3,9 @@ midori (0.3.5-1) UNRELEASED; urgency=low
   * New upstream release.
   * debian/control:
     - add myself to uploaders...
+    - update standards version to 3.9.2.
 
- -- Yves-Alexis Perez <corsac@debian.org>  Mon, 02 May 2011 07:58:46 +0200
+ -- Yves-Alexis Perez <corsac@debian.org>  Mon, 02 May 2011 08:00:06 +0200
 
 midori (0.3.3-0.1) unstable; urgency=low
 
