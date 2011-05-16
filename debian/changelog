@@ -2,8 +2,10 @@ midori (0.3.6-2) UNRELEASED; urgency=low
 
   * debian/rules:
     - don't install upstream changelog twice.                   closes: #614692
+  * debian/Debian-config:
+    - update homepage to point to faq.html.
 
- -- Yves-Alexis Perez <corsac@debian.org>  Mon, 16 May 2011 16:52:09 +0200
+ -- Yves-Alexis Perez <corsac@debian.org>  Mon, 16 May 2011 18:46:49 +0200
 
 midori (0.3.6-1) unstable; urgency=low
 
