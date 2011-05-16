@@ -29,9 +29,9 @@
     (__filter && (g_str_has_prefix (__filter, "http") \
                || g_str_has_prefix (__filter, "file")))
 #define ADBLOCK_FILTER_SET(__filter,__active) \
-    filter[4] = __active ? (__filter[5] == ':' ? 's' : ':') : '-'
+    __filter[4] = __active ? (__filter[5] == ':' ? 's' : ':') : '-'
 #define ADBLOCK_FILTER_IS_SET(__filter) \
-    filter[4] != '-'
+    (__filter[4] != '-' && __filter[5] != '-')
 #ifdef G_ENABLE_DEBUG
     #define adblock_debug(dmsg, darg1, darg2) \
         do { if (debug == 1) g_debug (dmsg, darg1, darg2); } while (0)
@@ -119,7 +119,7 @@ adblock_get_filename_for_uri (const gchar* uri)
     gchar* folder;
     gchar* path;
 
-    if (strchr (uri + 4,'-'))
+    if (!ADBLOCK_FILTER_IS_SET (uri))
         return NULL;
 
     if (!strncmp (uri, "file", 4))
@@ -460,7 +460,7 @@ adblock_get_preferences_dialog (MidoriExtension* extension)
     g_free (description);
     gtk_label_set_line_wrap (GTK_LABEL (button), TRUE);
     gtk_box_pack_start (GTK_BOX (vbox), button, FALSE, FALSE, 4);
-    entry = gtk_entry_new ();
+    entry = katze_uri_entry_new (NULL);
     gtk_box_pack_start (GTK_BOX (vbox), entry, FALSE, FALSE, 4);
     liststore = gtk_list_store_new (1, G_TYPE_STRING);
     treeview = gtk_tree_view_new_with_model (GTK_TREE_MODEL (liststore));

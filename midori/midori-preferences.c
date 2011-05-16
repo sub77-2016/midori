@@ -159,17 +159,9 @@ midori_preferences_new (GtkWindow*         parent,
     return GTK_WIDGET (preferences);
 }
 
-#if GTK_CHECK_VERSION (2, 16, 0)
-static void
-midori_preferences_homepage_icon_press_cb (GtkWidget*           button,
-                                           GtkEntryIconPosition position,
-                                           GdkEvent*            event,
-                                           MidoriWebSettings*   settings)
-#else
 static void
 midori_preferences_homepage_current_clicked_cb (GtkWidget*         button,
                                                 MidoriWebSettings* settings)
-#endif
 {
     GtkWidget* preferences = gtk_widget_get_toplevel (button);
     GtkWidget* browser = katze_object_get_object (preferences, "transient-for");
@@ -307,26 +299,20 @@ midori_preferences_set_settings (MidoriPreferences* preferences,
     SPANNED_ADD (button);
     label = katze_property_label (settings, "homepage");
     INDENTED_ADD (label);
-    entry = katze_property_proxy (settings, "homepage", NULL);
+    entry = katze_property_proxy (settings, "homepage", "address");
     SPANNED_ADD (entry);
     if (parent && katze_object_has_property (parent, "uri"))
     {
-        #if GTK_CHECK_VERSION (2, 16, 0)
-        gtk_entry_set_icon_from_stock (GTK_ENTRY (entry),
-            GTK_ENTRY_ICON_SECONDARY, GTK_STOCK_JUMP_TO);
-        gtk_entry_set_icon_tooltip_text (GTK_ENTRY (entry),
-            GTK_ENTRY_ICON_SECONDARY, _("Use current page as homepage"));
-        g_signal_connect (entry, "icon-press",
-            G_CALLBACK (midori_preferences_homepage_icon_press_cb), settings);
+        #if 0
+        button = gtk_button_new_with_mnemonic (_("Use _current page"));
         #else
-        button = gtk_button_new ();
-        label = gtk_image_new_from_stock (GTK_STOCK_JUMP_TO, GTK_ICON_SIZE_BUTTON);
-        gtk_button_set_image (GTK_BUTTON (button), label);
-        gtk_widget_set_tooltip_text (button, _("Use current page as homepage"));
+        label = gtk_label_new (NULL);
+        INDENTED_ADD (label);
+        button = gtk_button_new_with_label (_("Use current page as homepage"));
+        #endif
         g_signal_connect (button, "clicked",
             G_CALLBACK (midori_preferences_homepage_current_clicked_cb), settings);
         SPANNED_ADD (button);
-        #endif
     }
 
     /* Page "Appearance" */
@@ -334,6 +320,7 @@ midori_preferences_set_settings (MidoriPreferences* preferences,
     FRAME_NEW (NULL);
     #if !HAVE_HILDON
     label = gtk_label_new (_("Default Font Family"));
+    gtk_misc_set_alignment (GTK_MISC (label), 0.0, 0.5);
     INDENTED_ADD (label);
     button = katze_property_proxy (settings, "default-font-family", "font");
     gtk_widget_set_tooltip_text (button, _("The default font family used to display text"));
@@ -342,6 +329,7 @@ midori_preferences_set_settings (MidoriPreferences* preferences,
     gtk_widget_set_tooltip_text (entry, _("The default font size used to display text"));
     SPANNED_ADD (entry);
     label = gtk_label_new (_("Fixed-width Font Family"));
+    gtk_misc_set_alignment (GTK_MISC (label), 0.0, 0.5);
     INDENTED_ADD (label);
     button = katze_property_proxy (settings, "monospace-font-family", "font-monospace");
     gtk_widget_set_tooltip_text (button, _("The font family used to display fixed-width text"));
@@ -350,6 +338,7 @@ midori_preferences_set_settings (MidoriPreferences* preferences,
     gtk_widget_set_tooltip_text (entry, _("The font size used to display fixed-width text"));
     SPANNED_ADD (entry);
     label = gtk_label_new (_("Minimum Font Size"));
+    gtk_misc_set_alignment (GTK_MISC (label), 0.0, 0.5);
     INDENTED_ADD (label);
     entry = katze_property_proxy (settings, "minimum-font-size", NULL);
     gtk_widget_set_tooltip_text (entry, _("The minimum font size used to display text"));
@@ -397,6 +386,7 @@ midori_preferences_set_settings (MidoriPreferences* preferences,
     #endif
     if (button != NULL)
         INDENTED_ADD (button);
+    FRAME_NEW (NULL);
     button = katze_property_label (settings, "preferred-languages");
     INDENTED_ADD (button);
     entry = katze_property_proxy (settings, "preferred-languages", "languages");
@@ -434,10 +424,7 @@ midori_preferences_set_settings (MidoriPreferences* preferences,
     INDENTED_ADD (button);
     button = katze_property_proxy (settings, "open-tabs-in-the-background", NULL);
     SPANNED_ADD (button);
-
-    /* Page "Applications" */
     #if !HAVE_HILDON
-    PAGE_NEW (GTK_STOCK_CONVERT, _("Applications"));
     FRAME_NEW (NULL);
     label = katze_property_label (settings, "text-editor");
     INDENTED_ADD (label);
@@ -458,6 +445,7 @@ midori_preferences_set_settings (MidoriPreferences* preferences,
     button = katze_property_proxy (settings, "proxy-type", NULL);
     SPANNED_ADD (button);
     label = gtk_label_new (_("Hostname"));
+    gtk_misc_set_alignment (GTK_MISC (label), 0.0, 0.5);
     INDENTED_ADD (label);
     entry = katze_property_proxy (settings, "http-proxy", NULL);
     SPANNED_ADD (entry);
@@ -471,6 +459,7 @@ midori_preferences_set_settings (MidoriPreferences* preferences,
     button = katze_property_proxy (settings, "maximum-cache-size", NULL);
     SPANNED_ADD (button);
     label = gtk_label_new (_("MB"));
+    gtk_misc_set_alignment (GTK_MISC (label), 0.0, 0.5);
     SPANNED_ADD (label);
     #endif
     label = katze_property_label (settings, "identify-as");

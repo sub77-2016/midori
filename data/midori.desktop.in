@@ -5,10 +5,17 @@ _Name=Midori
 _GenericName=Web Browser
 _Comment=Lightweight web browser
 Categories=GTK;Network;WebBrowser;
-MimeType=text/html;application/xhtml+xml;x-scheme-handler/http;x-scheme-handler/https;
+MimeType=text/html;application/xhtml+xml;x-scheme-handler/http;x-scheme-handler/https;x-scheme-handler/geo;
 Exec=midori %u
 Icon=midori
 Terminal=false
 StartupNotify=true
 X-Osso-Type=application/x-executable
 X-Osso-Service=midori
+X-Ayatana-Desktop-Shortcuts=Private
+
+[Private Shortcut Group]
+Name=P_rivate Browsing
+Exec=midori --private
+TargetEnvironment=Unity
+

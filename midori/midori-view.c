@@ -983,7 +983,14 @@ midori_view_web_view_navigation_decision_cb (WebKitWebView*             web_view
     JSContextRef js_context;
     gchar* result;
     const gchar* uri = webkit_network_request_get_uri (request);
-    if (g_str_has_prefix (uri, "mailto:") || sokoke_external_uri (uri))
+    if (g_str_has_prefix (uri, "geo:"))
+    {
+        gchar* new_uri = sokoke_magic_uri (uri);
+        midori_view_set_uri (view, new_uri);
+        g_free (new_uri);
+        return TRUE;
+    }
+    else if (g_str_has_prefix (uri, "mailto:") || sokoke_external_uri (uri))
     {
         if (sokoke_show_uri (gtk_widget_get_screen (GTK_WIDGET (web_view)),
                              uri, GDK_CURRENT_TIME, NULL))
@@ -1172,7 +1179,7 @@ midori_view_web_view_resource_request_cb (WebKitWebView*         web_view,
         }
 
         /* If available, load SVG icon as SVG markup */
-        icon_size = gtk_icon_size_lookup_for_settings (
+        gtk_icon_size_lookup_for_settings (
             gtk_widget_get_settings (GTK_WIDGET (view)),
                 icon_size, &real_icon_size, &real_icon_size);
         icon_info = gtk_icon_theme_lookup_icon (icon_theme, icon_name,
@@ -1506,6 +1513,9 @@ webkit_web_view_load_error_cb (WebKitWebView*  web_view,
     {
     case WEBKIT_PLUGIN_ERROR_WILL_HANDLE_LOAD:
         /* A plugin will take over. That's expected, it's not fatal. */
+        return FALSE;
+    case WEBKIT_NETWORK_ERROR_CANCELLED:
+        /* Mostly initiated by JS redirects. */
         return FALSE;
     }
 
@@ -3953,27 +3963,52 @@ prepare_speed_dial_html (MidoriView* view)
     g_free (thumb_size_type);
 
     g_string_append_printf (markup,
-            "<script>var columns = %d; var rows = %d;"
-            "setThumbSize(%d);</script>\n",
-            cols, rows, thumb_size);
+        "<script>var columns = %d; var rows = %d;"
+        "setThumbSize(%d);</script>\n",
+        cols, rows, thumb_size);
+
+    g_string_append_printf (markup,
+        "<style type=\"text/css\">"
+        "#content div.shortcut { width: %dpx; height: %dpx; }\n"
+        "#content div.shortcut a { width: %dpx; height: %dpx; }\n"
+        "#content div.shortcut .cross { margin-left: %dpx; }\n"
+        "#content div.shortcut h1 { font-size: %dpx; height: %dpx; }\n"
+        "#wrap { width: %dpx; }\n"
+        "#content h4 span:before { visibility: %s; }\n</style>",
+        thumb_size + 40, (int)((thumb_size / 1.5) + 43),
+        thumb_size, (int)(thumb_size / 1.5),
+        thumb_size + 20,
+        (int)((thumb_size / 4) + 10), (int)((thumb_size / 4) - 10),
+        cols * (thumb_size + 60),
+        thumb_size < 160 ? "hidden" : "visible");
+
+    if (!katze_object_get_boolean (view->settings, "enable-scripts"))
+    {
+        g_string_append (markup,
+            "<style type=\"text/css\">"
+            "#content h4 span:before { visibility: hidden; }\n"
+            "div.config { visibility: hidden; }\n"
+            ".cross { visibility:hidden; }\n"
+            ".activated p { background-image: none; }</style>");
+    }
 
     while (slot <= rows * cols)
     {
-        gchar* position;
         gchar* dial_entry = g_strdup_printf ("Dial %d", slot);
+        gchar* uri = g_key_file_get_string (key_file, dial_entry, "uri", NULL);
+        const gchar* position;
         if (slot < cols)
-            position = g_strdup (" top");
+            position = " top";
         else if (slot == cols)
-            position = g_strdup (" top right");
+            position = " top right";
         else if (slot > cols && slot % cols == 0)
-            position = g_strdup (" right");
+            position = " right";
         else
-            position = g_strdup ("");
+            position = "";
 
-        if (g_key_file_has_group (key_file, dial_entry))
+        if (uri && *uri && *uri != '#')
         {
             gchar* slot_id = g_strdup_printf ("s%d", slot);
-            gchar* uri = g_key_file_get_string (key_file, dial_entry, "uri", NULL);
             gchar* title = g_key_file_get_string (key_file, dial_entry, "title", NULL);
             gchar* thumb_file = sokoke_build_thumbnail_path (uri);
             gchar* encoded;
@@ -4002,7 +4037,6 @@ prepare_speed_dial_html (MidoriView* view)
                     "‪%s</p></div>\n",
                     position, slot, slot, uri, encoded, slot, title);
 
-            g_free (uri);
             g_free (title);
             g_free (encoded);
         }
@@ -4018,8 +4052,8 @@ prepare_speed_dial_html (MidoriView* view)
         }
 
         slot++;
-        g_free (position);
         g_free (dial_entry);
+        g_free (uri);
     }
     g_string_append_printf (markup,
             "</div>\n</div>\n</body>\n</html>\n");

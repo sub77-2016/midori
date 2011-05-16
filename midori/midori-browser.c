@@ -101,6 +101,7 @@ struct _MidoriBrowser
     gboolean show_statusbar;
     guint maximum_history_age;
     gchar* location_entry_search;
+    guint last_web_search;
     gchar* news_aggregator;
 };
 
@@ -671,19 +672,6 @@ midori_view_notify_statusbar_text_cb (GtkWidget*     view,
 }
 
 static void
-midori_browser_edit_bookmark_uri_changed_cb (GtkEntry*      entry,
-                                             GtkDialog*     dialog)
-{
-    const gchar* uri = gtk_entry_get_text (entry);
-    gtk_dialog_set_response_sensitive (dialog, GTK_RESPONSE_ACCEPT,
-        uri && (g_str_has_prefix (uri, "http://")
-        || g_str_has_prefix (uri, "https://")
-        || g_str_has_prefix (uri, "file://")
-        || g_str_has_prefix (uri, "data:")
-        || g_str_has_prefix (uri, "javascript:")));
-}
-
-static void
 midori_browser_edit_bookmark_title_changed_cb (GtkEntry*      entry,
                                                GtkDialog*     dialog)
 {
@@ -803,7 +791,12 @@ midori_browser_edit_bookmark_dialog_new (MidoriBrowser* browser,
         label = gtk_label_new_with_mnemonic (_("_Address:"));
         gtk_size_group_add_widget (sizegroup, label);
         gtk_box_pack_start (GTK_BOX (hbox), label, FALSE, FALSE, 0);
-        entry_uri = gtk_entry_new ();
+        entry_uri = katze_uri_entry_new (
+        #if GTK_CHECK_VERSION (2, 20, 0)
+            gtk_dialog_get_widget_for_response (GTK_DIALOG (dialog), GTK_RESPONSE_ACCEPT));
+        #else
+            NULL);
+        #endif
         #if HAVE_HILDON
         HildonGtkInputMode mode = hildon_gtk_entry_get_input_mode (GTK_ENTRY (entry_uri));
         mode &= ~HILDON_GTK_INPUT_MODE_AUTOCAP;
@@ -811,10 +804,6 @@ midori_browser_edit_bookmark_dialog_new (MidoriBrowser* browser,
         #endif
         gtk_entry_set_activates_default (GTK_ENTRY (entry_uri), TRUE);
         gtk_entry_set_text (GTK_ENTRY (entry_uri), katze_item_get_uri (bookmark));
-        midori_browser_edit_bookmark_uri_changed_cb (GTK_ENTRY (entry_uri),
-                                                     GTK_DIALOG (dialog));
-        g_signal_connect (entry_uri, "changed",
-            G_CALLBACK (midori_browser_edit_bookmark_uri_changed_cb), dialog);
         gtk_box_pack_start (GTK_BOX (hbox), entry_uri, TRUE, TRUE, 0);
         gtk_container_add (GTK_CONTAINER (content_area), hbox);
         gtk_widget_show_all (hbox);
@@ -1689,6 +1678,12 @@ midori_browser_key_press_event (GtkWidget*   widget,
         gtk_action_activate (_action_by_name (browser, "TabPrevious"));
         return TRUE;
     }
+    /* Interpret F5 as reloading for compatibility */
+    else if (event->keyval == GDK_F5)
+    {
+        gtk_action_activate (_action_by_name (browser, "Reload"));
+        return TRUE;
+    }
 
     if (gtk_window_get_focus (GTK_WINDOW (widget)) == NULL)
         gtk_widget_grab_focus (midori_browser_get_current_tab (MIDORI_BROWSER (widget)));
@@ -1707,6 +1702,13 @@ midori_browser_key_press_event (GtkWidget*   widget,
 
     if (event->state && gtk_window_propagate_key_event (window, event))
         return TRUE;
+
+    /* Interpret Backspace as going back for compatibility */
+    if (event->keyval == GDK_BackSpace)
+    {
+        gtk_action_activate (_action_by_name (browser, "Back"));
+        return TRUE;
+    }
 
     widget_class = g_type_class_peek_static (g_type_parent (GTK_TYPE_WINDOW));
     return widget_class->key_press_event (widget, event);
@@ -3802,13 +3804,11 @@ _action_search_submit (GtkAction*     action,
                        gboolean       new_tab,
                        MidoriBrowser* browser)
 {
-    guint last_web_search;
     KatzeItem* item;
     const gchar* url;
     gchar* search;
 
-    g_object_get (browser->settings, "last-web-search", &last_web_search, NULL);
-    item = katze_array_get_nth_item (browser->search_engines, last_web_search);
+    item = katze_array_get_nth_item (browser->search_engines, browser->last_web_search);
     if (item)
         url = katze_item_get_uri (item);
     else /* The location entry search is our fallback */
@@ -3867,6 +3867,7 @@ _action_search_notify_current_item (GtkAction*     action,
         idx = 0;
 
     g_object_set (browser->settings, "last-web-search", idx, NULL);
+    browser->last_web_search = idx;
 }
 
 static void
@@ -6357,7 +6358,6 @@ _midori_browser_update_settings (MidoriBrowser* browser)
     gboolean show_panel;
     MidoriToolbarStyle toolbar_style;
     gchar* toolbar_items;
-    gint last_web_search;
     gboolean close_buttons_on_tabs;
     KatzeItem* item;
 
@@ -6382,7 +6382,6 @@ _midori_browser_update_settings (MidoriBrowser* browser)
                   "show-statusbar", &browser->show_statusbar,
                   "toolbar-style", &toolbar_style,
                   "toolbar-items", &toolbar_items,
-                  "last-web-search", &last_web_search,
                   "location-entry-search", &browser->location_entry_search,
                   "close-buttons-on-tabs", &close_buttons_on_tabs,
                   "maximum-history-age", &browser->maximum_history_age,
@@ -6430,7 +6429,7 @@ _midori_browser_update_settings (MidoriBrowser* browser)
     if (browser->search_engines)
     {
         item = katze_array_get_nth_item (browser->search_engines,
-                                         last_web_search);
+                                         browser->last_web_search);
         if (item)
             midori_search_action_set_current_item (MIDORI_SEARCH_ACTION (
                 _action_by_name (browser, "Search")), item);
@@ -6718,7 +6717,6 @@ midori_browser_set_property (GObject*      object,
                              GParamSpec*   pspec)
 {
     MidoriBrowser* browser = MIDORI_BROWSER (object);
-    guint last_web_search;
     KatzeItem* item;
 
     switch (prop_id)
@@ -6777,8 +6775,8 @@ midori_browser_set_property (GObject*      object,
 
         if (browser->search_engines)
         {
-            g_object_get (browser->settings, "last-web-search", &last_web_search, NULL);
-            item = katze_array_get_nth_item (browser->search_engines, last_web_search);
+            g_object_get (browser->settings, "last-web-search", &browser->last_web_search, NULL);
+            item = katze_array_get_nth_item (browser->search_engines, browser->last_web_search);
             midori_search_action_set_current_item (MIDORI_SEARCH_ACTION (
                 _action_by_name (browser, "Search")), item);
 
