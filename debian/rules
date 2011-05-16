@@ -71,5 +71,5 @@ override_dh_strip:
 	$(CMD) --dbg-package=midori-dbg
 
 override_dh_installchangelogs:
-	rm -f debian/tmp/usr/share/doc/ChangeLog
+	rm -f debian/midori/usr/share/doc/midori/ChangeLog
 	dh_installchangelogs ChangeLog

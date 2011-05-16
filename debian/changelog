@@ -1,3 +1,10 @@
+midori (0.3.6-2) UNRELEASED; urgency=low
+
+  * debian/rules:
+    - don't install upstream changelog twice.                   closes: #614692
+
+ -- Yves-Alexis Perez <corsac@debian.org>  Mon, 16 May 2011 16:52:09 +0200
+
 midori (0.3.6-1) unstable; urgency=low
 
   * New upstream release.
