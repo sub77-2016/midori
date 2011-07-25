@@ -12,7 +12,7 @@ export DEB_BUILD_HARDENING=1
 
 CMD=$(shell echo $@ | sed 's/override_//')
 
-LIBWEBKIT_PKG=$(shell dpkg-query -p libwebkit-dev | grep Depends | sed -r 's/.*(libwebkit[^ ]+).*/\1/')
+LIBWEBKIT_PKG=$(shell dpkg-query -p libwebkitgtk-dev | grep Depends | sed -r 's/.*(libwebkitgtk[^ ]+).*/\1/')
 GTKLAUNCHER=$(shell dpkg-query -L $(LIBWEBKIT_PKG) | grep GtkLauncher)
 DISTRO=$(shell lsb_release -is)
 CONFIG_FILE=debian/config/$(DISTRO).h
