@@ -14,12 +14,14 @@ mingw32-freetype
 mingw32-freetype-devel
 mingw32-gcc-c++
 mingw32-gcc
+mingw32-gdb
 mingw32-gdk-pixbuf
 mingw32-gdk-pixbuf-devel
 mingw32-gettext-runtime
 mingw32-gettext-tools
 mingw32-glib2
 mingw32-glib2-devel
+mingw32-glib-networking
 mingw32-gst-plugins-base-devel
 mingw32-gstreamer-devel
 mingw32-gtk2
@@ -42,6 +44,8 @@ mingw32-libgstinterfaces
 mingw32-libgstreamer
 mingw32-libidn
 mingw32-libidn-devel
+mingw32-libintl
+mingw32-libintl-devel
 mingw32-libjasper
 mingw32-libjasper-devel
 mingw32-libjpeg
@@ -59,8 +63,9 @@ mingw32-libtasn1
 mingw32-libtasn1-devel
 mingw32-libtiff
 mingw32-libtiff-devel
-mingw32-libwebkit
-mingw32-libwebkit-devel
+mingw32-libwebkitgtk
+mingw32-libwebkitgtk-devel
+mingw32-webkit-tools
 mingw32-libxml2
 mingw32-libxml2-devel
 mingw32-libxslt
@@ -71,6 +76,8 @@ mingw32-pixman
 mingw32-pixman-devel
 mingw32-pthreads
 mingw32-pthreads-devel
+mingw32-libproxy
+mingw32-libmodman
 mingw32-shared-mime-info
 mingw32-shared-mime-info-devel
 mingw32-win_iconv

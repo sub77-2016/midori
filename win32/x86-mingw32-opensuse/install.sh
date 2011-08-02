@@ -10,7 +10,7 @@
 # See the file COPYING for the full license text.
 
 # config variables
-REPO_URL=http://download.opensuse.org/repositories/windows:/mingw:/win32/openSUSE_11.2
+REPO_URL=http://download.opensuse.org/repositories/windows:/mingw:/win32/openSUSE_11.4
 REPO_ARCH=noarch
 DOWNLOAD_PATH=~/dev/mingw/packages/opensuse
 BUILD_PATH=~/tmp/opensuse
@@ -71,7 +71,7 @@ do
   if [ -d $BUILD_PATH/usr/i686-w64-mingw32/sys-root/mingw ]
   then
     # convert pkgconfig files
-    if [ -d $BUILD_PATH/usr/i686-w64=mingw32/sys-root/mingw/lib/pkgconfig ]
+    if [ -d $BUILD_PATH/usr/i686-w64-mingw32/sys-root/mingw/lib/pkgconfig ]
     then
       sed -i -e 's@^prefix=.*@prefix='$INSTALL_PATH'@' -e 's@/usr/i686-w64-mingw32/sys-root/mingw@${prefix}@' $BUILD_PATH/usr/i686-w64-mingw32/sys-root/mingw/lib/pkgconfig/*.pc
     fi

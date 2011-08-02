@@ -44,6 +44,7 @@ enum
     MIDORI_CLEAR_TRASH = 16,
     MIDORI_CLEAR_ON_QUIT = 32,
     MIDORI_CLEAR_WEB_CACHE = 64, /* deprecated */
+    MIDORI_CLEAR_SESSION = 128,
 };
 
 typedef enum
@@ -66,9 +67,7 @@ typedef enum
     MIDORI_STARTUP_BLANK_PAGE, /* One blank tab or speed dial is opened */
     MIDORI_STARTUP_HOMEPAGE, /* One homepage tab is opened */
     MIDORI_STARTUP_LAST_OPEN_PAGES, /* The session is loaded and saved */
-    #if WEBKIT_CHECK_VERSION (1, 1, 6)
     MIDORI_STARTUP_DELAYED_PAGES /* The session is saved, loading pages is delayed */
-    #endif
 } MidoriStartup;
 
 GType
@@ -135,19 +134,6 @@ midori_proxy_get_type (void) G_GNUC_CONST;
 
 #define MIDORI_TYPE_PROXY \
     (midori_proxy_get_type ())
-
-typedef enum
-{
-    MIDORI_ACCEPT_COOKIES_ALL,
-    MIDORI_ACCEPT_COOKIES_SESSION,
-    MIDORI_ACCEPT_COOKIES_NONE
-} MidoriAcceptCookies;
-
-GType
-midori_accept_cookies_get_type (void) G_GNUC_CONST;
-
-#define MIDORI_TYPE_ACCEPT_COOKIES \
-    (midori_accept_cookies_get_type ())
 
 typedef enum
 {

@@ -28,8 +28,8 @@ import misc
 from Configure import find_program_impl
 
 major = 0
-minor = 3
-micro = 6
+minor = 4
+micro = 0
 
 APPNAME = 'midori'
 VERSION = str (major) + '.' + str (minor) + '.' + str (micro)
@@ -88,14 +88,7 @@ def configure (conf):
         return dirvalue
 
     conf.check_tool ('compiler_cc')
-    if option_enabled ('vala'):
-        if find_program_impl (conf.env, 'valac'):
-            conf.check_tool ('vala')
-        else:
-            conf.check_message ('program', 'valac', False, False)
-            Utils.pprint ('RED', 'Vala is required for some extensions.')
-            Utils.pprint ('RED', 'Pass --disable-vala to not build with Vala.')
-            sys.exit (1)
+    conf.check_tool ('vala')
     conf.check_tool ('glib2')
 
     if option_enabled ('nls'):
@@ -203,7 +196,7 @@ def configure (conf):
                     includes='/usr/X11R6/include', mandatory=False)
         conf.check (lib='Xss', libpath='/usr/X11R6/lib', mandatory=False)
     check_pkg ('gtk+-2.0', '2.10.0', var='GTK', args=args)
-    check_pkg ('webkit-1.0', '1.1.1', args=args)
+    check_pkg ('webkit-1.0', '1.1.17', args=args)
     check_pkg ('libsoup-2.4', '2.25.2')
     conf.define ('HAVE_LIBSOUP_2_25_2', 1)
     check_pkg ('libsoup-2.4', '2.27.90', False, var='LIBSOUP_2_27_90')
@@ -330,8 +323,9 @@ def set_options (opt):
         if group == None:
             group = opt
         option_ = option.replace ('-', '_')
-        group.add_option ('--enable-' + option, action='store_true',
-            default=False, help='Enable ' + desc, dest='enable_' + option_)
+        group.add_option ('--enable-' + option, action='store_true', default=False,
+            help='Enable ' + desc + ' [Default: ' + str (not disable) + ']',
+            dest='enable_' + option_)
         group.add_option ('--disable-' + option, action='store_true',
             default=disable, help='Disable ' + desc, dest='disable_' + option_)
 
@@ -359,7 +353,6 @@ def set_options (opt):
 
     group = opt.add_option_group ('Optional features', '')
     add_enable_option ('unique', 'single instance support', group)
-    add_enable_option ('vala', 'Vala support', group)
     add_enable_option ('libidn', 'international domain name support', group)
     add_enable_option ('libnotify', 'notification support', group)
     add_enable_option ('addons', 'building of extensions', group)

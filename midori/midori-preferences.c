@@ -316,10 +316,10 @@ midori_preferences_set_settings (MidoriPreferences* preferences,
     }
 
     /* Page "Appearance" */
-    PAGE_NEW (GTK_STOCK_SELECT_FONT, _("Appearance"));
+    PAGE_NEW (GTK_STOCK_SELECT_FONT, _("Fonts"));
     FRAME_NEW (NULL);
     #if !HAVE_HILDON
-    label = gtk_label_new (_("Default Font Family"));
+    label = gtk_label_new (_("Proportional Font Family"));
     gtk_misc_set_alignment (GTK_MISC (label), 0.0, 0.5);
     INDENTED_ADD (label);
     button = katze_property_proxy (settings, "default-font-family", "font");
@@ -355,13 +355,7 @@ midori_preferences_set_settings (MidoriPreferences* preferences,
     #if !HAVE_HILDON
     button = katze_property_proxy (settings, "auto-load-images", NULL);
     INDENTED_ADD (button);
-    #if WEBKIT_CHECK_VERSION (1, 1, 6)
     button = katze_property_proxy (settings, "enable-spell-checking", NULL);
-    #else
-    button = katze_property_proxy (settings, "enforce-96-dpi", NULL);
-    gtk_button_set_label (GTK_BUTTON (button), _("Enforce 96 dots per inch"));
-    gtk_widget_set_tooltip_text (button, _("Enforce a video dot density of 96 DPI"));
-    #endif
     SPANNED_ADD (button);
     button = katze_property_proxy (settings, "enable-scripts", NULL);
     INDENTED_ADD (button);
@@ -370,22 +364,16 @@ midori_preferences_set_settings (MidoriPreferences* preferences,
     #endif
     button = katze_property_proxy (settings, "zoom-text-and-images", NULL);
     INDENTED_ADD (button);
-    #if WEBKIT_CHECK_VERSION (1, 1, 11)
     button = katze_property_proxy (settings, "javascript-can-open-windows-automatically", NULL);
     gtk_button_set_label (GTK_BUTTON (button), _("Allow scripts to open popups"));
     gtk_widget_set_tooltip_text (button, _("Whether scripts are allowed to open popup windows automatically"));
     SPANNED_ADD (button);
-    #endif
-    button = NULL;
-    #if WEBKIT_CHECK_VERSION (1, 1, 15) || HAVE_HILDON
     if (katze_widget_has_touchscreen_mode (parent ?
         GTK_WIDGET (parent) : GTK_WIDGET (preferences)))
         button = katze_property_proxy (settings, "kinetic-scrolling", NULL);
-    #else
-    button = katze_property_proxy (settings, "middle-click-opens-selection", NULL);
-    #endif
-    if (button != NULL)
-        INDENTED_ADD (button);
+    else
+        button = katze_property_proxy (settings, "middle-click-opens-selection", NULL);
+    INDENTED_ADD (button);
     FRAME_NEW (NULL);
     button = katze_property_label (settings, "preferred-languages");
     INDENTED_ADD (button);
@@ -425,7 +413,7 @@ midori_preferences_set_settings (MidoriPreferences* preferences,
     button = katze_property_proxy (settings, "open-tabs-in-the-background", NULL);
     SPANNED_ADD (button);
     #if !HAVE_HILDON
-    FRAME_NEW (NULL);
+    INDENTED_ADD (gtk_label_new (NULL));
     label = katze_property_label (settings, "text-editor");
     INDENTED_ADD (label);
     entry = katze_property_proxy (settings, "text-editor", "application-text/plain");

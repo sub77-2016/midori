@@ -39,23 +39,18 @@ struct _MidoriWebSettings
     gboolean show_navigationbar : 1;
     gboolean show_bookmarkbar : 1;
     gboolean show_panel : 1;
-    gboolean show_transferbar : 1;
     gboolean show_statusbar : 1;
     MidoriToolbarStyle toolbar_style : 3;
-    gboolean search_engines_in_completion : 1;
     gboolean compact_sidepanel : 1;
-    gboolean show_panel_controls : 1;
     gboolean right_align_sidepanel : 1;
     gboolean open_panels_in_windows : 1;
     MidoriStartup load_on_startup : 2;
     gboolean show_crash_dialog : 1;
-    gboolean speed_dial_in_new_tabs : 1;
     MidoriPreferredEncoding preferred_encoding : 3;
     gboolean always_show_tabbar : 1;
     gboolean close_buttons_on_tabs : 1;
     gint close_buttons_left;
     MidoriNewPage open_new_pages_in : 2;
-    MidoriNewPage open_external_pages_in : 2;
     gboolean middle_click_opens_selection : 1;
     gboolean open_tabs_in_the_background : 1;
     gboolean open_tabs_next_to_current : 1;
@@ -63,10 +58,8 @@ struct _MidoriWebSettings
     gboolean zoom_text_and_images : 1;
     gboolean find_while_typing : 1;
     gboolean kinetic_scrolling : 1;
-    MidoriAcceptCookies accept_cookies : 2;
     gboolean original_cookies_only : 1;
     gboolean remember_last_visited_pages : 1;
-    gboolean remember_last_downloaded_files : 1;
     MidoriProxy proxy_type : 2;
     MidoriIdentity identify_as : 3;
 
@@ -81,7 +74,6 @@ struct _MidoriWebSettings
     gchar* toolbar_items;
     gchar* homepage;
     gchar* download_folder;
-    gchar* download_manager;
     gchar* text_editor;
     gchar* news_aggregator;
     gchar* location_entry_search;
@@ -123,23 +115,18 @@ enum
     PROP_SHOW_NAVIGATIONBAR,
     PROP_SHOW_BOOKMARKBAR,
     PROP_SHOW_PANEL,
-    PROP_SHOW_TRANSFERBAR,
     PROP_SHOW_STATUSBAR,
 
     PROP_TOOLBAR_STYLE,
-    PROP_SEARCH_ENGINES_IN_COMPLETION,
     PROP_TOOLBAR_ITEMS,
     PROP_COMPACT_SIDEPANEL,
-    PROP_SHOW_PANEL_CONTROLS,
     PROP_RIGHT_ALIGN_SIDEPANEL,
     PROP_OPEN_PANELS_IN_WINDOWS,
 
     PROP_LOAD_ON_STARTUP,
     PROP_HOMEPAGE,
     PROP_SHOW_CRASH_DIALOG,
-    PROP_SPEED_DIAL_IN_NEW_TABS,
     PROP_DOWNLOAD_FOLDER,
-    PROP_DOWNLOAD_MANAGER,
     PROP_TEXT_EDITOR,
     PROP_NEWS_AGGREGATOR,
     PROP_LOCATION_ENTRY_SEARCH,
@@ -149,7 +136,6 @@ enum
     PROP_CLOSE_BUTTONS_ON_TABS,
     PROP_CLOSE_BUTTONS_LEFT,
     PROP_OPEN_NEW_PAGES_IN,
-    PROP_OPEN_EXTERNAL_PAGES_IN,
     PROP_MIDDLE_CLICK_OPENS_SELECTION,
     PROP_OPEN_TABS_IN_THE_BACKGROUND,
     PROP_OPEN_TABS_NEXT_TO_CURRENT,
@@ -167,11 +153,9 @@ enum
     PROP_ZOOM_TEXT_AND_IMAGES,
     PROP_FIND_WHILE_TYPING,
     PROP_KINETIC_SCROLLING,
-    PROP_ACCEPT_COOKIES,
     PROP_MAXIMUM_COOKIE_AGE,
 
     PROP_MAXIMUM_HISTORY_AGE,
-    PROP_REMEMBER_LAST_DOWNLOADED_FILES,
 
     PROP_PROXY_TYPE,
     PROP_HTTP_PROXY,
@@ -214,9 +198,7 @@ midori_startup_get_type (void)
          { MIDORI_STARTUP_BLANK_PAGE, "MIDORI_STARTUP_BLANK_PAGE", N_("Show Speed Dial") },
          { MIDORI_STARTUP_HOMEPAGE, "MIDORI_STARTUP_HOMEPAGE", N_("Show Homepage") },
          { MIDORI_STARTUP_LAST_OPEN_PAGES, "MIDORI_STARTUP_LAST_OPEN_PAGES", N_("Show last open tabs") },
-         #if WEBKIT_CHECK_VERSION (1, 1, 6)
          { MIDORI_STARTUP_DELAYED_PAGES, "MIDORI_STARTUP_DELAYED_PAGES", N_("Show last tabs without loading") },
-         #endif
          { 0, NULL, NULL }
         };
         type = g_enum_register_static ("MidoriStartup", values);
@@ -295,23 +277,6 @@ midori_proxy_get_type (void)
          { 0, NULL, NULL }
         };
         type = g_enum_register_static ("MidoriProxy", values);
-    }
-    return type;
-}
-
-GType
-midori_accept_cookies_get_type (void)
-{
-    static GType type = 0;
-    if (!type)
-    {
-        static const GEnumValue values[] = {
-         { MIDORI_ACCEPT_COOKIES_ALL, "MIDORI_ACCEPT_COOKIES_ALL", N_("All cookies") },
-         { MIDORI_ACCEPT_COOKIES_SESSION, "MIDORI_ACCEPT_COOKIES_SESSION", N_("Session cookies") },
-         { MIDORI_ACCEPT_COOKIES_NONE, "MIDORI_ACCEPT_COOKIES_NONE", N_("None") },
-         { 0, NULL, NULL }
-        };
-        type = g_enum_register_static ("MidoriAcceptCookies", values);
     }
     return type;
 }
@@ -485,24 +450,6 @@ midori_web_settings_class_init (MidoriWebSettingsClass* class)
                                      FALSE,
                                      flags));
 
-    /**
-     * MidoriWebSettings:show-transferbar:
-     *
-     * Whether to show the transferbar.
-     *
-     * Since: 0.1.5
-     *
-     * Deprecated: 0.3.1
-     */
-    g_object_class_install_property (gobject_class,
-                                     PROP_SHOW_TRANSFERBAR,
-                                     g_param_spec_boolean (
-                                     "show-transferbar",
-                                     _("Show Transferbar"),
-                                     _("Whether to show the transferbar"),
-                                     TRUE,
-                                     flags));
-
     g_object_class_install_property (gobject_class,
                                      PROP_SHOW_STATUSBAR,
                                      g_param_spec_boolean (
@@ -523,24 +470,6 @@ midori_web_settings_class_init (MidoriWebSettingsClass* class)
                                      MIDORI_TOOLBAR_DEFAULT,
                                      flags));
 
-    /**
-    * MidoriWebSettings:search-engines-in-completion:
-    *
-    * Whether to show search engines in the location completion.
-    *
-    * Since: 0.1.6
-    *
-    * Deprecated: 0.3.1
-    */
-    g_object_class_install_property (gobject_class,
-                                     PROP_SEARCH_ENGINES_IN_COMPLETION,
-                                     g_param_spec_boolean (
-                                     "search-engines-in-completion",
-                                     _("Search engines in location completion"),
-                                     _("Whether to show search engines in the location completion"),
-                                     TRUE,
-                                     flags));
-
     g_object_class_install_property (gobject_class,
                                      PROP_TOOLBAR_ITEMS,
                                      g_param_spec_string (
@@ -557,24 +486,6 @@ midori_web_settings_class_init (MidoriWebSettingsClass* class)
                                      _("Compact Sidepanel"),
                                      _("Whether to make the sidepanel compact"),
                                      FALSE,
-                                     flags));
-
-    /**
-     * MidoriWebSettings:show-panel-controls:
-     *
-     * Whether to show the operating controls of the panel.
-     *
-     * Since: 0.1.9
-     *
-     * Deprecated: 0.3.0
-     */
-    g_object_class_install_property (gobject_class,
-                                     PROP_SHOW_PANEL_CONTROLS,
-                                     g_param_spec_boolean (
-                                     "show-panel-controls",
-                                     _("Show operating controls of the panel"),
-                                     _("Whether to show the operating controls of the panel"),
-                                     TRUE,
                                      flags));
 
     /**
@@ -645,25 +556,6 @@ midori_web_settings_class_init (MidoriWebSettingsClass* class)
                                      TRUE,
                                      flags));
 
-    /**
-    * MidoriWebSettings:speed-dial-in-new-tabs:
-    *
-    * Show spee dial in newly opened tabs.
-    *
-    * Since: 0.1.7
-    *
-    * Deprecated: 0.3.4
-    */
-    g_object_class_install_property (gobject_class,
-                                     PROP_SPEED_DIAL_IN_NEW_TABS,
-                                     g_param_spec_boolean (
-                                     "speed-dial-in-new-tabs",
-        /* i18n: Speed dial, webpage shortcuts, named for the phone function */
-                                     _("Show speed dial in new tabs"),
-                                     _("Show speed dial in newly opened tabs"),
-                                     TRUE,
-                                     flags));
-
     g_object_class_install_property (gobject_class,
                                      PROP_DOWNLOAD_FOLDER,
                                      g_param_spec_string (
@@ -671,26 +563,6 @@ midori_web_settings_class_init (MidoriWebSettingsClass* class)
                                      _("Save downloaded files to:"),
                                      _("The folder downloaded files are saved to"),
                                      midori_get_download_dir (),
-    #if WEBKIT_CHECK_VERSION (1, 1, 3)
-                                     flags));
-    #else
-                                     G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
-    #endif
-
-    /**
-    * MidoriWebSettings:download-manager:
-    *
-    * An external download manager that shows up in context menus.
-    *
-    * Deprecated: 0.3.4
-    */
-    g_object_class_install_property (gobject_class,
-                                     PROP_DOWNLOAD_MANAGER,
-                                     g_param_spec_string (
-                                     "download-manager",
-                                     _("Download Manager"),
-                                     _("An external download manager"),
-                                     NULL,
                                      flags));
 
     g_object_class_install_property (gobject_class,
@@ -783,23 +655,6 @@ midori_web_settings_class_init (MidoriWebSettingsClass* class)
                                      MIDORI_NEW_PAGE_TAB,
                                      flags));
 
-    /**
-     * MidoriWebSettings:open-external-pages-in:
-     *
-     * Where to open externally opened pages.
-     *
-     * Deprecated: 0.3.4
-     */
-    g_object_class_install_property (gobject_class,
-                                     PROP_OPEN_EXTERNAL_PAGES_IN,
-                                     g_param_spec_enum (
-                                     "open-external-pages-in",
-                                     _("Open external pages in:"),
-                                     _("Where to open externally opened pages"),
-                                     MIDORI_TYPE_NEW_PAGE,
-                                     MIDORI_NEW_PAGE_TAB,
-                                     flags));
-
     g_object_class_install_property (gobject_class,
                                      PROP_MIDDLE_CLICK_OPENS_SELECTION,
                                      g_param_spec_boolean (
@@ -871,7 +726,6 @@ midori_web_settings_class_init (MidoriWebSettingsClass* class)
                                      "Enable special extensions for developers",
                                      TRUE,
                                      flags));
-    #if WEBKIT_CHECK_VERSION (1, 1, 6)
     g_object_class_install_property (gobject_class,
                                      PROP_ENABLE_SPELL_CHECKING,
                                      g_param_spec_boolean ("enable-spell-checking",
@@ -879,8 +733,6 @@ midori_web_settings_class_init (MidoriWebSettingsClass* class)
                                                            _("Enable spell checking while typing"),
                                                            TRUE,
                                                            flags));
-    #endif
-    #if WEBKIT_CHECK_VERSION (1, 1, 8)
     g_object_class_install_property (gobject_class,
                                      PROP_ENABLE_HTML5_DATABASE,
                                      g_param_spec_boolean ("enable-html5-database",
@@ -895,8 +747,6 @@ midori_web_settings_class_init (MidoriWebSettingsClass* class)
                                                            _("Whether to enable HTML5 local storage support"),
                                                            FALSE,
                                                            flags));
-    #endif
-    #if WEBKIT_CHECK_VERSION (1, 1, 13)
     g_object_class_install_property (gobject_class,
                                      PROP_ENABLE_OFFLINE_WEB_APPLICATION_CACHE,
                                      g_param_spec_boolean ("enable-offline-web-application-cache",
@@ -904,7 +754,6 @@ midori_web_settings_class_init (MidoriWebSettingsClass* class)
                                                            _("Whether to enable offline web application cache"),
                                                            FALSE,
                                                            flags));
-    #endif
     #if WEBKIT_CHECK_VERSION (1, 1, 18)
     g_object_class_install_property (gobject_class,
                                      PROP_ENABLE_PAGE_CACHE,
@@ -963,28 +812,11 @@ midori_web_settings_class_init (MidoriWebSettingsClass* class)
                                      TRUE,
                                      flags));
 
-    /**
-     * MidoriWebSettings:accept-cookies:
-     *
-     * What type of cookies to accept.
-     *
-     * Deprecated: 0.3.4
-     **/
-    g_object_class_install_property (gobject_class,
-                                     PROP_ACCEPT_COOKIES,
-                                     g_param_spec_enum (
-                                     "accept-cookies",
-                                     _("Accept cookies"),
-                                     _("What type of cookies to accept"),
-                                     MIDORI_TYPE_ACCEPT_COOKIES,
-                                     MIDORI_ACCEPT_COOKIES_ALL,
-                                     flags));
-
     g_object_class_install_property (gobject_class,
                                      PROP_MAXIMUM_COOKIE_AGE,
                                      g_param_spec_int (
                                      "maximum-cookie-age",
-                                     _("Maximum cookie age"),
+                                     _("Delete old Cookies after:"),
                                      _("The maximum number of days to save cookies for"),
                                      0, G_MAXINT, 30,
                                      flags));
@@ -994,28 +826,10 @@ midori_web_settings_class_init (MidoriWebSettingsClass* class)
                                      PROP_MAXIMUM_HISTORY_AGE,
                                      g_param_spec_int (
                                      "maximum-history-age",
-                                     _("Maximum history age"),
+                                     _("Delete pages from history after:"),
                                      _("The maximum number of days to save the history for"),
                                      0, G_MAXINT, 30,
                                      flags));
-
-    /**
-     * MidoriWebSettings:remember-last-downloaded-files:
-     *
-     * Whether the last downloaded files are saved.
-     *
-     * Deprecated: 0.2.9
-     **/
-    g_object_class_install_property (gobject_class,
-                                     PROP_REMEMBER_LAST_DOWNLOADED_FILES,
-                                     g_param_spec_boolean (
-                                     "remember-last-downloaded-files",
-                                     _("Remember last downloaded files"),
-                                     _("Whether the last downloaded files are saved"),
-                                     TRUE,
-                                     flags));
-
-
 
     /**
      * MidoriWebSettings:proxy-type:
@@ -1216,9 +1030,7 @@ midori_web_settings_init (MidoriWebSettings* web_settings)
 {
     web_settings->download_folder = g_strdup (midori_get_download_dir ());
     web_settings->http_proxy = NULL;
-    web_settings->show_panel_controls = TRUE;
     web_settings->open_popups_in_tabs = TRUE;
-    web_settings->remember_last_downloaded_files = TRUE;
     web_settings->kinetic_scrolling = TRUE;
 
     g_signal_connect (web_settings, "notify::default-encoding",
@@ -1235,7 +1047,6 @@ midori_web_settings_finalize (GObject* object)
     katze_assign (web_settings->toolbar_items, NULL);
     katze_assign (web_settings->homepage, NULL);
     katze_assign (web_settings->download_folder, NULL);
-    katze_assign (web_settings->download_manager, NULL);
     katze_assign (web_settings->text_editor, NULL);
     katze_assign (web_settings->news_aggregator, NULL);
     katze_assign (web_settings->location_entry_search, NULL);
@@ -1375,9 +1186,6 @@ midori_web_settings_set_property (GObject*      object,
     case PROP_SHOW_PANEL:
         web_settings->show_panel = g_value_get_boolean (value);
         break;
-    case PROP_SHOW_TRANSFERBAR:
-        web_settings->show_transferbar = g_value_get_boolean (value);
-        break;
     case PROP_SHOW_STATUSBAR:
         web_settings->show_statusbar = g_value_get_boolean (value);
         break;
@@ -1385,17 +1193,11 @@ midori_web_settings_set_property (GObject*      object,
     case PROP_TOOLBAR_STYLE:
         web_settings->toolbar_style = g_value_get_enum (value);
         break;
-    case PROP_SEARCH_ENGINES_IN_COMPLETION:
-        web_settings->search_engines_in_completion = g_value_get_boolean (value);
-        break;
     case PROP_TOOLBAR_ITEMS:
         katze_assign (web_settings->toolbar_items, g_value_dup_string (value));
         break;
     case PROP_COMPACT_SIDEPANEL:
         web_settings->compact_sidepanel = g_value_get_boolean (value);
-        break;
-    case PROP_SHOW_PANEL_CONTROLS:
-        web_settings->show_panel_controls = g_value_get_boolean (value);
         break;
     case PROP_RIGHT_ALIGN_SIDEPANEL:
         web_settings->right_align_sidepanel = g_value_get_boolean (value);
@@ -1413,14 +1215,8 @@ midori_web_settings_set_property (GObject*      object,
     case PROP_SHOW_CRASH_DIALOG:
         web_settings->show_crash_dialog = g_value_get_boolean (value);
         break;
-    case PROP_SPEED_DIAL_IN_NEW_TABS:
-        web_settings->speed_dial_in_new_tabs = g_value_get_boolean (value);
-        break;
     case PROP_DOWNLOAD_FOLDER:
         katze_assign (web_settings->download_folder, g_value_dup_string (value));
-        break;
-    case PROP_DOWNLOAD_MANAGER:
-        katze_assign (web_settings->download_manager, g_value_dup_string (value));
         break;
     case PROP_TEXT_EDITOR:
         katze_assign (web_settings->text_editor, g_value_dup_string (value));
@@ -1467,9 +1263,6 @@ midori_web_settings_set_property (GObject*      object,
     case PROP_OPEN_NEW_PAGES_IN:
         web_settings->open_new_pages_in = g_value_get_enum (value);
         break;
-    case PROP_OPEN_EXTERNAL_PAGES_IN:
-        web_settings->open_external_pages_in = g_value_get_enum (value);
-        break;
     case PROP_MIDDLE_CLICK_OPENS_SELECTION:
         web_settings->middle_click_opens_selection = g_value_get_boolean (value);
         break;
@@ -1503,13 +1296,10 @@ midori_web_settings_set_property (GObject*      object,
         g_object_set (web_settings, "WebKitWebSettings::enable-developer-extras",
                       g_value_get_boolean (value), NULL);
         break;
-    #if WEBKIT_CHECK_VERSION (1, 1, 6)
     case PROP_ENABLE_SPELL_CHECKING:
         g_object_set (web_settings, "WebKitWebSettings::enable-spell-checking",
                       g_value_get_boolean (value), NULL);
         break;
-    #endif
-    #if WEBKIT_CHECK_VERSION (1, 1, 8)
     case PROP_ENABLE_HTML5_DATABASE:
         g_object_set (web_settings, "WebKitWebSettings::enable-html5-database",
                       g_value_get_boolean (value), NULL);
@@ -1518,13 +1308,10 @@ midori_web_settings_set_property (GObject*      object,
         g_object_set (web_settings, "WebKitWebSettings::enable-html5-local-storage",
                       g_value_get_boolean (value), NULL);
         break;
-    #endif
-    #if WEBKIT_CHECK_VERSION (1, 1, 13)
     case PROP_ENABLE_OFFLINE_WEB_APPLICATION_CACHE:
         g_object_set (web_settings, "WebKitWebSettings::enable-offline-web-application-cache",
                       g_value_get_boolean (value), NULL);
         break;
-    #endif
     #if WEBKIT_CHECK_VERSION (1, 1, 18)
     case PROP_ENABLE_PAGE_CACHE:
         g_object_set (web_settings, "WebKitWebSettings::enable-page-cache",
@@ -1540,18 +1327,12 @@ midori_web_settings_set_property (GObject*      object,
     case PROP_KINETIC_SCROLLING:
         web_settings->kinetic_scrolling = g_value_get_boolean (value);
         break;
-    case PROP_ACCEPT_COOKIES:
-        web_settings->accept_cookies = g_value_get_enum (value);
-        break;
     case PROP_MAXIMUM_COOKIE_AGE:
         web_settings->maximum_cookie_age = g_value_get_int (value);
         break;
 
     case PROP_MAXIMUM_HISTORY_AGE:
         web_settings->maximum_history_age = g_value_get_int (value);
-        break;
-    case PROP_REMEMBER_LAST_DOWNLOADED_FILES:
-        web_settings->remember_last_downloaded_files = g_value_get_boolean (value);
         break;
 
     case PROP_PROXY_TYPE:
@@ -1571,27 +1352,19 @@ midori_web_settings_set_property (GObject*      object,
         {
             gchar* string = generate_ident_string (web_settings->identify_as);
             katze_assign (web_settings->ident_string, string);
-            #if WEBKIT_CHECK_VERSION (1, 1, 11)
             g_object_set (web_settings, "user-agent", string, NULL);
-            #else
-            g_object_notify (object, "user-agent");
-            #endif
         }
         break;
     case PROP_USER_AGENT:
         if (web_settings->identify_as == MIDORI_IDENT_CUSTOM)
             katze_assign (web_settings->ident_string, g_value_dup_string (value));
-        #if WEBKIT_CHECK_VERSION (1, 1, 11)
         g_object_set (web_settings, "WebKitWebSettings::user-agent",
                                     web_settings->ident_string, NULL);
-        #endif
         break;
     case PROP_PREFERRED_LANGUAGES:
         katze_assign (web_settings->http_accept_language, g_value_dup_string (value));
-        #if WEBKIT_CHECK_VERSION (1, 1, 6)
         g_object_set (web_settings, "spell-checking-languages",
                       web_settings->http_accept_language, NULL);
-        #endif
         break;
     case PROP_CLEAR_PRIVATE_DATA:
         web_settings->clear_private_data = g_value_get_int (value);
@@ -1657,9 +1430,6 @@ midori_web_settings_get_property (GObject*    object,
     case PROP_SHOW_PANEL:
         g_value_set_boolean (value, web_settings->show_panel);
         break;
-    case PROP_SHOW_TRANSFERBAR:
-        g_value_set_boolean (value, web_settings->show_transferbar);
-        break;
     case PROP_SHOW_STATUSBAR:
         g_value_set_boolean (value, web_settings->show_statusbar);
         break;
@@ -1667,17 +1437,11 @@ midori_web_settings_get_property (GObject*    object,
     case PROP_TOOLBAR_STYLE:
         g_value_set_enum (value, web_settings->toolbar_style);
         break;
-    case PROP_SEARCH_ENGINES_IN_COMPLETION:
-        g_value_set_boolean (value, web_settings->search_engines_in_completion);
-        break;
     case PROP_TOOLBAR_ITEMS:
         g_value_set_string (value, web_settings->toolbar_items);
         break;
     case PROP_COMPACT_SIDEPANEL:
         g_value_set_boolean (value, web_settings->compact_sidepanel);
-        break;
-    case PROP_SHOW_PANEL_CONTROLS:
-        g_value_set_boolean (value, web_settings->show_panel_controls);
         break;
     case PROP_RIGHT_ALIGN_SIDEPANEL:
         g_value_set_boolean (value, web_settings->right_align_sidepanel);
@@ -1695,14 +1459,8 @@ midori_web_settings_get_property (GObject*    object,
     case PROP_SHOW_CRASH_DIALOG:
         g_value_set_boolean (value, web_settings->show_crash_dialog);
         break;
-    case PROP_SPEED_DIAL_IN_NEW_TABS:
-        g_value_set_boolean (value, web_settings->speed_dial_in_new_tabs);
-        break;
     case PROP_DOWNLOAD_FOLDER:
         g_value_set_string (value, web_settings->download_folder);
-        break;
-    case PROP_DOWNLOAD_MANAGER:
-        g_value_set_string (value, web_settings->download_manager);
         break;
     case PROP_TEXT_EDITOR:
         g_value_set_string (value, web_settings->text_editor);
@@ -1764,9 +1522,6 @@ midori_web_settings_get_property (GObject*    object,
     case PROP_OPEN_NEW_PAGES_IN:
         g_value_set_enum (value, web_settings->open_new_pages_in);
         break;
-    case PROP_OPEN_EXTERNAL_PAGES_IN:
-        g_value_set_enum (value, web_settings->open_external_pages_in);
-        break;
     case PROP_MIDDLE_CLICK_OPENS_SELECTION:
         g_value_set_boolean (value, web_settings->middle_click_opens_selection);
         break;
@@ -1796,13 +1551,10 @@ midori_web_settings_get_property (GObject*    object,
         g_value_set_boolean (value, katze_object_get_boolean (web_settings,
                              "WebKitWebSettings::enable-developer-extras"));
         break;
-    #if WEBKIT_CHECK_VERSION (1, 1, 6)
     case PROP_ENABLE_SPELL_CHECKING:
         g_value_set_boolean (value, katze_object_get_boolean (web_settings,
                              "WebKitWebSettings::enable-spell-checking"));
         break;
-    #endif
-    #if WEBKIT_CHECK_VERSION (1, 1, 8)
     case PROP_ENABLE_HTML5_DATABASE:
         g_value_set_boolean (value, katze_object_get_boolean (web_settings,
                              "WebKitWebSettings::enable-html5-database"));
@@ -1811,13 +1563,10 @@ midori_web_settings_get_property (GObject*    object,
         g_value_set_boolean (value, katze_object_get_boolean (web_settings,
                              "WebKitWebSettings::enable-html5-local-storage"));
         break;
-    #endif
-    #if WEBKIT_CHECK_VERSION (1, 1, 13)
     case PROP_ENABLE_OFFLINE_WEB_APPLICATION_CACHE:
         g_value_set_boolean (value, katze_object_get_boolean (web_settings,
                              "WebKitWebSettings::enable-offline-web-application-cache"));
         break;
-    #endif
     #if WEBKIT_CHECK_VERSION (1, 1, 18)
     case PROP_ENABLE_PAGE_CACHE:
         g_value_set_boolean (value, katze_object_get_boolean (web_settings,
@@ -1833,18 +1582,12 @@ midori_web_settings_get_property (GObject*    object,
     case PROP_KINETIC_SCROLLING:
         g_value_set_boolean (value, web_settings->kinetic_scrolling);
         break;
-    case PROP_ACCEPT_COOKIES:
-        g_value_set_enum (value, web_settings->accept_cookies);
-        break;
     case PROP_MAXIMUM_COOKIE_AGE:
         g_value_set_int (value, web_settings->maximum_cookie_age);
         break;
 
     case PROP_MAXIMUM_HISTORY_AGE:
         g_value_set_int (value, web_settings->maximum_history_age);
-        break;
-    case PROP_REMEMBER_LAST_DOWNLOADED_FILES:
-        g_value_set_boolean (value, web_settings->remember_last_downloaded_files);
         break;
 
     case PROP_PROXY_TYPE:
