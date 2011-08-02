@@ -1,11 +1,11 @@
-midori (0.4.0-1) UNRELEASED; urgency=low
+midori (0.4.0-1) unstable; urgency=low
 
   * New upstream release.
   * debian/control:
     - bump webkit build-dep to 1.1.17.
     - bump valac build-dep to 0.10.
 
- -- Yves-Alexis Perez <corsac@debian.org>  Tue, 02 Aug 2011 07:43:21 +0200
+ -- Yves-Alexis Perez <corsac@debian.org>  Tue, 02 Aug 2011 09:44:09 +0200
 
 midori (0.3.6-2) unstable; urgency=low
 
