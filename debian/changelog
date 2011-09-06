@@ -1,3 +1,10 @@
+midori (0.4.0-2) UNRELEASED; urgency=low
+
+  * debian/patches:
+    - 0001-Fix-for-Bug-819688 added, correctly restore tab panel when needed.
+
+ -- Yves-Alexis Perez <corsac@debian.org>  Mon, 05 Sep 2011 22:42:34 +0200
+
 midori (0.4.0-1) unstable; urgency=low
 
   * New upstream release.
