@@ -1,6 +1,8 @@
 midori (0.4.1-1) UNRELEASED; urgency=low
 
   * New upstream release.
+  * debian/patches:
+    - 0001-Fix-for-Bug-819688 dropped, included upstream.
 
  -- Yves-Alexis Perez <corsac@debian.org>  Mon, 10 Oct 2011 07:33:54 +0200
 
