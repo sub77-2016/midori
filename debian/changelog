@@ -2,6 +2,7 @@ midori (0.4.1-1) UNRELEASED; urgency=low
 
   * New upstream release.
     - fix middle click on back/forward button.                  closes: #644840
+    - correctly clear private data on quit when asked.          closes: #644658
   * debian/patches:
     - 0001-Fix-for-Bug-819688 dropped, included upstream.
   * debian/control:
