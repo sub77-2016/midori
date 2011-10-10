@@ -107,7 +107,6 @@ adblock_init_db ()
     blockcssprivate = g_string_new ("");
 }
 
-#if WEBKIT_CHECK_VERSION (1, 1, 2)
 static void
 adblock_download_notify_status_cb (WebKitDownload* download,
                                    GParamSpec*     pspec,
@@ -121,7 +120,6 @@ adblock_download_notify_status_cb (WebKitDownload* download,
     g_free (path);
     /* g_object_unref (download); */
 }
-#endif
 
 static gchar*
 adblock_get_filename_for_uri (const gchar* uri)
@@ -178,7 +176,6 @@ adblock_reload_rules (MidoriExtension* extension,
 
             if (!adblock_parse_file (path))
             {
-                #if WEBKIT_CHECK_VERSION (1, 1, 2)
                 WebKitNetworkRequest* request;
                 WebKitDownload* download;
                 gchar* destination = g_filename_to_uri (path, NULL, NULL);
@@ -191,7 +188,6 @@ adblock_reload_rules (MidoriExtension* extension,
                 g_signal_connect (download, "notify::status",
                     G_CALLBACK (adblock_download_notify_status_cb), path);
                 webkit_download_start (download);
-                #endif
             }
             else
                 g_free (path);
@@ -421,7 +417,11 @@ adblock_get_preferences_dialog (MidoriExtension* extension)
 
     dialog_title = _("Configure Advertisement filters");
     dialog = gtk_dialog_new_with_buttons (dialog_title, GTK_WINDOW (browser),
+#if GTK_CHECK_VERSION(3,0,0)
+        GTK_DIALOG_DESTROY_WITH_PARENT,
+#else
         GTK_DIALOG_DESTROY_WITH_PARENT | GTK_DIALOG_NO_SEPARATOR,
+#endif
         #if !HAVE_OSX
         #if !HAVE_HILDON
         GTK_STOCK_HELP, GTK_RESPONSE_HELP,
@@ -442,11 +442,19 @@ adblock_get_preferences_dialog (MidoriExtension* extension)
     /* TODO: We need mnemonics */
     if ((xfce_heading = sokoke_xfce_header_new (
         gtk_window_get_icon_name (GTK_WINDOW (dialog)), dialog_title)))
+#if GTK_CHECK_VERSION(3,0,0)
+        gtk_box_pack_start (gtk_dialog_get_content_area (GTK_DIALOG (dialog)),
+                            xfce_heading, FALSE, FALSE, 0);
+    hbox = gtk_hbox_new (FALSE, 0);
+    gtk_box_pack_start (gtk_dialog_get_content_area (GTK_DIALOG (dialog)), hbox,
+                                 TRUE, TRUE, 12);
+#else
         gtk_box_pack_start (GTK_BOX (GTK_DIALOG (dialog)->vbox),
                             xfce_heading, FALSE, FALSE, 0);
     hbox = gtk_hbox_new (FALSE, 0);
     gtk_box_pack_start (GTK_BOX (GTK_DIALOG (dialog)->vbox), hbox,
                                  TRUE, TRUE, 12);
+#endif
     vbox = gtk_vbox_new (FALSE, 0);
     gtk_box_pack_start (GTK_BOX (hbox), vbox, TRUE, TRUE, 4);
     button = gtk_label_new (NULL);
@@ -557,10 +565,19 @@ adblock_get_preferences_dialog (MidoriExtension* extension)
         G_CALLBACK (adblock_preferences_help_clicked_cb), dialog); */
     gtk_box_pack_end (GTK_BOX (hbox),
         button, FALSE, FALSE, 4);
+#if GTK_CHECK_VERSION(3,0,0)
+    gtk_box_pack_end (gtk_dialog_get_content_area(GTK_DIALOG (dialog)),
+        hbox, FALSE, FALSE, 0);
+#else
     gtk_box_pack_end (GTK_BOX (GTK_DIALOG (dialog)->vbox),
         hbox, FALSE, FALSE, 0);
+#endif
     #endif
+#if GTK_CHECK_VERSION(3,0,0)
+    gtk_widget_show_all (gtk_dialog_get_content_area(GTK_DIALOG (dialog)));
+#else
     gtk_widget_show_all (GTK_DIALOG (dialog)->vbox);
+#endif
 
     g_object_unref (browser);
 
@@ -756,6 +773,11 @@ adblock_resource_request_starting_cb (WebKitWebView*         web_view,
     const gchar* req_uri;
     const char *page_uri;
 
+    page_uri = webkit_web_view_get_uri (web_view);
+    /* Skip checks on about: pages */
+    if (!(page_uri && *page_uri) || !strncmp (page_uri, "about:", 6))
+        return;
+
     /* Never filter the main page itself */
     if (web_frame == webkit_web_view_get_main_frame (web_view)
      && webkit_web_frame_get_load_status (web_frame) == WEBKIT_LOAD_PROVISIONAL)
@@ -767,16 +789,17 @@ adblock_resource_request_starting_cb (WebKitWebView*         web_view,
         return;
     if (!strncmp (req_uri, "data", 4) || !strncmp (req_uri, "file", 4))
         return;
+    if (!strncmp (req_uri, "stock", 5) || !strncmp (req_uri, "res", 3))
+        return;
+
+    if (g_str_has_suffix (req_uri, "favicon.ico"))
+        return;
 
     msg = webkit_network_request_get_message (request);
     if (!msg)
         return;
     if (msg->method && !strncmp (msg->method, "POST", 4))
         return;
-
-    page_uri = webkit_web_view_get_uri (web_view);
-    if (!page_uri || !strcmp (page_uri, "about:blank"))
-        page_uri = req_uri;
 
     #ifdef G_ENABLE_DEBUG
     if (debug == 2)
@@ -816,13 +839,21 @@ adblock_custom_block_image_cb (GtkWidget*       widget,
 
     title = _("Edit rule");
     dialog = gtk_dialog_new_with_buttons (title, GTK_WINDOW (browser),
+#if GTK_CHECK_VERSION(3,0,0)
+            GTK_DIALOG_DESTROY_WITH_PARENT,
+#else
             GTK_DIALOG_DESTROY_WITH_PARENT | GTK_DIALOG_NO_SEPARATOR,
+#endif
             GTK_STOCK_CANCEL, GTK_RESPONSE_CANCEL,
             GTK_STOCK_ADD, GTK_RESPONSE_ACCEPT,
             NULL);
     gtk_window_set_icon_name (GTK_WINDOW (dialog), GTK_STOCK_ADD);
     gtk_container_set_border_width (GTK_CONTAINER (dialog), 5);
+#if GTK_CHECK_VERSION(3,0,0)
+    gtk_container_set_border_width (gtk_dialog_get_content_area (GTK_DIALOG (dialog)), 5);
+#else
     gtk_container_set_border_width (GTK_CONTAINER (GTK_DIALOG (dialog)->vbox), 5);
+#endif
     sizegroup = gtk_size_group_new (GTK_SIZE_GROUP_HORIZONTAL);
 
     hbox = gtk_hbox_new (FALSE, 8);
@@ -835,7 +866,11 @@ adblock_custom_block_image_cb (GtkWidget*       widget,
     gtk_entry_set_text (GTK_ENTRY (entry),
                         g_object_get_data (G_OBJECT (widget), "uri"));
     gtk_box_pack_start (GTK_BOX (hbox), entry, TRUE, TRUE, 0);
+#if GTK_CHECK_VERSION(3,0,0)
+    gtk_container_add (gtk_dialog_get_content_area (GTK_DIALOG (dialog)), hbox);
+#else
     gtk_container_add (GTK_CONTAINER (GTK_DIALOG (dialog)->vbox), hbox);
+#endif
     gtk_widget_show_all (hbox);
 
     gtk_dialog_set_default_response (GTK_DIALOG (dialog), GTK_RESPONSE_ACCEPT);
@@ -873,7 +908,11 @@ adblock_populate_popup_cb (WebKitWebView*   web_view,
     WebKitHitTestResultContext context;
     WebKitHitTestResult* hit_test;
 
+#if GTK_CHECK_VERSION(3,0,0)
+    gdk_window_get_pointer (gtk_widget_get_window(GTK_WIDGET (web_view)), &x, &y, NULL);
+#else
     gdk_window_get_pointer (GTK_WIDGET (web_view)->window, &x, &y, NULL);
+#endif
     event.x = x;
     event.y = y;
     hit_test = webkit_web_view_get_hit_test_result (web_view, &event);
@@ -924,6 +963,13 @@ adblock_window_object_cleared_cb (WebKitWebView*  web_view,
                                   JSContextRef    js_context,
                                   JSObjectRef     js_window)
 {
+    const char *page_uri;
+
+    page_uri = webkit_web_view_get_uri (web_view);
+    /* Don't add adblock css into speeddial and about: pages */
+    if (!(page_uri && *page_uri) || !strncmp (page_uri, "about:", 6))
+        return;
+
     g_free (sokoke_js_script_eval (js_context, blockscript, NULL));
 }
 

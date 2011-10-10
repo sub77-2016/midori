@@ -69,6 +69,9 @@ struct _Addons
 static void
 addons_iface_init (MidoriViewableIface* iface);
 
+static gchar*
+addons_convert_to_simple_regexp (const gchar* pattern);
+
 G_DEFINE_TYPE_WITH_CODE (Addons, addons, GTK_TYPE_VBOX,
                          G_IMPLEMENT_INTERFACE (MIDORI_TYPE_VIEWABLE,
                              addons_iface_init));
@@ -241,10 +244,8 @@ addons_notify_load_status_cb (MidoriView*      view,
     const gchar* uri = midori_view_get_display_uri (view);
     WebKitWebView* web_view = WEBKIT_WEB_VIEW (midori_view_get_web_view (view));
 
-    #if WEBKIT_CHECK_VERSION (1, 1, 14)
     if (webkit_web_view_get_view_source_mode (web_view))
         return;
-    #endif
 
     if (uri && *uri)
     {
@@ -282,8 +283,8 @@ addons_notify_load_status_cb (MidoriView*      view,
 }
 
 static void
-midori_addons_button_add_clicked_cb (GtkToolItem* toolitem,
-                                     Addons*      addons)
+addons_button_add_clicked_cb (GtkToolItem* toolitem,
+                              Addons*      addons)
 {
     gchar* addons_type;
     gchar* path;
@@ -398,8 +399,8 @@ midori_addons_button_add_clicked_cb (GtkToolItem* toolitem,
 }
 
 static void
-midori_addons_button_delete_clicked_cb (GtkWidget* toolitem,
-                                        Addons*    addons)
+addons_button_delete_clicked_cb (GtkWidget* toolitem,
+                                 Addons*    addons)
 {
     GtkTreeModel* model;
     GtkTreeIter iter;
@@ -470,8 +471,8 @@ midori_addons_button_delete_clicked_cb (GtkWidget* toolitem,
     }
 }
 static void
-midori_addons_open_in_editor_clicked_cb (GtkWidget* toolitem,
-                                         Addons*    addons)
+addons_open_in_editor_clicked_cb (GtkWidget* toolitem,
+                                  Addons*    addons)
 {
     GtkTreeModel* model;
     GtkTreeIter iter;
@@ -505,8 +506,8 @@ midori_addons_open_in_editor_clicked_cb (GtkWidget* toolitem,
 }
 
 static void
-midori_addons_open_target_folder_clicked_cb (GtkWidget* toolitem,
-                                             Addons*    addons)
+addons_open_target_folder_clicked_cb (GtkWidget* toolitem,
+                                      Addons*    addons)
 {
     GtkTreeModel* model;
     GtkTreeIter iter;
@@ -535,12 +536,12 @@ midori_addons_open_target_folder_clicked_cb (GtkWidget* toolitem,
 }
 
 static void
-midori_addons_popup_item (GtkMenu*             menu,
-                          const gchar*         stock_id,
-                          const gchar*         label,
-                          struct AddonElement* element,
-                          gpointer             callback,
-                          Addons*              addons)
+addons_popup_item (GtkMenu*             menu,
+                   const gchar*         stock_id,
+                   const gchar*         label,
+                   struct AddonElement* element,
+                   gpointer             callback,
+                   Addons*              addons)
 {
     GtkWidget* menuitem;
 
@@ -559,26 +560,26 @@ midori_addons_popup_item (GtkMenu*             menu,
 }
 
 static void
-midori_addons_popup (GtkWidget*           widget,
-                     GdkEventButton*      event,
-                     struct AddonElement* element,
-                     Addons*              addons)
+addons_popup (GtkWidget*           widget,
+              GdkEventButton*      event,
+              struct AddonElement* element,
+              Addons*              addons)
 {
     GtkWidget* menu;
 
     menu = gtk_menu_new ();
-    midori_addons_popup_item (GTK_MENU (menu), GTK_STOCK_EDIT, _("Open in Text Editor"),
-        element, midori_addons_open_in_editor_clicked_cb, addons);
-    midori_addons_popup_item (GTK_MENU (menu), GTK_STOCK_OPEN, _("Open Target Folder"),
-        element, midori_addons_open_target_folder_clicked_cb, addons);
-    midori_addons_popup_item (GTK_MENU (menu), GTK_STOCK_DELETE, NULL,
-         element, midori_addons_button_delete_clicked_cb, addons);
+    addons_popup_item (GTK_MENU (menu), GTK_STOCK_EDIT, _("Open in Text Editor"),
+        element, addons_open_in_editor_clicked_cb, addons);
+    addons_popup_item (GTK_MENU (menu), GTK_STOCK_OPEN, _("Open Target Folder"),
+        element, addons_open_target_folder_clicked_cb, addons);
+    addons_popup_item (GTK_MENU (menu), GTK_STOCK_DELETE, NULL,
+         element, addons_button_delete_clicked_cb, addons);
    katze_widget_popup (widget, GTK_MENU (menu), event, KATZE_MENU_POSITION_CURSOR);
 }
 
 static gboolean
-midori_addons_popup_menu_cb (GtkWidget *widget,
-                             Addons*    addons)
+addons_popup_menu_cb (GtkWidget *widget,
+                      Addons*    addons)
 {
     GtkTreeModel* model;
     GtkTreeIter iter;
@@ -587,16 +588,16 @@ midori_addons_popup_menu_cb (GtkWidget *widget,
     {
         struct AddonElement* element;
         gtk_tree_model_get (model, &iter, 0, &element, -1);
-        midori_addons_popup (widget, NULL, element, addons);
+        addons_popup (widget, NULL, element, addons);
         return TRUE;
     }
     return FALSE;
 }
 
 static gboolean
-midori_addons_button_release_event_cb (GtkWidget*       widget,
-                                       GdkEventButton*  event,
-                                       Addons*          addons)
+addons_button_release_event_cb (GtkWidget*       widget,
+                                GdkEventButton*  event,
+                                Addons*          addons)
 {
     GtkTreeModel* model;
     GtkTreeIter iter;
@@ -607,7 +608,7 @@ midori_addons_button_release_event_cb (GtkWidget*       widget,
     {
         struct AddonElement* element;
         gtk_tree_model_get (model, &iter, 0, &element, -1);
-        midori_addons_popup (widget, NULL, element, addons);
+        addons_popup (widget, NULL, element, addons);
         return TRUE;
     }
     return FALSE;
@@ -633,7 +634,7 @@ addons_get_toolbar (MidoriViewable* viewable)
         toolitem = gtk_tool_button_new_from_stock (GTK_STOCK_ADD);
         gtk_tool_item_set_is_important (toolitem, TRUE);
         g_signal_connect (toolitem, "clicked",
-            G_CALLBACK (midori_addons_button_add_clicked_cb), viewable);
+            G_CALLBACK (addons_button_add_clicked_cb), viewable);
         gtk_toolbar_insert (GTK_TOOLBAR (toolbar), toolitem, -1);
         gtk_widget_set_tooltip_text (GTK_WIDGET (toolitem), _("Add new addon"));
         gtk_widget_show (GTK_WIDGET (toolitem));
@@ -641,7 +642,7 @@ addons_get_toolbar (MidoriViewable* viewable)
         /* Text editor button */
         toolitem = gtk_tool_button_new_from_stock (GTK_STOCK_EDIT);
         g_signal_connect (toolitem, "clicked",
-            G_CALLBACK (midori_addons_open_in_editor_clicked_cb), viewable);
+            G_CALLBACK (addons_open_in_editor_clicked_cb), viewable);
         gtk_toolbar_insert (GTK_TOOLBAR (toolbar), toolitem, -1);
         gtk_widget_set_tooltip_text (GTK_WIDGET (toolitem),
                                     _("Open in Text Editor"));
@@ -650,7 +651,7 @@ addons_get_toolbar (MidoriViewable* viewable)
         /* Target folder button */
         toolitem = gtk_tool_button_new_from_stock (GTK_STOCK_DIRECTORY);
         g_signal_connect (toolitem, "clicked",
-            G_CALLBACK (midori_addons_open_target_folder_clicked_cb), viewable);
+            G_CALLBACK (addons_open_target_folder_clicked_cb), viewable);
         gtk_toolbar_insert (GTK_TOOLBAR (toolbar), toolitem, -1);
         gtk_widget_set_tooltip_text (GTK_WIDGET (toolitem),
                                     _("Open Target Folder"));
@@ -659,7 +660,7 @@ addons_get_toolbar (MidoriViewable* viewable)
         /* Delete button */
         toolitem = gtk_tool_button_new_from_stock (GTK_STOCK_DELETE);
         g_signal_connect (toolitem, "clicked",
-            G_CALLBACK (midori_addons_button_delete_clicked_cb), viewable);
+            G_CALLBACK (addons_button_delete_clicked_cb), viewable);
         gtk_toolbar_insert (GTK_TOOLBAR (toolbar), toolitem, -1);
         gtk_widget_set_tooltip_text (GTK_WIDGET (toolitem), _("Remove selected addon"));
         gtk_widget_show (GTK_WIDGET (toolitem));
@@ -948,15 +949,19 @@ js_metadata_from_file (const gchar* filename,
             }
              else if (includes && g_str_has_prefix (line, "// @include"))
             {
+                 gchar* re = NULL;
                  rest_of_line = g_strdup (line + strlen ("// @include"));
                  rest_of_line =  g_strstrip (rest_of_line);
-                 *includes = g_slist_prepend (*includes, rest_of_line);
+                 re = addons_convert_to_simple_regexp (rest_of_line);
+                 *includes = g_slist_prepend (*includes, re);
             }
              else if (excludes && g_str_has_prefix (line, "// @exclude"))
             {
+                 gchar* re = NULL;
                  rest_of_line = g_strdup (line + strlen ("// @exclude"));
                  rest_of_line =  g_strstrip (rest_of_line);
-                 *excludes = g_slist_prepend (*excludes, rest_of_line);
+                 re = addons_convert_to_simple_regexp (rest_of_line);
+                 *excludes = g_slist_prepend (*excludes, re);
             }
              else if (name && g_str_has_prefix (line, "// @name"))
             {
@@ -1033,6 +1038,8 @@ css_metadata_from_file (const gchar* filename,
                     {
                          guint begin, end;
                          gchar* domain;
+                         gchar* tmp_domain;
+                         gchar* re = NULL;
 
                          line_has_meta = TRUE;
                          begin = value[0] == '"' || value[0] == '\'' ? 1 : 0;
@@ -1041,15 +1048,15 @@ css_metadata_from_file (const gchar* filename,
                              ++end;
 
                          domain = g_strndup (value + begin, end - begin * 2);
-                         if (!strncmp ("http", domain, 4))
-                             *includes = g_slist_prepend (*includes, domain);
+                         if (strncmp ("http", domain, 4))
+                             tmp_domain = g_strdup_printf ("http://*%s/*", domain);
                          else
-                         {
-                             *includes = g_slist_prepend (*includes,
-                                 g_strdup_printf ("http://*%s/*", domain));
-                             g_free (domain);
-                         }
+                             tmp_domain = domain;
+
+                         re = addons_convert_to_simple_regexp (tmp_domain);
+                         *includes = g_slist_prepend (*includes, re);
                          g_free (value);
+                         g_free (domain);
                     }
                     i++;
                  }
@@ -1330,10 +1337,10 @@ addons_init (Addons* addons)
                       G_CALLBACK (addons_treeview_row_activated_cb),
                       addons);
     g_signal_connect (addons->treeview, "button-release-event",
-                      G_CALLBACK (midori_addons_button_release_event_cb),
+                      G_CALLBACK (addons_button_release_event_cb),
                       addons);
     g_signal_connect (addons->treeview, "popup-menu",
-                      G_CALLBACK (midori_addons_popup_menu_cb),
+                      G_CALLBACK (addons_popup_menu_cb),
                       addons);
     gtk_widget_show (addons->treeview);
     gtk_box_pack_start (GTK_BOX (addons), addons->treeview, TRUE, TRUE, 0);
@@ -1407,9 +1414,7 @@ addons_may_run (const gchar* uri,
     list = *includes;
     while (list)
     {
-        gchar* re = addons_convert_to_simple_regexp (list->data);
-        gboolean matched = g_regex_match_simple (re, uri, 0, 0);
-        g_free (re);
+        gboolean matched = g_regex_match_simple (list->data, uri, 0, 0);
         if (matched)
         {
             match = TRUE;
@@ -1423,9 +1428,7 @@ addons_may_run (const gchar* uri,
     list = *excludes;
     while (list)
     {
-        gchar* re = addons_convert_to_simple_regexp (list->data);
-        gboolean matched = g_regex_match_simple (re, uri, 0, 0);
-        g_free (re);
+        gboolean matched = g_regex_match_simple (list->data, uri, 0, 0);
         if (matched)
         {
             match = FALSE;
@@ -1460,9 +1463,13 @@ addons_context_ready_cb (WebKitWebView*   web_view,
     struct AddonElement* script, *style;
     struct AddonsList* scripts_list, *styles_list;
 
+    /* Not a main frame! Abort */
+    if (web_frame != webkit_web_view_get_main_frame (web_view))
+        return;
+
     uri = katze_object_get_string (web_view, "uri");
     /* Don't run scripts or styles on blank or special pages */
-    if (!(uri && *uri && strncmp (uri, "about:", 6)))
+    if (!(uri && *uri) || !strncmp (uri, "about:", 6))
     {
         g_free (uri);
         return;

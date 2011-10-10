@@ -14,6 +14,7 @@
 
 #include <midori/midori.h>
 #include <midori/gtkiconentry.h>
+#include "katze/gtk3-compat.h"
 #include <webkit/webkit.h>
 #include <time.h>
 
@@ -933,7 +934,7 @@ static gboolean  cm_tree_popup_menu_cb(GtkWidget *widget, CookieManagerPage *cmp
 static gboolean cm_tree_button_release_event_cb(GtkWidget *widget, GdkEventButton *ev,
 												CookieManagerPage *cmp)
 {
-	if (ev->button == 3)
+	if (MIDORI_EVENT_CONTEXT_MENU(ev))
 	{
 		cm_tree_show_popup_menu(widget, ev, cmp);
 		return TRUE;
@@ -944,7 +945,7 @@ static gboolean cm_tree_button_release_event_cb(GtkWidget *widget, GdkEventButto
 
 static gboolean cm_tree_key_press_cb(GtkWidget *widget, GdkEventKey *event, CookieManagerPage *cmp)
 {
-	if (event->keyval == GDK_Delete && !
+	if (event->keyval == GDK_KEY_Delete && !
 		(event->state & (GDK_SHIFT_MASK | GDK_CONTROL_MASK | GDK_MOD1_MASK)))
 	{
 		cm_delete_item(cmp);

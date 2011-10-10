@@ -711,10 +711,24 @@ midori_browser_show_preferences_cb (MidoriBrowser*    browser,
                                     KatzePreferences* preferences,
                                     MidoriApp*        app)
 {
-    GtkWidget* scrolled = katze_scrolled_new (NULL, NULL);
-    GtkWidget* addon = g_object_new (MIDORI_TYPE_EXTENSIONS, NULL);
-    GList* children = gtk_container_get_children (GTK_CONTAINER (addon));
+    KatzeArray* array;
+    GtkWidget* scrolled;
+    GtkWidget* addon;
+    GList* children;
     GtkWidget* page;
+
+    /* Hide if there are no extensions at all */
+    array = katze_object_get_object (app, "extensions");
+    if (!katze_array_get_nth_item (array, 0))
+    {
+        g_object_unref (array);
+        return;
+    }
+    g_object_unref (array);
+
+    scrolled = katze_scrolled_new (NULL, NULL);
+    addon = g_object_new (MIDORI_TYPE_EXTENSIONS, NULL);
+    children = gtk_container_get_children (GTK_CONTAINER (addon));
     gtk_widget_reparent (g_list_nth_data (children, 0), scrolled);
     g_list_free (children);
     g_object_set (addon, "app", app, NULL);
@@ -1197,28 +1211,13 @@ midori_load_extensions (gpointer data)
     g_object_set (app, "extensions", extensions, NULL);
     if (g_module_supported ())
     {
-        /* FIXME: Read extensions from system data dirs */
         gchar* extension_path;
-        GDir* extension_dir;
+        GDir* extension_dir = NULL;
 
         if (!(extension_path = g_strdup (g_getenv ("MIDORI_EXTENSION_PATH"))))
-        {
-            #ifdef G_OS_WIN32
-            {
-                gchar *path = g_win32_get_package_installation_directory_of_module (NULL);
-                extension_path = g_build_filename (path, "lib", PACKAGE_NAME, NULL);
-                g_free (path);
-                if (g_access (extension_path, F_OK) != 0)
-                {
-                    g_free (extension_path);
-                    extension_path = g_build_filename (LIBDIR, PACKAGE_NAME, NULL);
-                }
-            }
-            #else
-            extension_path = g_build_filename (LIBDIR, PACKAGE_NAME, NULL);
-            #endif
-        }
-        extension_dir = g_dir_open (extension_path, 0, NULL);
+            extension_path = sokoke_find_lib_path (PACKAGE_NAME);
+        if (extension_path != NULL)
+            extension_dir = g_dir_open (extension_path, 0, NULL);
         if (extension_dir != NULL)
         {
             const gchar* filename;
@@ -2158,6 +2157,10 @@ main (int    argc,
 
         if (private)
         {
+            /* In-memory trash for re-opening closed tabs */
+            trash = katze_array_new (KATZE_TYPE_ITEM);
+            g_object_set (browser, "trash", trash, NULL);
+
             g_object_set (settings,
                           "preferred-languages", "en",
                           "enable-private-browsing", TRUE,
@@ -2541,9 +2544,6 @@ main (int    argc,
 
     g_object_get (settings, "maximum-history-age", &max_history_age, NULL);
     midori_history_terminate (history, max_history_age);
-    /* Removing KatzeHttpCookies makes it save outstanding changes */
-    soup_session_remove_feature_by_type (webkit_get_default_session (),
-                                         KATZE_TYPE_HTTP_COOKIES);
 
     /* Clear data on quit, according to the Clear private data dialog */
     g_object_get (settings, "clear-private-data", &clear_prefs, NULL);
@@ -2564,6 +2564,10 @@ main (int    argc,
         }
         g_free (clear_data);
     }
+
+    /* Removing KatzeHttpCookies makes it save outstanding changes */
+    soup_session_remove_feature_by_type (webkit_get_default_session (),
+                                         KATZE_TYPE_HTTP_COOKIES);
 
     load_on_startup = katze_object_get_int (settings, "load-on-startup");
     if (load_on_startup < MIDORI_STARTUP_LAST_OPEN_PAGES)

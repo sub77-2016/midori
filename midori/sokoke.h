@@ -13,12 +13,6 @@
 #ifndef __SOKOKE_H__
 #define __SOKOKE_H__ 1
 
-/* Common behavior modifiers */
-#define MIDORI_MOD_NEW_WINDOW(state) (state & GDK_SHIFT_MASK)
-#define MIDORI_MOD_NEW_TAB(state) (state & GDK_CONTROL_MASK)
-#define MIDORI_MOD_BACKGROUND(state) (state & GDK_SHIFT_MASK)
-#define MIDORI_MOD_SCROLL(state) (state & GDK_CONTROL_MASK)
-
 #include <JavaScriptCore/JavaScript.h>
 #include <midori/midori-websettings.h>
 
@@ -218,12 +212,18 @@ const gchar*
 sokoke_set_config_dir                   (const gchar*    new_config_dir);
 
 gboolean
+sokoke_is_app_or_private                (void);
+
+gboolean
 sokoke_remove_path                      (const gchar*    path,
                                          gboolean        ignore_errors);
 
 gchar*
 sokoke_find_config_filename             (const gchar*    folder,
                                          const gchar*    filename);
+
+gchar*
+sokoke_find_lib_path                    (const gchar*    folder);
 
 gchar*
 sokoke_find_data_filename               (const gchar*    filename);

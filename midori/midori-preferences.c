@@ -22,6 +22,11 @@
 #include <glib/gi18n.h>
 #include <libsoup/soup.h>
 
+#if WEBKIT_CHECK_VERSION (1, 3, 11)
+    #define LIBSOUP_USE_UNSTABLE_REQUEST_API
+    #include <libsoup/soup-cache.h>
+#endif
+
 #if HAVE_LIBNOTIFY
     #include <libnotify/notify.h>
 #endif
@@ -291,6 +296,8 @@ midori_preferences_set_settings (MidoriPreferences* preferences,
     #define SPANNED_ADD(__widget) \
      katze_preferences_add_widget (_preferences, __widget, "spanned")
     /* Page "General" */
+    if (sokoke_is_app_or_private ())
+    {
     PAGE_NEW (GTK_STOCK_HOME, _("Startup"));
     FRAME_NEW (NULL);
     label = katze_property_label (settings, "load-on-startup");
@@ -313,6 +320,7 @@ midori_preferences_set_settings (MidoriPreferences* preferences,
         g_signal_connect (button, "clicked",
             G_CALLBACK (midori_preferences_homepage_current_clicked_cb), settings);
         SPANNED_ADD (button);
+    }
     }
 
     /* Page "Appearance" */
@@ -357,6 +365,17 @@ midori_preferences_set_settings (MidoriPreferences* preferences,
     INDENTED_ADD (button);
     button = katze_property_proxy (settings, "enable-spell-checking", NULL);
     SPANNED_ADD (button);
+    /* Disable spell check option if there are no enchant modules */
+    {
+        gchar* enchant_path = sokoke_find_lib_path ("enchant");
+        if (enchant_path == NULL)
+        {
+            gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (button), FALSE);
+            gtk_widget_set_sensitive (button, FALSE);
+        }
+        else
+            g_free (enchant_path);
+    }
     button = katze_property_proxy (settings, "enable-scripts", NULL);
     INDENTED_ADD (button);
     button = katze_property_proxy (settings, "enable-plugins", NULL);
@@ -374,6 +393,8 @@ midori_preferences_set_settings (MidoriPreferences* preferences,
     else
         button = katze_property_proxy (settings, "middle-click-opens-selection", NULL);
     INDENTED_ADD (button);
+    button = katze_property_proxy (settings, "flash-window-on-new-bg-tabs", NULL);
+    SPANNED_ADD (button);
     FRAME_NEW (NULL);
     button = katze_property_label (settings, "preferred-languages");
     INDENTED_ADD (button);
@@ -442,13 +463,16 @@ midori_preferences_set_settings (MidoriPreferences* preferences,
     midori_preferences_notify_proxy_type_cb (settings, NULL, entry);
     #endif
     #if WEBKIT_CHECK_VERSION (1, 3, 11)
-    label = katze_property_label (settings, "maximum-cache-size");
-    INDENTED_ADD (label);
-    button = katze_property_proxy (settings, "maximum-cache-size", NULL);
-    SPANNED_ADD (button);
-    label = gtk_label_new (_("MB"));
-    gtk_misc_set_alignment (GTK_MISC (label), 0.0, 0.5);
-    SPANNED_ADD (label);
+    if (soup_session_get_feature (webkit_get_default_session (), SOUP_TYPE_CACHE))
+    {
+        label = katze_property_label (settings, "maximum-cache-size");
+        INDENTED_ADD (label);
+        button = katze_property_proxy (settings, "maximum-cache-size", NULL);
+        SPANNED_ADD (button);
+        label = gtk_label_new (_("MB"));
+        gtk_misc_set_alignment (GTK_MISC (label), 0.0, 0.5);
+        SPANNED_ADD (label);
+    }
     #endif
     label = katze_property_label (settings, "identify-as");
     INDENTED_ADD (label);

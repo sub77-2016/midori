@@ -10,6 +10,7 @@
 */
 
 #include "midori-bookmarks.h"
+#include "gtk3-compat.h"
 
 #include "midori-array.h"
 #include "midori-app.h"
@@ -205,7 +206,7 @@ midori_bookmarks_read_from_db (MidoriBookmarks* bookmarks,
         if (!folder)
             folder = "";
         sqlcmd = "SELECT uri, title, desc, app, toolbar, folder from bookmarks where "
-                 " folder = ? ORDER BY uri DESC";
+                 " folder = ? ORDER BY title DESC";
         result = sqlite3_prepare_v2 (db, sqlcmd, -1, &statement, NULL);
         sqlite3_bind_text (statement, 1, g_strdup (folder), -1, g_free);
     }
@@ -846,7 +847,7 @@ midori_bookmarks_key_release_event_cb (GtkWidget*       widget,
                                        GdkEventKey*     event,
                                        MidoriBookmarks* bookmarks)
 {
-    if (event->keyval == GDK_Delete)
+    if (event->keyval == GDK_KEY_Delete)
         midori_bookmarks_delete_clicked_cb (widget, bookmarks);
 
     return FALSE;

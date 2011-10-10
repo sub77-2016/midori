@@ -12,6 +12,7 @@
 */
 
 #include "sokoke.h"
+#include "gtk3-compat.h"
 
 #if HAVE_CONFIG_H
     #include <config.h>
@@ -601,8 +602,12 @@ sokoke_spawn_app (const gchar* uri,
     gchar* quoted = g_shell_quote (executable);
     gchar* command;
     if (private)
-        command = g_strconcat (quoted, " -c ", sokoke_set_config_dir (NULL),
+    {
+        gchar* quoted_config = g_shell_quote (sokoke_set_config_dir (NULL));
+        command = g_strconcat (quoted, " -c ", quoted_config,
                                        " -p", NULL);
+        g_free (quoted_config);
+    }
     else
         command = g_strconcat (quoted, " -a", NULL);
     g_free (quoted);
@@ -1011,7 +1016,7 @@ sokoke_combo_box_add_strings (GtkComboBox* combobox,
     va_start (args, label_first);
 
     for (label = label_first; label; label = va_arg (args, const gchar*))
-        gtk_combo_box_append_text (combobox, label);
+        gtk_combo_box_text_append_text (GTK_COMBO_BOX_TEXT (combobox), label);
 
     va_end (args);
 }
@@ -1509,15 +1514,15 @@ sokoke_register_stock_items (void)
         { STOCK_TRANSFER, NULL, 0, 0, GTK_STOCK_SAVE },
 
         { STOCK_BOOKMARK,       N_("_Bookmark"), 0, 0, GTK_STOCK_FILE },
-        { STOCK_BOOKMARKS,      N_("_Bookmarks"), GDK_CONTROL_MASK | GDK_SHIFT_MASK, GDK_B, GTK_STOCK_DIRECTORY },
+        { STOCK_BOOKMARKS,      N_("_Bookmarks"), GDK_CONTROL_MASK | GDK_SHIFT_MASK, GDK_KEY_B, GTK_STOCK_DIRECTORY },
         { STOCK_BOOKMARK_ADD,   N_("Add Boo_kmark"), 0, 0, GTK_STOCK_ADD },
         { STOCK_CONSOLE,        N_("_Console"), 0, 0, GTK_STOCK_DIALOG_WARNING },
         { STOCK_EXTENSIONS,     N_("_Extensions"), 0, 0, GTK_STOCK_CONVERT },
-        { STOCK_HISTORY,        N_("_History"), GDK_CONTROL_MASK | GDK_SHIFT_MASK, GDK_H, GTK_STOCK_SORT_ASCENDING },
+        { STOCK_HISTORY,        N_("_History"), GDK_CONTROL_MASK | GDK_SHIFT_MASK, GDK_KEY_H, GTK_STOCK_SORT_ASCENDING },
         { STOCK_HOMEPAGE,       N_("_Homepage"), 0, 0, GTK_STOCK_HOME },
         { STOCK_SCRIPTS,        N_("_Userscripts"), 0, 0, GTK_STOCK_EXECUTE },
         { STOCK_TAB_NEW,        N_("New _Tab"), 0, 0, GTK_STOCK_ADD },
-        { STOCK_TRANSFERS,      N_("_Transfers"), GDK_CONTROL_MASK | GDK_SHIFT_MASK, GDK_J, GTK_STOCK_SAVE },
+        { STOCK_TRANSFERS,      N_("_Transfers"), GDK_CONTROL_MASK | GDK_SHIFT_MASK, GDK_KEY_J, GTK_STOCK_SAVE },
         { STOCK_PLUGINS,        N_("Netscape p_lugins"), 0, 0, GTK_STOCK_CONVERT },
         { STOCK_USER_TRASH,     N_("_Closed Tabs"), 0, 0, "gtk-undo-ltr" },
         { STOCK_WINDOW_NEW,     N_("New _Window"), 0, 0, GTK_STOCK_ADD },
@@ -1625,6 +1630,12 @@ sokoke_set_config_dir (const gchar* new_config_dir)
     return config_dir;
 }
 
+gboolean
+sokoke_is_app_or_private (void)
+{
+    return strcmp ("/", sokoke_set_config_dir (NULL));
+}
+
 /**
  * sokoke_remove_path:
  * @path: an absolute path
@@ -1703,6 +1714,45 @@ sokoke_find_config_filename (const gchar* folder,
     #endif
 
     return g_build_filename (SYSCONFDIR, "xdg", PACKAGE_NAME, folder, filename, NULL);
+}
+
+/**
+ * sokoke_find_lib_path:
+ * @folder: the lib subfolder
+ *
+ * Looks for the specified folder in the lib directories.
+ *
+ * Return value: a newly allocated full path, or %NULL
+ **/
+gchar* sokoke_find_lib_path (const gchar* folder)
+{
+    #ifdef G_OS_WIN32
+    gchar* path = g_win32_get_package_installation_directory_of_module (NULL);
+    gchar* lib_path = g_build_filename (path, "lib", folder ? folder : "", NULL);
+    g_free (path);
+    if (g_access (lib_path, F_OK) == 0)
+        return lib_path;
+    #else
+    const gchar* lib_dirs[] =
+    {
+        LIBDIR,
+        "/usr/local/lib",
+        "/usr/lib",
+        NULL
+    };
+    guint i;
+
+    for (i = 0; i < G_N_ELEMENTS (lib_dirs); i++)
+    {
+        gchar* lib_path = g_build_filename (lib_dirs[i], folder ? folder : "", NULL);
+        if (g_access (lib_path, F_OK) == 0)
+            return lib_path;
+        else
+            g_free (lib_path);
+    }
+    #endif
+
+    return NULL;
 }
 
 /**
@@ -1816,7 +1866,7 @@ sokoke_window_activate_key (GtkWindow*   window,
 
     /* Hack to allow Ctrl + Shift + Tab */
     if (event->keyval == 65056)
-        event->keyval = GDK_Tab;
+        event->keyval = GDK_KEY_Tab;
 
     /* We don't use gtk_accel_groups_activate because it refuses to
         activate anything that gtk_accelerator_valid doesn't like. */
