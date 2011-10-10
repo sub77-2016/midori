@@ -38,7 +38,7 @@ Vcs-Browser: http://git.debian.org/?p=collab-maint/midori.git;a=summary
 
 Package: midori
 Architecture: any
-Depends: ${shlibs:Depends}, ${misc:Depends}, dbus-x11, libjs-mootools
+Depends: ${shlibs:Depends}, ${misc:Depends}, dbus-x11
 Recommends: gnome-icon-theme
 Provides: www-browser
 # For http://bugs.debian.org/522436 (missing symbols):
