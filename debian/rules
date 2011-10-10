@@ -55,8 +55,6 @@ override_dh_auto_build:
 override_dh_auto_install:
 	$(WAF) --nocache install --destdir debian/tmp
 	rm -f debian/tmp/usr/share/doc/midori/COPYING debian/tmp/usr/share/doc/midori/TRANSLATE
-	rm -f debian/tmp/usr/share/midori/res/mootools.js
-	ln -s /usr/share/javascript/mootools/mootools.js debian/tmp/usr/share/midori/res/mootools.js
 	install -m 0644 debian/$(DISTRO)-config debian/tmp/etc/xdg/midori/config
 
 PRIORITY=$(shell sed -r -e '/DEBIAN_WWW_ALTERNATIVES_PRIORITY/ !d' -e 's/.* ([^ ]*)$$/\1/' $(CONFIG_FILE))

@@ -7,6 +7,8 @@ midori (0.4.1-1) UNRELEASED; urgency=low
     - 0001-Fix-for-Bug-819688 dropped, included upstream.
   * debian/control:
     - drop libjs-mootools from depends, it's not needed anymore.
+  * debian/rules:
+    - don't remove mootools.js since it's not even shipped anymore.
 
  -- Yves-Alexis Perez <corsac@debian.org>  Mon, 10 Oct 2011 07:33:54 +0200
 
