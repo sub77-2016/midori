@@ -1,4 +1,4 @@
-midori (0.4.1-1) UNRELEASED; urgency=low
+midori (0.4.1-1) unstable; urgency=low
 
   * New upstream release.
     - fix middle click on back/forward button.                  closes: #644840
@@ -10,7 +10,7 @@ midori (0.4.1-1) UNRELEASED; urgency=low
   * debian/rules:
     - don't remove mootools.js since it's not even shipped anymore.
 
- -- Yves-Alexis Perez <corsac@debian.org>  Mon, 10 Oct 2011 07:33:54 +0200
+ -- Yves-Alexis Perez <corsac@debian.org>  Mon, 10 Oct 2011 08:24:46 +0200
 
 midori (0.4.0-2) unstable; urgency=low
 
