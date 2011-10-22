@@ -1,3 +1,12 @@
+midori (0.4.1-2) unstable; urgency=low
+
+  * debian/control:
+    - update libwebkitgtk-dev build-dep to 1.4.3
+  * As a side effect, the rebuild against webkit 1.6.1 fix midori crashing
+    because of missing webkit_web_view_get_selected_text()      closes: #646198
+
+ -- Yves-Alexis Perez <corsac@debian.org>  Sat, 22 Oct 2011 14:46:34 +0200
+
 midori (0.4.1-1) unstable; urgency=low
 
   * New upstream release.
