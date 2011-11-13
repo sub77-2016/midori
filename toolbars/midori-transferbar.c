@@ -12,6 +12,7 @@
 #include "midori-transferbar.h"
 
 #include "midori-browser.h"
+#include "midori-core.h"
 #include "sokoke.h"
 
 #include <glib/gi18n.h>
@@ -103,7 +104,8 @@ midori_transferbar_download_notify_status_cb (WebKitDownload* download,
             MidoriBrowser* browser = midori_browser_get_for_widget (button);
             WebKitNetworkRequest* request;
             const gchar* original_uri;
-            gchar** fingerprint;
+            GChecksumType checksum_type;
+            gchar* fingerprint;
             gboolean verified = TRUE;
 
             icon = gtk_image_new_from_stock (GTK_STOCK_OPEN, GTK_ICON_SIZE_MENU);
@@ -129,48 +131,30 @@ midori_transferbar_download_notify_status_cb (WebKitDownload* download,
             original_uri = g_object_get_data (G_OBJECT (request), "midori-original-uri");
             if (!original_uri)
                 original_uri = webkit_download_get_uri (download);
-            fingerprint = g_strsplit (original_uri, "#!md5!", 2);
-            if (fingerprint && fingerprint[0] && fingerprint[1])
+            checksum_type = midori_uri_get_fingerprint (original_uri, &fingerprint, NULL);
+            if (fingerprint != NULL)
             {
                 gchar* filename = g_filename_from_uri (
                     webkit_download_get_destination_uri (download), NULL, NULL);
                 gchar* contents;
                 gsize length;
                 gboolean y = g_file_get_contents (filename, &contents, &length, NULL);
-                gchar* checksum = g_compute_checksum_for_data (G_CHECKSUM_MD5,
+                gchar* checksum = g_compute_checksum_for_data (checksum_type,
                     (guchar*)contents, length);
                 g_free (filename);
                 g_free (contents);
                 /* Checksums are case-insensitive */
-                if (!y || g_ascii_strcasecmp (fingerprint[1], checksum) != 0)
+                if (!y || g_ascii_strcasecmp (fingerprint, checksum) != 0)
                     verified = FALSE;
                 g_free (checksum);
             }
-            else
-            {
-                gchar* filename = g_filename_from_uri (
-                    webkit_download_get_destination_uri (download), NULL, NULL);
-                g_strfreev (fingerprint);
-                fingerprint = g_strsplit (original_uri, "#!sha1!", 2);
-                if (fingerprint && fingerprint[0] && fingerprint[1])
-                {
-                    gchar* contents;
-                    gsize length;
-                    gboolean y = g_file_get_contents (filename, &contents, &length, NULL);
-                    gchar* checksum = g_compute_checksum_for_data (G_CHECKSUM_SHA1,
-                        (guchar*)contents, length);
-                    g_free (contents);
-                    /* Checksums are case-insensitive */
-                    if (!y || g_ascii_strcasecmp (fingerprint[1], checksum) != 0)
-                        verified = FALSE;
-                    g_free (checksum);
-                }
-                g_free (filename);
-            }
-            g_strfreev (fingerprint);
+            g_free (fingerprint);
             if (verified)
-                gtk_recent_manager_add_item (gtk_recent_manager_get_default (),
-                    webkit_download_get_destination_uri (download));
+            {
+                if (!sokoke_is_app_or_private ())
+                    gtk_recent_manager_add_item (gtk_recent_manager_get_default (),
+                        webkit_download_get_destination_uri (download));
+            }
             else
                 gtk_image_set_from_stock (GTK_IMAGE (icon),
                     GTK_STOCK_DIALOG_WARNING, GTK_ICON_SIZE_MENU);
@@ -222,6 +206,35 @@ midori_transferbar_download_button_clicked_cb (GtkWidget*    button,
         default:
             break;
     }
+}
+
+void
+midori_transferbar_check_size (GtkWidget* statusbar,
+                               MidoriTransferbar* transferbar)
+{
+  GtkWidget* window;
+  GtkRequisition req;
+  gint reqwidth, winwidth;
+  gtk_widget_size_request (statusbar, &req);
+  reqwidth = req.width;
+  window = gtk_widget_get_toplevel (GTK_WIDGET(transferbar));
+  gtk_window_get_size (GTK_WINDOW(window), &winwidth, NULL);
+
+  if (reqwidth > winwidth)
+  {
+    GList* list;
+    for (list = transferbar->infos; list != NULL; list = g_list_next (list))
+    {
+      TransferInfo* info = list->data;
+      WebKitDownloadStatus status = webkit_download_get_status (info->download);
+      if (status == WEBKIT_DOWNLOAD_STATUS_ERROR
+       || status == WEBKIT_DOWNLOAD_STATUS_CANCELLED
+       || status == WEBKIT_DOWNLOAD_STATUS_FINISHED)
+      {
+          gtk_widget_destroy (info->button);
+      }
+    }
+  }
 }
 
 void

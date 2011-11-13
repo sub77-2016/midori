@@ -11,12 +11,7 @@
 
 #include "midori-preferences.h"
 
-#if HAVE_CONFIG_H
-    #include <config.h>
-#endif
-
-#include "sokoke.h"
-#include "midori-stock.h"
+#include "midori-platform.h"
 
 #include <string.h>
 #include <glib/gi18n.h>
@@ -27,6 +22,7 @@
     #include <libsoup/soup-cache.h>
 #endif
 
+#include <config.h>
 #if HAVE_LIBNOTIFY
     #include <libnotify/notify.h>
 #endif
@@ -296,7 +292,7 @@ midori_preferences_set_settings (MidoriPreferences* preferences,
     #define SPANNED_ADD(__widget) \
      katze_preferences_add_widget (_preferences, __widget, "spanned")
     /* Page "General" */
-    if (sokoke_is_app_or_private ())
+    if (!sokoke_is_app_or_private ())
     {
     PAGE_NEW (GTK_STOCK_HOME, _("Startup"));
     FRAME_NEW (NULL);
@@ -351,6 +347,8 @@ midori_preferences_set_settings (MidoriPreferences* preferences,
     entry = katze_property_proxy (settings, "minimum-font-size", NULL);
     gtk_widget_set_tooltip_text (entry, _("The minimum font size used to display text"));
     SPANNED_ADD (entry);
+    button = katze_property_proxy (settings, "enforce-font-family", NULL);
+    INDENTED_ADD (button);
     #endif
     label = katze_property_label (settings, "preferred-encoding");
     INDENTED_ADD (label);
@@ -457,6 +455,14 @@ midori_preferences_set_settings (MidoriPreferences* preferences,
     gtk_misc_set_alignment (GTK_MISC (label), 0.0, 0.5);
     INDENTED_ADD (label);
     entry = katze_property_proxy (settings, "http-proxy", NULL);
+    SPANNED_ADD (entry);
+    g_signal_connect (settings, "notify::proxy-type",
+        G_CALLBACK (midori_preferences_notify_proxy_type_cb), entry);
+    midori_preferences_notify_proxy_type_cb (settings, NULL, entry);
+    label = katze_property_label (settings, "http-proxy-port");
+    gtk_misc_set_alignment (GTK_MISC (label), 0.0, 0.5);
+    INDENTED_ADD (label);
+    entry = katze_property_proxy (settings, "http-proxy-port", NULL);
     SPANNED_ADD (entry);
     g_signal_connect (settings, "notify::proxy-type",
         G_CALLBACK (midori_preferences_notify_proxy_type_cb), entry);

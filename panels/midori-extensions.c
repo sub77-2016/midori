@@ -13,12 +13,10 @@
 
 #include "midori-app.h"
 #include "midori-extension.h"
-#include "midori-stock.h"
+#include "midori-platform.h"
 #include "midori-viewable.h"
+#include "midori-core.h"
 
-#include "midori-extensions-column.c"
-
-#include "sokoke.h"
 #include <glib/gi18n.h>
 
 struct _MidoriExtensions
@@ -404,7 +402,7 @@ midori_extensions_treeview_button_pressed_cb (GtkWidget*      view,
     {
         if (path != NULL)
         {
-            if (MIDORI_IS_EXTENSIONS_COUMN (column))
+            if (MIDORI_IS_EXTENSIONS_COLUMN (column))
             {
                 signal_id = g_signal_lookup ("row-clicked", G_OBJECT_TYPE (column));
 
@@ -464,7 +462,7 @@ midori_extensions_init (MidoriExtensions* extensions)
         (GtkTreeCellDataFunc)midori_extensions_treeview_render_text_cb,
         extensions->treeview, NULL);
     gtk_tree_view_append_column (GTK_TREE_VIEW (extensions->treeview), column);
-    column = GTK_TREE_VIEW_COLUMN (midori_extensions_coumn_new ());
+    column = GTK_TREE_VIEW_COLUMN (midori_extensions_column_new ());
     g_signal_connect (column,
         "row-clicked",
         G_CALLBACK (midori_extensions_treeview_column_preference_clicked_cb),
@@ -506,20 +504,3 @@ midori_extensions_finalize (GObject* object)
     g_object_unref (array);
 }
 
-/**
- * midori_extensions_new:
- *
- * Creates a new empty extensions.
- *
- * Return value: a new #MidoriExtensions
- *
- * Since: 0.1.2
- **/
-GtkWidget*
-midori_extensions_new (void)
-{
-    MidoriExtensions* extensions = g_object_new (MIDORI_TYPE_EXTENSIONS,
-                                                 NULL);
-
-    return GTK_WIDGET (extensions);
-}

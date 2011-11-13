@@ -10,7 +10,6 @@
 */
 
 #include <midori/midori.h>
-#include <midori/sokoke.h>
 
 #define STOCK_TAB_PANEL "tab-panel"
 
@@ -683,7 +682,7 @@ extension_init (void)
     extension = g_object_new (MIDORI_TYPE_EXTENSION,
         "name", _("Tab Panel"),
         "description", _("Show tabs in a vertical panel"),
-        "version", "0.1",
+        "version", "0.1" MIDORI_VERSION_SUFFIX,
         "authors", "Christian Dywan <christian@twotoasts.de>",
         NULL);
 

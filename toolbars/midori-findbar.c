@@ -10,19 +10,15 @@
 */
 
 #include "midori-findbar.h"
-#include "gtk3-compat.h"
 
 #include "midori-browser.h"
-#include "gtkiconentry.h"
-#include "sokoke.h"
+#include "midori-platform.h"
 
 #include <glib/gi18n.h>
 #include <gdk/gdkkeysyms.h>
 #include <gtk/gtk.h>
 
-#if HAVE_CONFIG_H
-    #include "config.h"
-#endif
+#include "config.h"
 
 struct _MidoriFindbar
 {
@@ -112,15 +108,12 @@ static void
 midori_findbar_entry_clear_icon_released_cb (GtkIconEntry* entry,
                                              gint          icon_pos,
                                              gint          button,
-                                             gpointer      user_data)
+                                             MidoriFindbar*findbar)
 {
     if (icon_pos == GTK_ICON_ENTRY_SECONDARY)
     {
         gtk_entry_set_text (GTK_ENTRY (entry), "");
-        #if !HAVE_HILDON
-        gtk_icon_entry_set_icon_from_stock (GTK_ICON_ENTRY (entry),
-                                            GTK_ICON_ENTRY_PRIMARY, GTK_STOCK_FIND);
-        #endif
+        midori_findbar_set_icon (findbar, GTK_ICON_ENTRY_PRIMARY, "edit-find");
     }
 }
 
@@ -255,6 +248,10 @@ midori_findbar_init (MidoriFindbar* findbar)
     GtkToolItem* toolitem;
 
     gtk_widget_set_name (GTK_WIDGET (findbar), "MidoriFindbar");
+    #if GTK_CHECK_VERSION (3, 0, 0)
+    gtk_style_context_add_class (
+        gtk_widget_get_style_context (GTK_WIDGET (findbar)), "bottom-toolbar");
+    #endif
     gtk_toolbar_set_icon_size (GTK_TOOLBAR (findbar), GTK_ICON_SIZE_MENU);
     gtk_toolbar_set_style (GTK_TOOLBAR (findbar), GTK_TOOLBAR_BOTH_HORIZ);
     g_signal_connect (findbar, "key-press-event",
@@ -271,7 +268,7 @@ midori_findbar_init (MidoriFindbar* findbar)
     gtk_icon_entry_set_icon_highlight (GTK_ICON_ENTRY (findbar->find_text),
                                        GTK_ICON_ENTRY_SECONDARY, TRUE);
     g_signal_connect (findbar->find_text, "icon-release",
-        G_CALLBACK (midori_findbar_entry_clear_icon_released_cb), NULL);
+        G_CALLBACK (midori_findbar_entry_clear_icon_released_cb), findbar);
     g_signal_connect (findbar->find_text, "activate",
         G_CALLBACK (midori_findbar_next_activate_cb), findbar);
     g_signal_connect (findbar->find_text, "preedit-changed",
@@ -324,12 +321,9 @@ midori_findbar_init (MidoriFindbar* findbar)
                                _("Close Findbar"));
     g_signal_connect (findbar->find_close, "clicked",
         G_CALLBACK (midori_findbar_button_close_clicked_cb), findbar);
-    #if HAVE_OSX
-    gtk_toolbar_insert (GTK_TOOLBAR (findbar), findbar->find_close, 0);
-    #else
     gtk_toolbar_insert (GTK_TOOLBAR (findbar), findbar->find_close, -1);
-    #endif
-    sokoke_container_show_children (GTK_CONTAINER (findbar));
+    gtk_container_foreach (GTK_CONTAINER (findbar),
+                           (GtkCallback)(gtk_widget_show_all), NULL);
 }
 
 void
@@ -382,4 +376,15 @@ midori_findbar_search_text (MidoriFindbar* findbar,
     }
 }
 
+void
+midori_findbar_set_close_button_left (MidoriFindbar* findbar,
+                                      gboolean       close_button_left)
+{
+    g_object_ref (findbar->find_close);
+    gtk_container_remove (GTK_CONTAINER (findbar),
+                          GTK_WIDGET (findbar->find_close));
+    gtk_toolbar_insert (GTK_TOOLBAR (findbar), findbar->find_close,
+        close_button_left ? 0 : -1);
+    g_object_unref (findbar->find_close);
+}
 

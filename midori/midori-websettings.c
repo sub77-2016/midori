@@ -1,5 +1,6 @@
 /*
  Copyright (C) 2008-2010 Christian Dywan <christian@twotoasts.de>
+ Copyright (C) 2011 Peter Hatina <phatina@redhat.com>
 
  This library is free software; you can redistribute it and/or
  modify it under the terms of the GNU Lesser General Public
@@ -17,14 +18,10 @@
 #include <glib/gstdio.h>
 #include <string.h>
 
+#include <config.h>
 #if HAVE_UNISTD_H
     #include <unistd.h>
 #endif
-
-#if HAVE_CONFIG_H
-    #include <config.h>
-#endif
-
 #if defined (G_OS_UNIX)
     #include <sys/utsname.h>
 #endif
@@ -58,7 +55,7 @@ struct _MidoriWebSettings
     gboolean zoom_text_and_images : 1;
     gboolean find_while_typing : 1;
     gboolean kinetic_scrolling : 1;
-    gboolean original_cookies_only : 1;
+    gboolean first_party_cookies_only : 1;
     gboolean remember_last_visited_pages : 1;
     MidoriProxy proxy_type : 2;
     MidoriIdentity identify_as : 3;
@@ -78,6 +75,7 @@ struct _MidoriWebSettings
     gchar* news_aggregator;
     gchar* location_entry_search;
     gchar* http_proxy;
+    gint http_proxy_port;
     #if WEBKIT_CHECK_VERSION (1, 3, 11)
     gint maximum_cache_size;
     #endif
@@ -90,7 +88,11 @@ struct _MidoriWebSettings
     gboolean enable_dns_prefetching;
     #endif
     gboolean strip_referer;
+    gboolean enforce_font_family;
     gboolean flash_window_on_bg_tabs;
+    gchar* user_stylesheet_uri;
+    gchar* user_stylesheet_uri_cached;
+    GHashTable* user_stylesheets;
 };
 
 struct _MidoriWebSettingsClass
@@ -156,11 +158,13 @@ enum
     PROP_FIND_WHILE_TYPING,
     PROP_KINETIC_SCROLLING,
     PROP_MAXIMUM_COOKIE_AGE,
+    PROP_FIRST_PARTY_COOKIES_ONLY,
 
     PROP_MAXIMUM_HISTORY_AGE,
 
     PROP_PROXY_TYPE,
     PROP_HTTP_PROXY,
+    PROP_HTTP_PROXY_PORT,
     PROP_MAXIMUM_CACHE_SIZE,
     PROP_IDENTIFY_AS,
     PROP_USER_AGENT,
@@ -170,6 +174,8 @@ enum
     PROP_CLEAR_DATA,
     PROP_ENABLE_DNS_PREFETCHING,
     PROP_STRIP_REFERER,
+    PROP_ENFORCE_FONT_FAMILY,
+    PROP_USER_STYLESHEET_URI,
 };
 
 GType
@@ -837,6 +843,28 @@ midori_web_settings_class_init (MidoriWebSettingsClass* class)
                                      0, G_MAXINT, 30,
                                      flags));
 
+    /**
+     * MidoriWebSettings:first-party-cookies-only:
+     *
+     * Whether only first party cookies should be accepted.
+     * WebKitGTK+ 1.1.21 is required for this to work.
+     *
+     * Since: 0.4.2
+     */
+     g_object_class_install_property (gobject_class,
+                                     PROP_FIRST_PARTY_COOKIES_ONLY,
+                                     g_param_spec_boolean (
+                                     "first-party-cookies-only",
+                                     _("Only accept Cookies from sites you visit"),
+                                     _("Block cookies sent by third-party websites"),
+    #ifdef HAVE_LIBSOUP_2_29_91
+                                     TRUE,
+        g_object_class_find_property (gobject_class, /* WebKitGTK+ >= 1.1.21 */
+            "enable-file-access-from-file-uris") ? flags : G_PARAM_READABLE));
+    #else
+                                     FALSE,
+                                     G_PARAM_READABLE));
+    #endif
 
     g_object_class_install_property (gobject_class,
                                      PROP_MAXIMUM_HISTORY_AGE,
@@ -872,6 +900,23 @@ midori_web_settings_class_init (MidoriWebSettingsClass* class)
                                      _("The proxy server used for HTTP connections"),
                                      NULL,
                                      flags));
+
+    /**
+     * MidoriWebSettings:http-proxy-port:
+     *
+     * The proxy server port used for HTTP connections
+     *
+     * Since: 0.4.2
+     */
+     g_object_class_install_property (gobject_class,
+                                     PROP_HTTP_PROXY_PORT,
+                                     g_param_spec_int (
+                                     "http-proxy-port",
+                                     _("Port"),
+                                     _("The proxy server port used for HTTP connections"),
+                                     1, 65535, 8080,
+                                     flags
+                                     ));
 
     #if WEBKIT_CHECK_VERSION (1, 3, 11)
     /**
@@ -1008,7 +1053,30 @@ midori_web_settings_class_init (MidoriWebSettingsClass* class)
         _("Whether the \"Referer\" header should be shortened to the hostname"),
                                      FALSE,
                                      flags));
+    /**
+     * MidoriWebSettings:enforc-font-family:
+     *
+     * Whether to enforce user font preferences with an internal stylesheet.
+     *
+     * Since: 0.4.2
+     */
+    g_object_class_install_property (gobject_class,
+                                     PROP_ENFORCE_FONT_FAMILY,
+                                     g_param_spec_boolean (
+                                     "enforce-font-family",
+                                     _("Always use my font choices"),
+                                     _("Override fonts picked by websites with user preferences"),
+                                     FALSE,
+                                     flags));
 
+    g_object_class_install_property (gobject_class,
+                                     PROP_USER_STYLESHEET_URI,
+                                     g_param_spec_string (
+                                     "user-stylesheet-uri",
+                                     "User stylesheet URI",
+                                     "Load stylesheets from a local URI",
+                                     NULL,
+                                     flags));
 }
 
 static void
@@ -1042,15 +1110,26 @@ notify_default_encoding_cb (GObject*    object,
 }
 
 static void
+notify_default_font_family_cb (GObject*    object,
+                               GParamSpec* pspec)
+{
+    if (katze_object_get_boolean (object, "enforce-font-family"))
+        g_object_set (object, "enforce-font-family", TRUE, NULL);
+}
+static void
 midori_web_settings_init (MidoriWebSettings* web_settings)
 {
     web_settings->download_folder = g_strdup (midori_get_download_dir ());
     web_settings->http_proxy = NULL;
     web_settings->open_popups_in_tabs = TRUE;
     web_settings->kinetic_scrolling = TRUE;
+    web_settings->user_stylesheet_uri = web_settings->user_stylesheet_uri_cached = NULL;
+    web_settings->user_stylesheets = NULL;
 
     g_signal_connect (web_settings, "notify::default-encoding",
                       G_CALLBACK (notify_default_encoding_cb), NULL);
+    g_signal_connect (web_settings, "notify::default-font-family",
+                      G_CALLBACK (notify_default_font_family_cb), NULL);
 }
 
 static void
@@ -1068,15 +1147,20 @@ midori_web_settings_finalize (GObject* object)
     katze_assign (web_settings->location_entry_search, NULL);
     katze_assign (web_settings->http_proxy, NULL);
     katze_assign (web_settings->ident_string, NULL);
+    katze_assign (web_settings->user_stylesheet_uri, NULL);
+    katze_assign (web_settings->user_stylesheet_uri_cached, NULL);
+    if (web_settings->user_stylesheets != NULL)
+        g_hash_table_destroy (web_settings->user_stylesheets);
 
     G_OBJECT_CLASS (midori_web_settings_parent_class)->finalize (object);
 }
 
 #if (!HAVE_OSX && defined (G_OS_UNIX)) || defined (G_OS_WIN32)
 static gchar*
-get_sys_name (void)
+get_sys_name (gchar** architecture)
 {
     static gchar* sys_name = NULL;
+    static gchar* sys_architecture = NULL;
 
     if (!sys_name)
     {
@@ -1087,20 +1171,42 @@ get_sys_name (void)
         #else
         struct utsname name;
         if (uname (&name) != -1)
-            sys_name = g_strdup(name.sysname);
+        {
+            sys_name = g_strdup (name.sysname);
+            sys_architecture = g_strdup (name.machine);
+        }
         else
             sys_name = "Linux";
         #endif
     }
+
+    if (architecture != NULL)
+        *architecture = sys_architecture;
     return sys_name;
 }
 #endif
 
-static gchar*
-generate_ident_string (MidoriWebSettings* web_settings,
-                       MidoriIdentity     identify_as)
+/**
+ * midori_web_settings_get_system_name:
+ * @architecture: location of a string, or %NULL
+ * @platform: location of a string, or %NULL
+ *
+ * Determines the system name, architecture and platform.
+ * @architecturce can have a %NULL value.
+ *
+ * Returns: a string
+ *
+ * Since: 0.4.2
+ **/
+const gchar*
+midori_web_settings_get_system_name (gchar** architecture,
+                                     gchar** platform)
 {
-    const gchar* platform =
+    if (architecture != NULL)
+        *architecture = NULL;
+
+    if (platform != NULL)
+        *platform =
     #if HAVE_HILDON
     "Maemo;"
     #elif defined (G_OS_WIN32)
@@ -1113,25 +1219,28 @@ generate_ident_string (MidoriWebSettings* web_settings,
     "X11;";
     #endif
 
-    const gchar* os =
+    return
     #if HAVE_OSX
     "Mac OS X";
     #elif defined (G_OS_UNIX) || defined (G_OS_WIN32)
-    get_sys_name ();
+    get_sys_name (architecture);
     #else
     "Linux";
     #endif
+}
 
+static gchar*
+generate_ident_string (MidoriWebSettings* web_settings,
+                       MidoriIdentity     identify_as)
+{
     const gchar* appname = "Midori/"
         G_STRINGIFY (MIDORI_MAJOR_VERSION) "."
         G_STRINGIFY (MIDORI_MINOR_VERSION);
 
     const gchar* lang = pango_language_to_string (gtk_get_default_language ());
+    gchar* platform;
+    const gchar* os = midori_web_settings_get_system_name (NULL, &platform);
 
-    #ifndef WEBKIT_USER_AGENT_MAJOR_VERSION
-        #define WEBKIT_USER_AGENT_MAJOR_VERSION 532
-        #define WEBKIT_USER_AGENT_MINOR_VERSION 1
-    #endif
     const int webcore_major = WEBKIT_USER_AGENT_MAJOR_VERSION;
     const int webcore_minor = WEBKIT_USER_AGENT_MINOR_VERSION;
 
@@ -1165,6 +1274,14 @@ generate_ident_string (MidoriWebSettings* web_settings,
         return g_strdup_printf ("%s", appname);
     }
 }
+
+static void
+midori_web_settings_process_stylesheets (MidoriWebSettings* settings,
+                                         gint               delta_len);
+
+static void
+base64_space_pad (gchar* base64,
+                  guint  len);
 
 static void
 midori_web_settings_set_property (GObject*      object,
@@ -1354,6 +1471,9 @@ midori_web_settings_set_property (GObject*      object,
     case PROP_MAXIMUM_COOKIE_AGE:
         web_settings->maximum_cookie_age = g_value_get_int (value);
         break;
+    case PROP_FIRST_PARTY_COOKIES_ONLY:
+        web_settings->first_party_cookies_only = g_value_get_boolean (value);
+        break;
 
     case PROP_MAXIMUM_HISTORY_AGE:
         web_settings->maximum_history_age = g_value_get_int (value);
@@ -1364,6 +1484,9 @@ midori_web_settings_set_property (GObject*      object,
     break;
     case PROP_HTTP_PROXY:
         katze_assign (web_settings->http_proxy, g_value_dup_string (value));
+        break;
+    case PROP_HTTP_PROXY_PORT:
+        web_settings->http_proxy_port = g_value_get_int (value);
         break;
     #if WEBKIT_CHECK_VERSION (1, 3, 11)
     case PROP_MAXIMUM_CACHE_SIZE:
@@ -1404,8 +1527,43 @@ midori_web_settings_set_property (GObject*      object,
     case PROP_STRIP_REFERER:
         web_settings->strip_referer = g_value_get_boolean (value);
         break;
+    case PROP_ENFORCE_FONT_FAMILY:
+        if ((web_settings->enforce_font_family = g_value_get_boolean (value)))
+        {
+            gchar* font_family = katze_object_get_string (web_settings,
+                                                          "default-font-family");
+            gchar* css = g_strdup_printf ("* { font-family: %s !important; }",
+                                          font_family);
+            midori_web_settings_add_style (web_settings, "enforce-font-family", css);
+            g_free (font_family);
+            g_free (css);
+        }
+        else
+            midori_web_settings_remove_style (web_settings, "enforce-font-family");
+        break;
     case PROP_FLASH_WINDOW_ON_BG_TABS:
         web_settings->flash_window_on_bg_tabs = g_value_get_boolean (value);
+        break;
+    case PROP_USER_STYLESHEET_URI:
+        {
+            gint old_len = web_settings->user_stylesheet_uri_cached
+                ? strlen (web_settings->user_stylesheet_uri_cached) : 0;
+            gint new_len = 0;
+            if ((web_settings->user_stylesheet_uri = g_value_dup_string (value)))
+            {
+                gchar* import = g_strdup_printf ("@import url(\"%s\");",
+                    web_settings->user_stylesheet_uri);
+                gchar* encoded = g_base64_encode ((const guchar*)import, strlen (import));
+                new_len = strlen (encoded);
+                base64_space_pad (encoded, new_len);
+                g_free (import);
+                katze_assign (web_settings->user_stylesheet_uri_cached, encoded);
+            }
+            /* Make original user-stylesheet-uri available to main.c */
+            g_object_set_data (G_OBJECT (web_settings), "user-stylesheet-uri",
+                web_settings->user_stylesheet_uri);
+            midori_web_settings_process_stylesheets (web_settings, new_len - old_len);
+        }
         break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -1612,6 +1770,9 @@ midori_web_settings_get_property (GObject*    object,
     case PROP_MAXIMUM_COOKIE_AGE:
         g_value_set_int (value, web_settings->maximum_cookie_age);
         break;
+    case PROP_FIRST_PARTY_COOKIES_ONLY:
+        g_value_set_boolean (value, web_settings->first_party_cookies_only);
+        break;
 
     case PROP_MAXIMUM_HISTORY_AGE:
         g_value_set_int (value, web_settings->maximum_history_age);
@@ -1622,6 +1783,9 @@ midori_web_settings_get_property (GObject*    object,
         break;
     case PROP_HTTP_PROXY:
         g_value_set_string (value, web_settings->http_proxy);
+        break;
+    case PROP_HTTP_PROXY_PORT:
+        g_value_set_int (value, web_settings->http_proxy_port);
         break;
     #if WEBKIT_CHECK_VERSION (1, 3, 11)
     case PROP_MAXIMUM_CACHE_SIZE:
@@ -1656,8 +1820,15 @@ midori_web_settings_get_property (GObject*    object,
     case PROP_STRIP_REFERER:
         g_value_set_boolean (value, web_settings->strip_referer);
         break;
+    case PROP_ENFORCE_FONT_FAMILY:
+        g_value_set_boolean (value, web_settings->enforce_font_family);
+        break;
     case PROP_FLASH_WINDOW_ON_BG_TABS:
         g_value_set_boolean (value, web_settings->flash_window_on_bg_tabs);
+        break;
+    case PROP_USER_STYLESHEET_URI:
+        g_value_take_string (value, katze_object_get_string (web_settings,
+            "WebKitWebSettings::user-stylesheet-uri"));
         break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -1681,4 +1852,115 @@ midori_web_settings_new (void)
                                                     NULL);
 
     return web_settings;
+}
+
+static void
+midori_web_settings_process_stylesheets (MidoriWebSettings* settings,
+                                         gint               delta_len)
+{
+    GHashTableIter it;
+    GString* css;
+    gchar* encoded;
+    gpointer value;
+    static guint length = 0;
+
+    g_return_if_fail ((gint)length >= -delta_len);
+
+    length += delta_len;
+
+    /* Precalculate size to avoid re-allocations */
+    css = g_string_sized_new (length);
+
+    if (settings->user_stylesheet_uri_cached != NULL)
+        g_string_append (css, settings->user_stylesheet_uri_cached);
+
+    if (settings->user_stylesheets != NULL)
+    {
+        g_hash_table_iter_init (&it, settings->user_stylesheets);
+        while (g_hash_table_iter_next (&it, NULL, &value))
+            g_string_append (css, (gchar*)value);
+    }
+
+    /* data: uri prefix from Source/WebCore/page/Page.cpp:700 in WebKit */
+    encoded = g_strconcat ("data:text/css;charset=utf-8;base64,", css->str, NULL);
+    g_object_set (G_OBJECT (settings), "WebKitWebSettings::user-stylesheet-uri", encoded, NULL);
+    g_free (encoded);
+    g_string_free (css, TRUE);
+}
+
+static void
+base64_space_pad (gchar* base64,
+                  guint  len)
+{
+    /* Replace '=' padding at the end with encoded spaces
+       so WebKit will accept concatenations to this string */
+    if (len > 2 && base64[len - 2] == '=')
+    {
+        base64[len - 3] += 2;
+        base64[len - 2] = 'A';
+    }
+    if (len > 1 && base64[len - 1] == '=')
+        base64[len - 1] = 'g';
+}
+
+/**
+ * midori_web_settings_add_style:
+ * @rule_id: a static string identifier
+ * @style: a CSS stylesheet
+ *
+ * Adds or replaces a custom stylesheet.
+ *
+ * Since: 0.4.2
+ **/
+void
+midori_web_settings_add_style (MidoriWebSettings* settings,
+                               const gchar*       rule_id,
+                               const gchar*       style)
+{
+    gchar* base64;
+    guint len;
+
+    g_return_if_fail (MIDORI_IS_WEB_SETTINGS (settings));
+    g_return_if_fail (rule_id != NULL);
+    g_return_if_fail (style != NULL);
+
+    len = strlen (style);
+    base64 = g_base64_encode ((const guchar*)style, len);
+    len = ((len + 2) / 3) * 4;
+    base64_space_pad (base64, len);
+
+    if (settings->user_stylesheets == NULL)
+        settings->user_stylesheets = g_hash_table_new_full (g_str_hash, NULL,
+                                                            NULL, g_free);
+
+    g_hash_table_insert (settings->user_stylesheets, (gchar*)rule_id, base64);
+    midori_web_settings_process_stylesheets (settings, len);
+}
+
+/**
+ * midori_web_settings_remove_style:
+ * @rule_id: the string identifier used previously
+ *
+ * Removes a stylesheet from midori settings.
+ *
+ * Since: 0.4.2
+ **/
+void
+midori_web_settings_remove_style (MidoriWebSettings* settings,
+                                  const gchar*       rule_id)
+{
+    gchar* str;
+
+    g_return_if_fail (MIDORI_IS_WEB_SETTINGS (settings));
+    g_return_if_fail (rule_id != NULL);
+
+    if (settings->user_stylesheets != NULL)
+    {
+        if ((str = g_hash_table_lookup (settings->user_stylesheets, rule_id)))
+        {
+            guint len = strlen (str);
+            g_hash_table_remove (settings->user_stylesheets, rule_id);
+            midori_web_settings_process_stylesheets (settings, -len);
+        }
+    }
 }

@@ -29,16 +29,18 @@ from Configure import find_program_impl
 
 major = 0
 minor = 4
-micro = 1
+micro = 2
 
 APPNAME = 'midori'
-VERSION = str (major) + '.' + str (minor) + '.' + str (micro)
+VERSION = VERSION_FULL = str (major) + '.' + str (minor) + '.' + str (micro)
+VERSION_SUFFIX = ' (%s)' % VERSION
 
 try:
     if os.path.isdir ('.git'):
         git = Utils.cmd_output (['git', 'describe'], silent=True)
         if git:
-            VERSION = git.strip ()
+            VERSION_FULL = git.strip ()
+            VERSION_SUFFIX = VERSION_FULL.replace (VERSION, '')
 except:
     pass
 
@@ -164,13 +166,28 @@ def configure (conf):
             atleast_version=version, mandatory=mandatory)
         return conf.env['HAVE_' + var]
 
-    if option_enabled ('unique') and not option_enabled('gtk3'):
-        check_pkg ('unique-1.0', '0.9', False)
+    def check_version (given_version, major, minor, micro):
+        if '.' in given_version:
+            given_major, given_minor, given_micro = given_version.split ('.')
+        else:
+            given_major, given_minor, given_micro = given_version
+        return int(given_major) >  major or \
+               int(given_major) == major and int(given_minor) >  minor or \
+               int(given_major) == major and int(given_minor) == minor and int(given_micro) >= micro
+
+    if option_enabled ('unique'):
+        if option_enabled('gtk3'): unique_pkg = 'unique-3.0'
+        else: unique_pkg = 'unique-1.0'
+        check_pkg (unique_pkg, '0.9', False)
         unique = ['N/A', 'yes'][conf.env['HAVE_UNIQUE'] == 1]
         if unique != 'yes':
             option_checkfatal ('unique', 'single instance')
+            conf.define ('UNIQUE_VERSION', 'No')
+        else:
+            conf.define ('UNIQUE_VERSION', conf.check_cfg (modversion=unique_pkg))
     else:
         unique = 'no '
+        conf.define ('UNIQUE_VERSION', 'No')
     conf.define ('HAVE_UNIQUE', [0,1][unique == 'yes'])
 
     if option_enabled ('libnotify'):
@@ -178,14 +195,18 @@ def configure (conf):
         libnotify = ['N/A','yes'][conf.env['HAVE_LIBNOTIFY'] == 1]
         if libnotify != 'yes':
             option_checkfatal ('libnotify', 'notifications')
+            conf.define ('LIBNOTIFY_VERSION', 'No')
+        else:
+            conf.define ('LIBNOTIFY_VERSION', conf.check_cfg (modversion='libnotify'))
     else:
         libnotify = 'no '
+        conf.define ('LIBNOTIFY_VERSION', 'No')
     conf.define ('HAVE_LIBNOTIFY', [0,1][libnotify == 'yes'])
 
     conf.check (lib='m', mandatory=True)
     check_pkg ('gmodule-2.0', '2.8.0', False)
     check_pkg ('gthread-2.0', '2.8.0', False)
-    check_pkg ('gio-2.0', '2.16.0')
+    check_pkg ('gio-2.0', '2.22.0')
     args = ''
     if Options.platform == 'win32':
         args = '--define-variable=target=win32'
@@ -196,41 +217,35 @@ def configure (conf):
                     includes='/usr/X11R6/include', mandatory=False)
         conf.check (lib='Xss', libpath='/usr/X11R6/lib', mandatory=False)
     if option_enabled ('gtk3'):
+        if option_enabled ('addons') and not check_version (conf.env['VALAC_VERSION'], 0, 13, 2):
+            Utils.pprint ('RED', 'Vala 0.13.2 or later is required ' \
+                'to build with GTK+ 3 and extensions.\n' \
+                'Pass --disable-addons to build without extensions.\n' \
+                'Pass --disable-gtk3 to build with extensions and GTK+ 2.')
+            sys.exit (1)
         check_pkg ('gtk+-3.0', '3.0.0', var='GTK', mandatory=False)
         check_pkg ('webkitgtk-3.0', '1.1.17', var='WEBKIT', mandatory=False)
         if not conf.env['HAVE_GTK'] or not conf.env['HAVE_WEBKIT']:
             Utils.pprint ('RED', 'GTK+3 was not found.\n' \
                 'Pass --disable-gtk3 to build without GTK+3.')
             sys.exit (1)
+        if check_version (conf.check_cfg (modversion='webkitgtk-3.0'), 1, 5, 1):
+            check_pkg ('javascriptcoregtk-1.0', '1.5.1', args=args)
         conf.env.append_value ('VALAFLAGS', '-D HAVE_GTK3')
     else:
         check_pkg ('gtk+-2.0', '2.10.0', var='GTK')
         check_pkg ('webkit-1.0', '1.1.17', args=args)
+        if check_version (conf.check_cfg (modversion='webkit-1.0'), 1, 5, 1):
+            check_pkg ('javascriptcoregtk-1.0', '1.5.1', args=args)
     conf.env['HAVE_GTK3'] = option_enabled ('gtk3')
-    webkit_version = conf.check_cfg (modversion='webkit-1.0').split ('.')
-    if int(webkit_version[0]) >= 1 and int(webkit_version[1]) >= 5 and int(webkit_version[2]) >= 1:
-        check_pkg ('javascriptcoregtk-1.0', '1.1.17', args=args)
-    check_pkg ('libsoup-2.4', '2.25.2')
+    check_pkg ('libsoup-2.4', '2.27.90')
     conf.define ('HAVE_LIBSOUP_2_25_2', 1)
-    check_pkg ('libsoup-2.4', '2.27.90', False, var='LIBSOUP_2_27_90')
+    conf.define ('HAVE_LIBSOUP_2_27_90', 1)
     check_pkg ('libsoup-2.4', '2.29.3', False, var='LIBSOUP_2_29_3')
     check_pkg ('libsoup-2.4', '2.29.91', False, var='LIBSOUP_2_29_91')
     conf.define ('LIBSOUP_VERSION', conf.check_cfg (modversion='libsoup-2.4'))
     check_pkg ('libxml-2.0', '2.6')
     check_pkg ('sqlite3', '3.0', True, var='SQLITE')
-
-    if conf.env['HAVE_LIBSOUP_2_27_90']:
-       idn = 'yes'
-       conf.define ('HAVE_LIBIDN', 0)
-    else:
-        if option_enabled ('libidn'):
-            check_pkg ('libidn', '1.0', False)
-            idn = ['N/A','yes'][conf.env['HAVE_LIBIDN'] == 1]
-            if idn != 'yes':
-                option_checkfatal ('libidn', 'international domain names')
-        else:
-            idn = 'no '
-        conf.define ('HAVE_LIBIDN', [0,1][idn == 'yes'])
 
     if option_enabled ('hildon'):
         if check_pkg ('hildon-1', mandatory=False, var='HILDON'):
@@ -269,16 +284,15 @@ def configure (conf):
     else:
         conf.check (header_name='signal.h')
 
-    conf.define ('PACKAGE_VERSION', VERSION)
     conf.define ('PACKAGE_NAME', APPNAME)
     conf.define ('PACKAGE_BUGREPORT', 'https://bugs.launchpad.net/midori')
     conf.define ('GETTEXT_PACKAGE', APPNAME)
 
+    conf.define ('MIDORI_VERSION', VERSION)
     conf.define ('MIDORI_MAJOR_VERSION', major)
     conf.define ('MIDORI_MINOR_VERSION', minor)
     conf.define ('MIDORI_MICRO_VERSION', micro)
 
-    conf.write_config_header ('config.h')
     conf.env.append_value ('CCFLAGS', '-DHAVE_CONFIG_H -include config.h'.split ())
     debug_level = Options.options.debug_level
     compiler = conf.env['CC_NAME']
@@ -287,6 +301,15 @@ def configure (conf):
         sys.exit (1)
     elif debug_level == '':
         debug_level = 'debug'
+
+    if debug_level == 'full':
+        conf.define ('PACKAGE_VERSION', '%s (debug)' % VERSION_FULL)
+        conf.env.append_value ('CCFLAGS', '-DMIDORI_VERSION_SUFFIX="%s (debug)"' % VERSION_SUFFIX)
+    else:
+        conf.define ('PACKAGE_VERSION', VERSION_FULL)
+        conf.env.append_value ('CCFLAGS', '-DMIDORI_VERSION_SUFFIX="%s"' % VERSION_SUFFIX)
+    conf.write_config_header ('config.h')
+
     if compiler == 'gcc':
         if debug_level == 'none':
             if 'CCFLAGS' in os.environ:
@@ -314,15 +337,17 @@ def configure (conf):
                 '-DGTK_DISABLE_DEPRECATED -DPANGO_DISABLE_DEPRECATED '
                 '-DGDK_MULTIHEAD_SAFE -DGTK_MULTIHEAD_SAFE'.split ())
     if debug_level == 'full':
-        conf.env.append_value ('VALAFLAGS', '--enable-checking'.split ())
+        conf.env.append_value ('VALAFLAGS', '--debug --enable-checking'.split ())
+    elif debug_level == 'debug':
+        conf.env.append_value ('VALAFLAGS', '--debug'.split ())
     elif debug_level == 'none':
         conf.env.append_value ('VALAFLAGS', '--disable-assert')
+    conf.env.append_value ('VALAFLAGS', '--enable-deprecated')
     print ('''
         Localization:        %(nls)s (intltool)
         Icon optimizations:  %(icons)s (rsvg-convert)
         Notifications:       %(libnotify)s (libnotify)
 
-        IDN support:         %(idn)s (libidn or libsoup 2.27.90)
         API documentation:   %(api_docs)s (gtk-doc)
         ''' % locals ())
     if unique == 'yes' and conf.check_cfg (modversion='unique-1.0') == '1.0.4':
@@ -366,7 +391,6 @@ def set_options (opt):
 
     group = opt.add_option_group ('Optional features', '')
     add_enable_option ('unique', 'single instance support', group)
-    add_enable_option ('libidn', 'international domain name support', group)
     add_enable_option ('libnotify', 'notification support', group)
     add_enable_option ('addons', 'building of extensions', group)
     add_enable_option ('tests', 'building of tests', group, disable=True)
@@ -472,30 +496,23 @@ def build (bld):
         else:
             Utils.pprint ('BLUE', "logo-shade could not be rasterized.")
 
-    bld.install_files ('${MDATADIR}/' + APPNAME + '/res', 'data/error.html')
-    bld.install_files ('${MDATADIR}/' + APPNAME + '/res', 'data/speeddial-head.html')
+    for res_file in ['error.html', 'close.png']:
+        bld.install_files ('${MDATADIR}/' + APPNAME + '/res', 'data/' + res_file)
+    bld.install_as ( \
+        '${MDATADIR}/' + APPNAME + '/res/speeddial-head-%s.html' % VERSION, \
+        'data/speeddial-head.html')
 
     if bld.env['addons']:
         bld.install_files ('${MDATADIR}/' + APPNAME + '/res', 'data/autosuggestcontrol.js')
         bld.install_files ('${MDATADIR}/' + APPNAME + '/res', 'data/autosuggestcontrol.css')
 
-        # FIXME: Determine the library naming for other platforms
-        if bld.env['platform'] == 'win32':
+        if 1:
             extensions = os.listdir ('data/extensions')
             for extension in extensions:
-                folder = 'lib' + extension + '.dll'
                 source = 'data/extensions/' + extension +  '/config'
                 if os.path.exists (source):
                     bld.install_files ('${SYSCONFDIR}/xdg/' + APPNAME + \
-                                       '/extensions/' + folder, source)
-        elif Options.platform == 'linux':
-            extensions = os.listdir ('data/extensions')
-            for extension in extensions:
-                folder = 'lib' + extension + '.so'
-                source = 'data/extensions/' + extension +  '/config'
-                if os.path.exists (source):
-                    bld.install_files ('${SYSCONFDIR}/xdg/' + APPNAME + \
-                                       '/extensions/' + folder, source)
+                                       '/extensions/' + extension, source)
 
     if Options.commands['check'] or bld.env['tests']:
         bld.add_subdirs ('tests')

@@ -12,12 +12,8 @@
 
 #include "midori-extension.h"
 
-#if HAVE_CONFIG_H
-    #include <config.h>
-#endif
-
 #include <katze/katze.h>
-#include "sokoke.h"
+#include "midori-platform.h"
 #include <glib/gi18n.h>
 
 G_DEFINE_TYPE (MidoriExtension, midori_extension, G_TYPE_OBJECT);
@@ -294,7 +290,16 @@ midori_extension_activate_cb (MidoriExtension* extension,
             if (error->code == G_FILE_ERROR_NOENT)
             {
                 gchar* filename = g_object_get_data (G_OBJECT (extension), "filename");
-                gchar* folder = g_strconcat ("extensions/", filename, NULL);
+                gchar* folder;
+                if (g_str_has_prefix (filename, MIDORI_MODULE_PREFIX))
+                    filename = &filename[strlen (MIDORI_MODULE_PREFIX)];
+                if (g_str_has_suffix (filename, G_MODULE_SUFFIX))
+                    filename = g_strndup (filename,
+                        strlen (filename) - strlen ("." G_MODULE_SUFFIX));
+                else
+                    filename = g_strdup (filename);
+                folder = g_strconcat ("extensions/", filename, NULL);
+                g_free (filename);
                 katze_assign (config_file,
                     sokoke_find_config_filename (folder, "config"));
                 g_free (folder);
@@ -420,8 +425,21 @@ midori_extension_set_property (GObject*      object,
         katze_assign (extension->priv->description, g_value_dup_string (value));
         break;
     case PROP_VERSION:
-        katze_assign (extension->priv->version, g_value_dup_string (value));
+    {
+        /* Don't show version suffix if it matches the running Midori */
+        const gchar* version = g_value_get_string (value);
+        if (version && g_str_has_suffix (version, MIDORI_VERSION_SUFFIX))
+            katze_assign (extension->priv->version,
+                g_strndup (version,
+                           strlen (version) - strlen (MIDORI_VERSION_SUFFIX)));
+        /* No version suffix at all, must be 0.4.1 or 0.4.1 git */
+        else if (version && !strchr (version, '-') && !strchr (version, '('))
+            katze_assign (extension->priv->version,
+                g_strconcat (version, " (0.4.1)", NULL));
+        else
+            katze_assign (extension->priv->version, g_strdup (version));
         break;
+    }
     case PROP_AUTHORS:
         katze_assign (extension->priv->authors, g_value_dup_string (value));
         break;

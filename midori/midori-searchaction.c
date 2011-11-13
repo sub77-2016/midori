@@ -11,12 +11,11 @@
 
 #include "midori-searchaction.h"
 
-#include "gtk3-compat.h"
-#include "gtkiconentry.h"
 #include "marshal.h"
-#include "sokoke.h"
 #include "midori-platform.h"
+#include "midori-core.h"
 
+#include "config.h"
 #include <string.h>
 #include <glib/gi18n.h>
 #include <gdk/gdkkeysyms.h>
@@ -407,11 +406,11 @@ midori_search_action_get_icon (KatzeItem*    item,
                                const gchar** icon_name,
                                gboolean      in_entry)
 {
-    const gchar* icon;
+    const gchar* icon = katze_item_get_uri (item);
     GdkScreen* screen;
     GtkIconTheme* icon_theme;
 
-    if ((icon = katze_item_get_uri (item)) && (g_strstr_len (icon, 8, "://")))
+    if (midori_uri_is_resource (icon))
         return katze_load_cached_icon (icon, widget);
 
     if (icon_name == NULL)
@@ -474,10 +473,8 @@ midori_search_action_icon_released_cb (GtkWidget*           entry,
                 gtk_image_set_from_icon_name (GTK_IMAGE (image), icon_name,
                                               GTK_ICON_SIZE_MENU);
             gtk_image_menu_item_set_image (GTK_IMAGE_MENU_ITEM (menuitem), image);
-            #if GTK_CHECK_VERSION (2, 16, 0)
             gtk_image_menu_item_set_always_show_image (
                 GTK_IMAGE_MENU_ITEM (menuitem), TRUE);
-            #endif
             gtk_menu_shell_append (GTK_MENU_SHELL (menu), menuitem);
             g_object_set_data (G_OBJECT (menuitem), "engine", item);
             g_signal_connect (menuitem, "activate",
@@ -539,7 +536,7 @@ midori_search_action_set_entry_icon (MidoriSearchAction* search_action,
         else
             gtk_icon_entry_set_icon_from_icon_name (GTK_ICON_ENTRY (entry),
                 GTK_ICON_ENTRY_PRIMARY, icon_name);
-        sokoke_entry_set_default_text (GTK_ENTRY (entry),
+        gtk_entry_set_placeholder_text (GTK_ENTRY (entry),
             katze_item_get_name (search_action->current_item));
     }
     else
@@ -547,7 +544,7 @@ midori_search_action_set_entry_icon (MidoriSearchAction* search_action,
         gtk_icon_entry_set_icon_from_stock (GTK_ICON_ENTRY (entry),
                                             GTK_ICON_ENTRY_PRIMARY,
                                             GTK_STOCK_FIND);
-        sokoke_entry_set_default_text (GTK_ENTRY (entry), "");
+        gtk_entry_set_placeholder_text (GTK_ENTRY (entry), "");
     }
 }
 
@@ -909,11 +906,7 @@ midori_search_action_get_editor (MidoriSearchAction* search_action,
     dialog = gtk_dialog_new_with_buttons (
         new_engine ? _("Add search engine") : _("Edit search engine"),
         toplevel ? GTK_WINDOW (toplevel) : NULL,
-#if GTK_CHECK_VERSION(3,0,0)
-        GTK_DIALOG_DESTROY_WITH_PARENT,
-#else
         GTK_DIALOG_DESTROY_WITH_PARENT | GTK_DIALOG_NO_SEPARATOR,
-#endif
         GTK_STOCK_CANCEL, GTK_RESPONSE_CANCEL,
         new_engine ? GTK_STOCK_ADD : GTK_STOCK_SAVE, GTK_RESPONSE_ACCEPT,
         NULL);
@@ -1308,11 +1301,7 @@ midori_search_action_get_dialog (MidoriSearchAction* search_action)
         gtk_widget_get_toplevel (search_action->last_proxy) : NULL;
     dialog = gtk_dialog_new_with_buttons (dialog_title,
         toplevel ? GTK_WINDOW (toplevel) : NULL,
-#if GTK_CHECK_VERSION(3,0,0)
-        GTK_DIALOG_DESTROY_WITH_PARENT,
-#else
         GTK_DIALOG_DESTROY_WITH_PARENT | GTK_DIALOG_NO_SEPARATOR,
-#endif
         #if !HAVE_OSX
         #if !HAVE_HILDON
         GTK_STOCK_HELP, GTK_RESPONSE_HELP,

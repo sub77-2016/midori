@@ -13,10 +13,9 @@
 
 #include "midori-app.h"
 #include "midori-browser.h"
-#include "midori-stock.h"
+#include "midori-platform.h"
 #include "midori-view.h"
 
-#include "sokoke.h"
 #include <glib/gi18n.h>
 
 struct _MidoriTransfers
@@ -263,8 +262,8 @@ midori_transfers_treeview_render_text_cb (GtkTreeViewColumn* column,
     gtk_tree_model_get (model, iter, 1, &download, -1);
 
     /* FIXME: Ellipsize filename */
-    current = g_format_size_for_display (webkit_download_get_current_size (download));
-    total = g_format_size_for_display (webkit_download_get_total_size (download));
+    current = g_format_size (webkit_download_get_current_size (download));
+    total = g_format_size (webkit_download_get_total_size (download));
     size_text = g_strdup_printf (_("%s of %s"), current, total);
     g_free (current);
     g_free (total);
@@ -562,19 +561,3 @@ midori_transfers_init (MidoriTransfers* transfers)
         G_CALLBACK (midori_transfers_hierarchy_changed_cb), NULL);
 }
 
-/**
- * midori_transfers_new:
- *
- * Creates a new empty transfers.
- *
- * Return value: a new #MidoriTransfers
- *
- * Since 0.1.5
- **/
-GtkWidget*
-midori_transfers_new (void)
-{
-    MidoriTransfers* transfers = g_object_new (MIDORI_TYPE_TRANSFERS, NULL);
-
-    return GTK_WIDGET (transfers);
-}

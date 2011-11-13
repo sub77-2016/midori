@@ -12,14 +12,13 @@
 
 #include "midori-locationaction.h"
 
-#include "gtk3-compat.h"
-#include "gtkiconentry.h"
 #include "marshal.h"
-#include "sokoke.h"
 #include "midori-browser.h"
 #include "midori-searchaction.h"
 #include "midori-platform.h"
+#include <midori/midori-core.h>
 
+#include "config.h"
 #include <string.h>
 #include <glib/gi18n.h>
 #include <gdk/gdkkeysyms.h>
@@ -291,6 +290,15 @@ midori_location_action_popup_position (GtkWidget* popup,
     GtkAllocation allocation;
 
     gdk_window_get_origin (window, &wx, &wy);
+
+    if (!gtk_widget_get_has_window (widget))
+    {
+        GtkAllocation alloc;
+        gtk_widget_get_allocation (widget, &alloc);
+        wx += alloc.x;
+        wy += alloc.y;
+    }
+
     gtk_widget_size_request (popup, &menu_req);
     gtk_widget_size_request (widget, &widget_req);
 
@@ -356,7 +364,22 @@ midori_location_action_popup_timeout_cb (gpointer data)
     if (!action->entry || !gtk_widget_has_focus (action->entry) || !action->history)
         return FALSE;
 
-    if (!(action->key && *action->key))
+    /* No completion when typing a search token */
+    if (action->search_engines != NULL)
+    {
+        gchar** parts = g_strsplit (action->key, " ", 2);
+        if (parts && *parts && parts[1]
+                  && katze_array_find_token (action->search_engines, *parts))
+        {
+            g_strfreev (parts);
+            midori_location_action_popdown_completion (action);
+            return FALSE;
+        }
+        g_strfreev (parts);
+    }
+
+    /* Empaty string or starting with a space means: no completion */
+    if (!(action->key && *action->key && *action->key != ' '))
     {
         midori_location_action_popdown_completion (action);
         return FALSE;
@@ -508,7 +531,7 @@ midori_location_action_popup_timeout_cb (gpointer data)
             gchar* title;
             GdkPixbuf* icon;
 
-            uri = sokoke_search_uri (katze_item_get_uri (item), action->key);
+            uri = midori_uri_for_search (katze_item_get_uri (item), action->key);
             title = g_strdup_printf (_("Search with %s"), katze_item_get_name (item));
             icon = midori_search_action_get_icon (item, action->treeview, NULL, FALSE);
             gtk_list_store_insert_with_values (store, NULL, matches + i,
@@ -731,6 +754,9 @@ midori_location_action_create_tool_item (GtkAction* action)
     entry = gtk_icon_entry_new ();
     gtk_icon_entry_set_icon_from_stock (GTK_ICON_ENTRY (entry),
          GTK_ICON_ENTRY_PRIMARY, GTK_STOCK_FILE);
+    /* Work-around icon being activatable by default */
+    gtk_icon_entry_set_icon_highlight (GTK_ICON_ENTRY (entry),
+         GTK_ICON_ENTRY_PRIMARY, FALSE);
     gtk_icon_entry_set_icon_highlight (GTK_ICON_ENTRY (entry),
          GTK_ICON_ENTRY_SECONDARY, TRUE);
     #endif
@@ -1076,7 +1102,7 @@ midori_location_entry_render_text_cb (GtkCellLayout*   layout,
     keys = g_strsplit_set (key, " %", -1);
     g_free (key);
 
-    uri_temp = sokoke_uri_unescape_string (uri_escaped);
+    uri_temp = midori_uri_unescape (uri_escaped);
     g_free (uri_escaped);
     uri = g_strescape (uri_temp, NULL);
     g_free (uri_temp);
@@ -1258,7 +1284,8 @@ midori_location_action_populate_popup_cb (GtkWidget*            entry,
     /* i18n: Right-click on Location, Open an URL from the clipboard */
     menuitem = gtk_menu_item_new_with_mnemonic (_("Paste and p_roceed"));
     gtk_widget_show (menuitem);
-    gtk_menu_shell_append (menu, menuitem);
+    /* Insert menu item after default Paste menu item */
+    gtk_menu_shell_insert (menu, menuitem, 3);
     g_signal_connect (menuitem, "activate",
         G_CALLBACK (midori_location_action_paste_proceed_cb), location_action);
 }
@@ -1503,14 +1530,6 @@ midori_location_action_set_icon_for_uri (MidoriLocationAction* location_action,
     #endif
 }
 
-void
-midori_location_action_set_title_for_uri (MidoriLocationAction* location_action,
-                                          const gchar*          title,
-                                          const gchar*          uri)
-{
-    /* Nothing to do */
-}
-
 /**
  * midori_location_action_set_search_engines:
  * @location_action: a #MidoriLocationAction
@@ -1590,27 +1609,6 @@ midori_location_action_set_secondary_icon (MidoriLocationAction* location_action
 }
 
 /**
- * midori_location_action_delete_item_from_uri:
- * @location_action: a #MidoriLocationAction
- * @uri: a string
- *
- * Finds the item from the list matching @uri
- * and removes it if it is the last instance.
- **/
-void
-midori_location_action_delete_item_from_uri (MidoriLocationAction* location_action,
-                                             const gchar*          uri)
-{
-    /* Nothing to do */
-}
-
-void
-midori_location_action_clear (MidoriLocationAction* location_action)
-{
-    g_return_if_fail (MIDORI_IS_LOCATION_ACTION (location_action));
-}
-
-/**
  * midori_location_action_set_security_hint:
  * @location_action: a #MidoriLocationAction
  * @hint: a security hint
@@ -1656,7 +1654,7 @@ midori_location_action_set_security_hint (MidoriLocationAction* location_action,
         }
         else if (hint == MIDORI_SECURITY_TRUSTED)
         {
-            gdk_color_parse ("#fcf19a", &bg_color);
+            gdk_color_parse ("#d1eeb9", &bg_color);
             gdk_color_parse ("#000", &fg_color);
             #if !HAVE_HILDON
             if (gtk_icon_theme_has_icon (icon_theme, "lock-secure"))

@@ -15,59 +15,7 @@
 
 #include <JavaScriptCore/JavaScript.h>
 #include <midori/midori-websettings.h>
-
-#if !GLIB_CHECK_VERSION (2, 14, 0)
-    #define G_PARAM_STATIC_STRINGS \
-    (G_PARAM_STATIC_NAME | G_PARAM_STATIC_NICK | G_PARAM_STATIC_BLURB)
-#endif
-
-#if !GLIB_CHECK_VERSION (2, 18, 0)
-    #define g_content_type_from_mime_type(mtp) g_strdup (mtp)
-#endif
-
-#if !GTK_CHECK_VERSION (2, 14, 0)
-    #define gtk_dialog_get_content_area(dlg) dlg->vbox
-    #define gtk_dialog_get_action_area(dlg) dlg->action_area
-    #define gtk_widget_get_window(wdgt) wdgt->window
-#endif
-
-#if !GTK_CHECK_VERSION (2, 16, 0)
-    #define GTK_ACTIVATABLE GTK_WIDGET
-    #define gtk_activatable_get_related_action gtk_widget_get_action
-    #define gtk_menu_item_set_label(menuitem, label) \
-        gtk_label_set_label (GTK_LABEL (GTK_BIN (menuitem)->child), \
-                             label ? label : "");
-#endif
-
-#if !GTK_CHECK_VERSION (2, 18, 0)
-    #define gtk_widget_is_toplevel(widget) GTK_WIDGET_TOPLEVEL (widget)
-    #define gtk_widget_has_focus(widget) GTK_WIDGET_HAS_FOCUS (widget)
-    #define gtk_widget_get_visible(widget) GTK_WIDGET_VISIBLE (widget)
-    #define gtk_widget_get_sensitive(widget) GTK_WIDGET_IS_SENSITIVE (widget)
-    #define gtk_widget_set_can_focus(widget,flag) \
-        GTK_WIDGET_SET_FLAGS (widget, GTK_CAN_FOCUS)
-    #define gtk_widget_get_allocation(wdgt, alloc) *alloc = wdgt->allocation
-#endif
-
-#if !GTK_CHECK_VERSION (2, 20, 0)
-    #define gtk_widget_get_realized(widget) GTK_WIDGET_REALIZED (widget)
-#endif
-
-#if !GTK_CHECK_VERSION(2, 12, 0)
-
-void
-gtk_widget_set_has_tooltip             (GtkWidget*         widget,
-                                        gboolean           has_tooltip);
-
-void
-gtk_widget_set_tooltip_text            (GtkWidget*         widget,
-                                        const gchar*       text);
-
-void
-gtk_tool_item_set_tooltip_text         (GtkToolItem*       toolitem,
-                                        const gchar*       text);
-
-#endif
+#include <katze/gtk3-compat.h>
 
 gchar*
 sokoke_js_script_eval                   (JSContextRef    js_context,
@@ -101,27 +49,11 @@ void
 sokoke_spawn_app                        (const gchar*    uri,
                                          gboolean        inherit_config);
 
-gchar* sokoke_search_uri                (const gchar*    uri,
-                                         const gchar*    keywords);
-
-gchar*
-sokoke_hostname_from_uri                (const gchar*    uri,
-                                         gchar**         path);
-
-gchar*
-sokoke_uri_to_ascii                     (const gchar*    uri);
-
 gboolean
 sokoke_external_uri                     (const gchar*    uri);
 
 gchar*
 sokoke_magic_uri                        (const gchar*    uri);
-
-gchar*
-sokoke_uri_unescape_string              (const gchar*    uri);
-
-gchar*
-sokoke_format_uri_for_display           (const gchar*    uri);
 
 void
 sokoke_combo_box_add_strings            (GtkComboBox*    combobox,
@@ -132,16 +64,9 @@ void
 sokoke_widget_set_visible               (GtkWidget*      widget,
                                          gboolean        visible);
 
-void
-sokoke_container_show_children          (GtkContainer*   container);
-
 GtkWidget*
 sokoke_xfce_header_new                  (const gchar*    icon,
                                          const gchar*    title);
-
-void
-sokoke_widget_set_pango_font_style      (GtkWidget*      widget,
-                                         PangoStyle      style);
 
 void
 sokoke_entry_set_default_text           (GtkEntry*       entry,
@@ -205,9 +130,6 @@ gint
 sokoke_days_between                     (const time_t*   day1,
                                          const time_t*   day2);
 
-void
-sokoke_register_stock_items             (void);
-
 const gchar*
 sokoke_set_config_dir                   (const gchar*    new_config_dir);
 
@@ -226,7 +148,8 @@ gchar*
 sokoke_find_lib_path                    (const gchar*    folder);
 
 gchar*
-sokoke_find_data_filename               (const gchar*    filename);
+sokoke_find_data_filename               (const gchar*    filename,
+                                         gboolean        res);
 
 gchar**
 sokoke_get_argv                         (gchar**         argument_vector);

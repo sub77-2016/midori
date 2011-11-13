@@ -10,7 +10,6 @@
 */
 
 #include <midori/midori.h>
-#include <midori/sokoke.h>
 
 static void
 tabs_minimized_app_add_browser_cb (MidoriApp*       app,
@@ -76,7 +75,7 @@ extension_init (void)
     MidoriExtension* extension = g_object_new (MIDORI_TYPE_EXTENSION,
         "name", _("Only Icons on Tabs by default"),
         "description", _("New tabs have no label by default"),
-        "version", "0.1",
+        "version", "0.1" MIDORI_VERSION_SUFFIX,
         "authors", "MonkeyOfDoom <pixelmonkey@ensellitis.com>",
         NULL);
 

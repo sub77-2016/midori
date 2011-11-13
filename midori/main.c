@@ -10,19 +10,19 @@
  See the file COPYING for the full license text.
 */
 
-#if HAVE_CONFIG_H
-    #include <config.h>
-#endif
-
-#include "midori.h"
+#include "midori-app.h"
 #include "midori-array.h"
 #include "midori-bookmarks.h"
+#include "midori-extension.h"
 #include "midori-extensions.h"
 #include "midori-history.h"
 #include "midori-transfers.h"
+#include "midori-panel.h"
+#include "midori-platform.h"
+#include "midori-preferences.h"
+#include <midori/midori-core.h>
 
-#include "sokoke.h"
-
+#include <config.h>
 #if HAVE_UNISTD_H
     #include <unistd.h>
 #endif
@@ -31,17 +31,13 @@
 #include <stdlib.h>
 #include <string.h>
 #include <glib/gstdio.h>
+#include <glib/gi18n-lib.h>
 #include <webkit/webkit.h>
 #include <sqlite3.h>
 
 #if WEBKIT_CHECK_VERSION (1, 3, 11)
     #define LIBSOUP_USE_UNSTABLE_REQUEST_API
     #include <libsoup/soup-cache.h>
-#endif
-
-#if ENABLE_NLS
-    #include <libintl.h>
-    #include <locale.h>
 #endif
 
 #ifdef HAVE_SIGNAL_H
@@ -59,12 +55,6 @@
     #include <X11/Xutil.h>
     #include <X11/extensions/scrnsaver.h>
     #include <gdk/gdkx.h>
-#endif
-
-#ifdef G_OS_WIN32
-    #define LIBPREFIX ""
-#else
-    #define LIBPREFIX "lib"
 #endif
 
 static gchar*
@@ -212,6 +202,19 @@ settings_save_to_file (MidoriWebSettings* settings,
         {
             gchar* string;
             const gchar* def_string = G_PARAM_SPEC_STRING (pspec)->default_value;
+            if (!strcmp (property, "user-stylesheet-uri"))
+            {
+                const gchar* user_stylesheet_uri = g_object_get_data (G_OBJECT (settings), property);
+                if (user_stylesheet_uri)
+                {
+                    g_key_file_set_string (key_file, "settings", property,
+                        user_stylesheet_uri);
+                }
+                else
+                    g_key_file_remove_key (key_file, "settings", property, NULL);
+                continue;
+            }
+
             g_object_get (settings, property, &string, NULL);
             if (!string)
                 string = g_strdup ("");
@@ -613,6 +616,7 @@ settings_notify_cb (MidoriWebSettings* settings,
 
     /* Skip state related properties to avoid disk IO */
     if ((pspec && g_str_has_prefix (pspec->name, "last-window-"))
+     || (pspec && g_str_has_prefix (pspec->name, "user-stylesheet-uri"))
      || (pspec && g_str_has_prefix (pspec->name, "last-panel-")))
         return;
 
@@ -726,13 +730,13 @@ midori_browser_show_preferences_cb (MidoriBrowser*    browser,
     }
     g_object_unref (array);
 
-    scrolled = katze_scrolled_new (NULL, NULL);
-    addon = g_object_new (MIDORI_TYPE_EXTENSIONS, NULL);
+    scrolled = g_object_new (KATZE_TYPE_SCROLLED, "visible", TRUE, NULL);
+    /* For lack of a better way of keeping descriptions visible */
+    g_object_set (scrolled, "hscrollbar-policy", GTK_POLICY_NEVER, NULL);
+    addon = g_object_new (MIDORI_TYPE_EXTENSIONS, "app", app, NULL);
     children = gtk_container_get_children (GTK_CONTAINER (addon));
     gtk_widget_reparent (g_list_nth_data (children, 0), scrolled);
     g_list_free (children);
-    g_object_set (addon, "app", app, NULL);
-    gtk_widget_show (scrolled);
     page = katze_preferences_add_category (preferences,
                                            _("Extensions"), STOCK_EXTENSIONS);
     gtk_box_pack_start (GTK_BOX (page), scrolled, TRUE, TRUE, 4);
@@ -754,6 +758,10 @@ midori_browser_privacy_preferences_cb (MidoriBrowser*    browser,
     katze_preferences_add_widget (preferences, button, "indented");
     button = katze_property_proxy (settings, "maximum-cookie-age", "days");
     katze_preferences_add_widget (preferences, button, "spanned");
+    #ifdef HAVE_LIBSOUP_2_29_91
+    button = katze_property_proxy (settings, "first-party-cookies-only", NULL);
+    katze_preferences_add_widget (preferences, button, "filled");
+    #endif
 
     markup = g_strdup_printf ("<span size=\"smaller\">%s</span>",
         _("Cookies store login data, saved games, "
@@ -766,10 +774,8 @@ midori_browser_privacy_preferences_cb (MidoriBrowser*    browser,
     katze_preferences_add_widget (preferences, button, "indented");
     button = katze_property_proxy (settings, "enable-html5-local-storage", NULL);
     katze_preferences_add_widget (preferences, button, "spanned");
-    #if HAVE_LIBSOUP_2_27_90
     button = katze_property_proxy (settings, "strip-referer", NULL);
     katze_preferences_add_widget (preferences, button, "indented");
-    #endif
     katze_preferences_add_widget (preferences, gtk_label_new (NULL), "indented");
     button = katze_property_label (settings, "maximum-history-age");
     katze_preferences_add_widget (preferences, button, "indented");
@@ -787,19 +793,13 @@ midori_app_add_browser_cb (MidoriApp*     app,
 
     panel = katze_object_get_object (browser, "panel");
 
-    /* Bookmarks */
-    addon = g_object_new (MIDORI_TYPE_BOOKMARKS, "app", app, NULL);
-    gtk_widget_show (addon);
+    addon = g_object_new (MIDORI_TYPE_BOOKMARKS, "app", app, "visible", TRUE, NULL);
     midori_panel_append_page (MIDORI_PANEL (panel), MIDORI_VIEWABLE (addon));
 
-    /* History */
-    addon = g_object_new (MIDORI_TYPE_HISTORY, "app", app, NULL);
-    gtk_widget_show (addon);
+    addon = g_object_new (MIDORI_TYPE_HISTORY, "app", app, "visible", TRUE, NULL);
     midori_panel_append_page (MIDORI_PANEL (panel), MIDORI_VIEWABLE (addon));
 
-    /* Transfers */
-    addon = g_object_new (MIDORI_TYPE_TRANSFERS, "app", app, NULL);
-    gtk_widget_show (addon);
+    addon = g_object_new (MIDORI_TYPE_TRANSFERS, "app", app, "visible", TRUE, NULL);
     midori_panel_append_page (MIDORI_PANEL (panel), MIDORI_VIEWABLE (addon));
 
     /* Extensions */
@@ -872,7 +872,7 @@ midori_soup_session_set_proxy_uri (SoupSession* session,
     SoupURI* proxy_uri;
 
     /* soup_uri_new expects a non-NULL string with a protocol */
-    if (uri && g_str_has_prefix (uri, "http://"))
+    if (midori_uri_is_http (uri))
         proxy_uri = soup_uri_new (uri);
     else if (uri && *uri)
     {
@@ -915,13 +915,30 @@ soup_session_settings_notify_http_proxy_cb (MidoriWebSettings* settings,
     }
     else if (proxy_type == MIDORI_PROXY_HTTP)
     {
-        gchar* http_proxy = katze_object_get_string (settings, "http-proxy");
-        midori_soup_session_set_proxy_uri (session, http_proxy);
-        g_free (http_proxy);
+        gchar* proxy = katze_object_get_string (settings, "http-proxy");
+        GString *http_proxy = g_string_new (proxy);
+        g_string_append_printf (http_proxy, ":%d", katze_object_get_int (settings, "http-proxy-port"));
+        midori_soup_session_set_proxy_uri (session, http_proxy->str);
+        g_string_free (http_proxy, TRUE);
+        g_free (proxy);
     }
     else
         midori_soup_session_set_proxy_uri (session, NULL);
 }
+
+#ifdef HAVE_LIBSOUP_2_29_91
+static void
+soup_session_settings_notify_first_party_cb (MidoriWebSettings* settings,
+                                             GParamSpec*        pspec,
+                                             SoupSession*       session)
+{
+    void* jar = soup_session_get_feature (session, SOUP_TYPE_COOKIE_JAR);
+    gboolean yes = katze_object_get_boolean (settings, "first-party-cookies-only");
+    g_object_set (jar, "accept-policy",
+        yes ? SOUP_COOKIE_JAR_ACCEPT_NO_THIRD_PARTY
+            : SOUP_COOKIE_JAR_ACCEPT_ALWAYS, NULL);
+}
+#endif
 
 static void
 midori_soup_session_settings_accept_language_cb (SoupSession*       session,
@@ -950,7 +967,6 @@ midori_soup_session_settings_accept_language_cb (SoupSession*       session,
     soup_message_headers_append (msg->request_headers, "Accept-Language", accpt);
     g_free (accpt);
 
-    #if HAVE_LIBSOUP_2_27_90
     if (katze_object_get_boolean (settings, "strip-referer"))
     {
         const gchar* referer
@@ -971,7 +987,6 @@ midori_soup_session_settings_accept_language_cb (SoupSession*       session,
             g_free (stripped_referer);
         }
     }
-    #endif
 }
 
 static void
@@ -999,7 +1014,8 @@ midori_load_soup_session (gpointer settings)
         "/etc/pki/tls/certs/ca-bundle.crt",
         "/etc/ssl/certs/ca-certificates.crt",
         "/etc/ssl/certs/ca-bundle.crt",
-        "/usr/local/share/certs/ca-root-nss.crt",
+        "/usr/local/share/certs/ca-root-nss.crt", /* FreeBSD */
+        "/var/lib/ca-certificates/ca-bundle.pem", /* openSUSE */
         NULL
     };
     guint i;
@@ -1030,6 +1046,12 @@ midori_load_soup_session (gpointer settings)
         G_CALLBACK (soup_session_settings_notify_http_proxy_cb), session);
     g_signal_connect (settings, "notify::proxy-type",
         G_CALLBACK (soup_session_settings_notify_http_proxy_cb), session);
+    #ifdef HAVE_LIBSOUP_2_29_91
+    if (g_object_class_find_property (G_OBJECT_GET_CLASS (settings),
+        "enable-file-access-from-file-uris")) /* WebKitGTK+ >= 1.1.21 */
+        g_signal_connect (settings, "notify::first-party-cookies-only",
+            G_CALLBACK (soup_session_settings_notify_first_party_cb), session);
+    #endif
 
     g_signal_connect (session, "request-queued",
         G_CALLBACK (midori_soup_session_settings_accept_language_cb), settings);
@@ -1158,12 +1180,13 @@ midori_load_soup_session_full (gpointer settings)
     SoupCookieJar* jar;
     gchar* config_file;
     SoupSessionFeature* feature;
+    gboolean have_new_cookies;
+    SoupSessionFeature* feature_import;
 
     midori_load_soup_session (settings);
 
     config_file = build_config_filename ("logins");
     feature = g_object_new (KATZE_TYPE_HTTP_AUTH, "filename", config_file, NULL);
-    g_free (config_file);
     soup_session_add_feature (session, feature);
     g_object_unref (feature);
 
@@ -1172,23 +1195,38 @@ midori_load_soup_session_full (gpointer settings)
     soup_session_add_feature (session, SOUP_SESSION_FEATURE (jar));
     g_object_unref (jar);
 
-    feature = g_object_new (KATZE_TYPE_HTTP_COOKIES, NULL);
-    config_file = build_config_filename ("cookies.txt");
+    katze_assign (config_file, build_config_filename ("cookies.db"));
+    have_new_cookies = g_access (config_file, F_OK) == 0;
+    feature = g_object_new (KATZE_TYPE_HTTP_COOKIES_SQLITE, NULL);
     g_object_set_data_full (G_OBJECT (feature), "filename",
                             config_file, (GDestroyNotify)g_free);
     soup_session_add_feature (session, feature);
     g_object_unref (feature);
 
+    if (!have_new_cookies)
+    {
+        katze_assign (config_file, build_config_filename ("cookies.txt"));
+        if (g_access (config_file, F_OK) == 0)
+        {
+            g_message ("Importing cookies from txt to sqlite3");
+            feature_import = g_object_new (KATZE_TYPE_HTTP_COOKIES, NULL);
+            g_object_set_data_full (G_OBJECT (feature_import), "filename",
+                                    config_file, (GDestroyNotify)g_free);
+            soup_session_add_feature (session, SOUP_SESSION_FEATURE (feature_import));
+            soup_session_remove_feature (session, SOUP_SESSION_FEATURE (feature_import));
+        }
+    }
+
     #if WEBKIT_CHECK_VERSION (1, 3, 11)
-    config_file = g_build_filename (g_get_user_cache_dir (),
-                                    PACKAGE_NAME, "web", NULL);
+    katze_assign (config_file, g_build_filename (g_get_user_cache_dir (),
+                                                 PACKAGE_NAME, "web", NULL));
     feature = SOUP_SESSION_FEATURE (soup_cache_new (config_file, 0));
-    g_free (config_file);
     soup_session_add_feature (session, feature);
     soup_cache_set_max_size (SOUP_CACHE (feature),
         katze_object_get_int (settings, "maximum-cache-size") * 1024 * 1024);
     soup_cache_load (SOUP_CACHE (feature));
     #endif
+    g_free (config_file);
 
     return FALSE;
 }
@@ -1393,7 +1431,7 @@ midori_load_session (gpointer data)
         item = katze_array_get_nth_item (_session, 0);
     }
     midori_browser_set_current_page (browser, current);
-    if (!g_strcmp0 (katze_item_get_uri (item), ""))
+    if (midori_uri_is_blank (katze_item_get_uri (item)))
         midori_browser_activate_action (browser, "Location");
 
     g_object_unref (settings);
@@ -1420,48 +1458,19 @@ midori_load_session (gpointer data)
     return FALSE;
 }
 
-static gint
-midori_run_script (const gchar* filename)
-{
-    gchar* exception;
-    gchar* script;
-    GError* error;
-
-    if (!(filename))
-    {
-        g_print ("%s - %s\n", _("Midori"), _("No filename specified"));
-        return 1;
-    }
-
-    error = NULL;
-    if (g_file_get_contents (filename, &script, NULL, &error))
-    {
-        JSGlobalContextRef js_context = JSGlobalContextCreateInGroup (NULL, NULL);
-        if (sokoke_js_script_eval (js_context, script, &exception))
-            exception = NULL;
-        g_free (script);
-        JSGlobalContextRelease (js_context);
-    }
-    else if (error)
-    {
-        exception = g_strdup (error->message);
-        g_error_free (error);
-    }
-    else
-        exception = g_strdup (_("An unknown error occured."));
-
-    if (!exception)
-        return 0;
-
-    g_print ("%s - Exception: %s\n", filename, exception);
-    return 1;
-}
+#define HAVE_OFFSCREEN GTK_CHECK_VERSION (2, 20, 0)
 
 static void
 snapshot_load_finished_cb (GtkWidget*      web_view,
                            WebKitWebFrame* web_frame,
                            gchar*          filename)
 {
+    #if HAVE_OFFSCREEN
+    GdkPixbuf* pixbuf = gtk_offscreen_window_get_pixbuf (GTK_OFFSCREEN_WINDOW (
+        gtk_widget_get_parent (web_view)));
+    gdk_pixbuf_save (pixbuf, filename, "png", NULL, "compression", "7", NULL);
+    g_object_unref (pixbuf);
+    #else
     GError* error;
     GtkPrintOperation* operation = gtk_print_operation_new ();
 
@@ -1477,6 +1486,7 @@ snapshot_load_finished_cb (GtkWidget*      web_view,
     }
 
     g_object_unref (operation);
+    #endif
     g_print (_("Snapshot saved to: %s\n"), filename);
     gtk_main_quit ();
 }
@@ -1494,6 +1504,20 @@ midori_web_app_browser_notify_load_status_cb (MidoriBrowser* browser,
             icon = NULL;
         gtk_window_set_icon (GTK_WINDOW (browser), icon);
     }
+}
+
+static MidoriBrowser*
+midori_web_app_browser_new_window_cb (MidoriBrowser* browser,
+                                      MidoriBrowser* new_browser,
+                                      gpointer       user_data)
+{
+    if (new_browser == NULL)
+        new_browser = midori_browser_new ();
+    g_object_set (new_browser,
+        "settings", midori_browser_get_settings (browser),
+        NULL);
+    gtk_widget_show (GTK_WIDGET (new_browser));
+    return new_browser;
 }
 
 static void
@@ -1529,9 +1553,9 @@ midori_prepare_uri (const gchar *uri)
 
     uri_ready = sokoke_magic_uri (uri);
     if (uri_ready)
-        return sokoke_uri_to_ascii (uri_ready);
+        return midori_uri_to_ascii (uri_ready);
 
-    return sokoke_uri_to_ascii (uri);
+    return midori_uri_to_ascii (uri);
 }
 
 #ifdef HAVE_SIGNAL_H
@@ -1782,7 +1806,7 @@ midori_clear_saved_logins_cb (void)
     g_unlink (path);
     /* Form History database, written by the extension */
     katze_assign (path, g_build_filename (sokoke_set_config_dir (NULL),
-        "extensions", LIBPREFIX "formhistory." G_MODULE_SUFFIX, "forms.db", NULL));
+        "extensions", MIDORI_MODULE_PREFIX "formhistory." G_MODULE_SUFFIX, "forms.db", NULL));
     if (sqlite3_open (path, &db) == SQLITE_OK)
     {
         sqlite3_exec (db, "DELETE FROM forms", NULL, NULL, NULL);
@@ -1948,24 +1972,6 @@ main (int    argc,
         #define midori_startup_timer(tmrmsg)
     #endif
 
-    #if ENABLE_NLS
-    setlocale (LC_ALL, "");
-    if (g_getenv ("MIDORI_NLSPATH"))
-        bindtextdomain (GETTEXT_PACKAGE, g_getenv ("MIDORI_NLSPATH"));
-    else
-    #ifdef G_OS_WIN32
-    {
-        gchar* path = sokoke_find_data_filename ("locale");
-        bindtextdomain (GETTEXT_PACKAGE, path);
-        g_free (path);
-    }
-    #else
-        bindtextdomain (GETTEXT_PACKAGE, LOCALEDIR);
-    #endif
-    bind_textdomain_codeset (GETTEXT_PACKAGE, "UTF-8");
-    textdomain (GETTEXT_PACKAGE);
-    #endif
-
     #ifdef HAVE_SIGNAL_H
     #ifdef SIGHUP
     signal (SIGHUP, &signal_handler);
@@ -1981,8 +1987,7 @@ main (int    argc,
     #endif
     #endif
 
-    /* Preserve argument vector */
-    sokoke_get_argv (argv);
+    midori_app_setup (argv);
 
     /* Parse cli options */
     webapp = NULL;
@@ -2007,10 +2012,6 @@ main (int    argc,
         g_error_free (error);
         return 1;
     }
-
-    /* libSoup uses threads, so we need to initialize threads. */
-    if (!g_thread_supported ()) g_thread_init (NULL);
-    sokoke_register_stock_items ();
 
     if (config && !g_path_is_absolute (config))
     {
@@ -2082,8 +2083,14 @@ main (int    argc,
         gchar* filename;
         gint fd;
         GtkWidget* web_view;
+        #if HAVE_OFFSCREEN
+        GtkWidget* offscreen;
+        GdkScreen* screen;
 
+        fd = g_file_open_tmp ("snapshot-XXXXXX.png", &filename, &error);
+        #else
         fd = g_file_open_tmp ("snapshot-XXXXXX.pdf", &filename, &error);
+        #endif
         close (fd);
 
         error = NULL;
@@ -2100,6 +2107,16 @@ main (int    argc,
         }
 
         web_view = webkit_web_view_new ();
+        #if HAVE_OFFSCREEN
+        offscreen = gtk_offscreen_window_new ();
+        gtk_container_add (GTK_CONTAINER (offscreen), web_view);
+        if ((screen = gdk_screen_get_default ()))
+            gtk_widget_set_size_request (web_view,
+                gdk_screen_get_width (screen), gdk_screen_get_height (screen));
+        else
+            gtk_widget_set_size_request (web_view, 800, 600);
+        gtk_widget_show_all (offscreen);
+        #endif
         g_signal_connect (web_view, "load-finished",
             G_CALLBACK (snapshot_load_finished_cb), filename);
         webkit_web_view_open (WEBKIT_WEB_VIEW (web_view), snapshot);
@@ -2129,17 +2146,23 @@ main (int    argc,
     #if WEBKIT_CHECK_VERSION (1, 3, 11)
     sokoke_register_privacy_item ("web-cache", _("Web Cache"),
         G_CALLBACK (midori_clear_web_cache_cb));
-    #endif
-    #if WEBKIT_CHECK_VERSION (1, 3, 13)
     sokoke_register_privacy_item ("offline-appcache", _("Offline Application Cache"),
         G_CALLBACK (midori_clear_offline_appcache_cb));
     #endif
 
     /* Web Application or Private Browsing support */
-    if (webapp || private)
+    if (webapp || private || run)
     {
         SoupSession* session = webkit_get_default_session ();
         MidoriBrowser* browser = midori_browser_new ();
+        /* Update window icon according to page */
+        g_signal_connect (browser, "notify::load-status",
+            G_CALLBACK (midori_web_app_browser_notify_load_status_cb), NULL);
+        g_signal_connect (browser, "new-window",
+            G_CALLBACK (midori_web_app_browser_new_window_cb), NULL);
+        g_object_set_data (G_OBJECT (webkit_get_default_session ()),
+                           "pass-through-console", (void*)1);
+
         midori_startup_timer ("Browser: \t%f");
 
         if (config)
@@ -2164,12 +2187,17 @@ main (int    argc,
             g_object_set (settings,
                           "preferred-languages", "en",
                           "enable-private-browsing", TRUE,
+            #ifdef HAVE_LIBSOUP_2_29_91
+                          "first-party-cookies-only", TRUE,
+            #endif
                           "enable-html5-database", FALSE,
                           "enable-html5-local-storage", FALSE,
                           "enable-offline-web-application-cache", FALSE,
             /* Arguably DNS prefetching is or isn't a privacy concern. For the
              * lack of more fine-grained control we'll go the safe route. */
+            #if WEBKIT_CHECK_VERSION (1, 3, 11)
                           "enable-dns-prefetching", FALSE,
+            #endif
                           "strip-referer", TRUE, NULL);
             midori_browser_set_action_visible (browser, "Tools", FALSE);
             midori_browser_set_action_visible (browser, "ClearPrivateData", FALSE);
@@ -2187,23 +2215,59 @@ main (int    argc,
                 G_CALLBACK (midori_soup_session_block_uris_cb),
                 g_strdup (block_uris));
 
+        if (run)
+        {
+            gchar* script = NULL;
+            error = NULL;
+
+            if (g_file_get_contents (uris ? *uris : NULL, &script, NULL, &error))
+            {
+                #if 0 /* HAVE_OFFSCREEN */
+                GtkWidget* offscreen = gtk_offscreen_window_new ();
+                #endif
+                gchar* msg = NULL;
+                GtkWidget* view = midori_view_new_with_title (NULL, settings, FALSE);
+                g_object_set (settings, "open-new-pages-in", MIDORI_NEW_PAGE_WINDOW, NULL);
+                midori_browser_add_tab (browser, view);
+                #if 0 /* HAVE_OFFSCREEN */
+                gtk_container_add (GTK_CONTAINER (offscreen), GTK_WIDGET (browser));
+                gtk_widget_show_all (offscreen);
+                #else
+                gtk_widget_show_all (GTK_WIDGET (browser));
+                gtk_widget_hide (GTK_WIDGET (browser));
+                #endif
+                midori_view_execute_script (MIDORI_VIEW (view), script, &msg);
+                if (msg != NULL)
+                {
+                    g_error ("%s\n", msg);
+                    g_free (msg);
+                }
+            }
+            else if (error != NULL)
+            {
+                g_error ("%s\n", error->message);
+                g_error_free (error);
+            }
+            else
+                g_error ("%s\n", _("An unknown error occured"));
+            g_free (script);
+        }
+
         if (webapp)
         {
             gchar* tmp_uri = midori_prepare_uri (webapp);
+            midori_browser_set_action_visible (browser, "Menubar", FALSE);
+            midori_browser_add_uri (browser, tmp_uri);
+            g_object_set (settings, "homepage", tmp_uri, NULL);
+            g_free (tmp_uri);
+
             g_object_set (settings,
                           "show-menubar", FALSE,
                           "show-navigationbar", FALSE,
                           "toolbar-items", "Back,Forward,ReloadStop,Location,Homepage",
-                          "homepage", tmp_uri,
                           "show-statusbar", FALSE,
                           "enable-developer-extras", FALSE,
                           NULL);
-            midori_browser_set_action_visible (browser, "Menubar", FALSE);
-            midori_browser_add_uri (browser, tmp_uri);
-            g_free (tmp_uri);
-            /* Update window icon according to page */
-            g_signal_connect (browser, "notify::load-status",
-                G_CALLBACK (midori_web_app_browser_notify_load_status_cb), NULL);
         }
 
        g_object_set (settings, "show-panel", FALSE,
@@ -2217,8 +2281,11 @@ main (int    argc,
             G_CALLBACK (gtk_main_quit), NULL);
         g_signal_connect (browser, "destroy",
             G_CALLBACK (gtk_main_quit), NULL);
-        gtk_widget_show (GTK_WIDGET (browser));
-        midori_browser_activate_action (browser, "Location");
+        if (!run)
+        {
+            gtk_widget_show (GTK_WIDGET (browser));
+            midori_browser_activate_action (browser, "Location");
+        }
         if (execute)
         {
             for (i = 0; uris[i] != NULL; i++)
@@ -2247,22 +2314,7 @@ main (int    argc,
     if (inactivity_reset > 0)
         g_error ("--inactivity-reset is currently only supported with --app.");
 
-    /* Standalone javascript support */
-    if (run)
-        return midori_run_script (uris ? *uris : NULL);
-
     sokoke_set_config_dir (config);
-    if (config)
-    {
-        gchar* name_hash;
-        gchar* app_name;
-        name_hash = g_compute_checksum_for_string (G_CHECKSUM_MD5, config, -1);
-        app_name = g_strconcat ("midori", "_", name_hash, NULL);
-        g_free (name_hash);
-        app = g_object_new (MIDORI_TYPE_APP, "name", app_name, NULL);
-        g_free (app_name);
-    }
-    else
         app = midori_app_new ();
     katze_assign (config, (gchar*)sokoke_set_config_dir (NULL));
     midori_startup_timer ("App created: \t%f");
@@ -2497,7 +2549,9 @@ main (int    argc,
     else
         g_file_set_contents (config_file, "RUNNING", -1, NULL);
 
-    if (back_from_crash && katze_object_get_boolean (settings, "show-crash-dialog"))
+    if (back_from_crash
+     && katze_object_get_boolean (settings, "show-crash-dialog")
+     && !katze_array_is_empty (_session))
         diagnostic_dialog = TRUE;
 
     if (diagnostic_dialog)
@@ -2554,7 +2608,7 @@ main (int    argc,
 
         midori_remove_config_file (clear_prefs, MIDORI_CLEAR_SESSION, "session.xbel");
         midori_remove_config_file (clear_prefs, MIDORI_CLEAR_HISTORY, "history.db");
-        midori_remove_config_file (clear_prefs, MIDORI_CLEAR_TRASH, "tabtrash.xbel");
+        midori_remove_config_file (clear_prefs, MIDORI_CLEAR_HISTORY, "tabtrash.xbel");
 
         for (; data_items != NULL; data_items = g_list_next (data_items))
         {

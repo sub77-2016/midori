@@ -10,11 +10,7 @@
  See the file COPYING for the full license text.
 */
 
-#if HAVE_CONFIG_H
-    #include <config.h>
-#endif
-
-#include "sokoke.h"
+#include <midori/midori.h>
 
 #define SM "http://www.searchmash.com/search/"
 
@@ -76,7 +72,7 @@ test_input (const gchar* input,
         }
         g_strfreev (parts);
 
-        uri = keywords ? sokoke_search_uri (search_uri, keywords) : NULL;
+        uri = keywords ? midori_uri_for_search (search_uri, keywords) : NULL;
 
         g_free (keywords);
     }
@@ -121,19 +117,11 @@ magic_uri_idn (void)
     } URIItem;
 
     static const URIItem items[] = {
-    #if HAVE_LIBIDN || defined (HAVE_LIBSOUP_2_27_90)
      { "http://www.münchhausen.at", "http://www.xn--mnchhausen-9db.at" },
      { "http://www.خداوند.com/", "http://www.xn--mgbndb8il.com/" },
      { "айкидо.com", "xn--80aildf0a.com" },
      { "http://東京理科大学.jp", "http://xn--1lq68wkwbj6ugkpigi.jp" },
      { "https://青のネコ",  "https://xn--u9jthzcs263c" },
-    #else
-     { "http://www.münchhausen.at", NULL },
-     { "http://www.خداوند.com/", NULL },
-     { "айкидо.com", NULL },
-     { "http://東京理科大学.jp", NULL },
-     { "https://青のネコ.co.jp",  NULL },
-    #endif
     { "http://en.wikipedia.org/wiki/Kölsch_language", NULL },
     { "file:///home/mark/frühstück", NULL },
     { "about:version", NULL },
@@ -142,17 +130,13 @@ magic_uri_idn (void)
 
     for (i = 0; i < G_N_ELEMENTS (items); i++)
     {
-        gchar* result = sokoke_uri_to_ascii (items[i].before);
+        gchar* result = midori_uri_to_ascii (items[i].before);
         const gchar* after = items[i].after ? items[i].after : items[i].before;
         sokoke_assert_str_equal (items[i].before, result, after);
         g_free (result);
     }
 
-    #if HAVE_LIBIDN
-    test_input ("айкидо.com", "http://xn--80aildf0a.com");
-    #else
     test_input ("айкидо.com", "http://айкидо.com");
-    #endif
     test_input ("sm Küchenzubehör", SM "Küchenzubehör");
     test_input ("sm 東京理科大学", SM "東京理科大学");
 }
@@ -225,6 +209,22 @@ magic_uri_performance (void)
 }
 
 static void
+magic_uri_fingerprint (void)
+{
+    const gchar* uri;
+    uri = "http://midori-0.4.1.tar.bz2#!md5!33dde203cd71ae2b1d2adcc7f5739f65";
+    g_assert_cmpint (midori_uri_get_fingerprint (uri, NULL, NULL), ==, G_CHECKSUM_MD5);
+    uri = "http://midori-0.4.1.tar.bz2#!md5!33DDE203CD71AE2B1D2ADCC7F5739F65";
+    g_assert_cmpint (midori_uri_get_fingerprint (uri, NULL, NULL), ==, G_CHECKSUM_MD5);
+    uri = "http://midori-0.4.1.tar.bz2#!sha1!0c499459b1049feabf86dce89f49020139a9efd9";
+    g_assert_cmpint (midori_uri_get_fingerprint (uri, NULL, NULL), ==, G_CHECKSUM_SHA1);
+    uri = "http://midori-0.4.1.tar.bz2#!sha256!123456";
+    g_assert_cmpint (midori_uri_get_fingerprint (uri, NULL, NULL), ==, G_MAXINT);
+    uri = "http://midori-0.4.1.tar.bz2#abcdefg";
+    g_assert_cmpint (midori_uri_get_fingerprint (uri, NULL, NULL), ==, G_MAXINT);
+}
+
+static void
 magic_uri_format (void)
 {
     typedef struct
@@ -248,7 +248,7 @@ magic_uri_format (void)
 
     for (i = 0; i < G_N_ELEMENTS (items); i++)
     {
-        gchar* result = sokoke_format_uri_for_display (items[i].before);
+        gchar* result = midori_uri_format_for_display (items[i].before);
         const gchar* after = items[i].after ? items[i].after : items[i].before;
         sokoke_assert_str_equal (items[i].before, result, after);
         g_free (result);
@@ -276,9 +276,7 @@ int
 main (int    argc,
       char** argv)
 {
-    /* libSoup uses threads, therefore if WebKit is built with libSoup
-       or Midori is using it, we need to initialize threads. */
-    if (!g_thread_supported ()) g_thread_init (NULL);
+    midori_app_setup (argv);
     g_test_init (&argc, &argv, NULL);
     gtk_init_check (&argc, &argv);
 
@@ -287,6 +285,7 @@ main (int    argc,
     g_test_add_func ("/magic-uri/search", magic_uri_search);
     g_test_add_func ("/magic-uri/pseudo", magic_uri_pseudo);
     g_test_add_func ("/magic-uri/performance", magic_uri_performance);
+    g_test_add_func ("/magic-uri/fingerprint", magic_uri_fingerprint);
     g_test_add_func ("/magic-uri/format", magic_uri_format);
     g_test_add_func ("/magic-uri/prefetch", magic_uri_prefetch);
 

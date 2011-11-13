@@ -11,12 +11,10 @@
 */
 
 #include <midori/midori.h>
-
-#include <midori/sokoke.h>
-#include "config.h"
-
 #include <glib/gstdio.h>
 #include <stdlib.h>
+
+#include "config.h"
 #if HAVE_UNISTD_H
     #include <unistd.h>
 #endif
@@ -330,14 +328,8 @@ web_cache_mesage_got_headers_cb (SoupMessage* msg,
         if (!web_cache_save_headers (msg, filename))
             return;
 
-        #if GLIB_CHECK_VERSION (2, 20, 0)
         ostream = (GOutputStream*)g_file_append_to (file,
             G_FILE_CREATE_PRIVATE | G_FILE_CREATE_REPLACE_DESTINATION, NULL, NULL);
-        #else
-        g_unlink (filename);
-        ostream = (GOutputStream*)g_file_append_to (file,
-            G_FILE_CREATE_PRIVATE, NULL, NULL);
-        #endif
         g_object_unref (file);
 
         if (!ostream)
@@ -360,7 +352,7 @@ web_cache_session_request_queued_cb (SoupSession*     session,
     SoupURI* soup_uri = soup_message_get_uri (msg);
     gchar* uri = soup_uri_to_string (soup_uri, FALSE);
 
-    if (uri && g_str_has_prefix (uri, "http") && !g_strcmp0 (msg->method, "GET"))
+    if (midori_uri_is_http (uri) && !g_strcmp0 (msg->method, "GET"))
     {
         gchar* filename = web_cache_get_cached_path (extension, uri);
         GHashTable* cache_headers;
@@ -469,7 +461,7 @@ extension_init (void)
     MidoriExtension* extension = g_object_new (MIDORI_TYPE_EXTENSION,
         "name", _("Web Cache"),
         "description", _("Cache HTTP communication on disk"),
-        "version", "0.1",
+        "version", "0.1" MIDORI_VERSION_SUFFIX,
         "authors", "Christian Dywan <christian@twotoasts.de>",
         NULL);
 

@@ -11,7 +11,6 @@
 
 #include <midori/midori.h>
 
-#include <midori/sokoke.h>
 #include "config.h"
 
 static void
@@ -176,11 +175,7 @@ shortcuts_get_preferences_dialog (MidoriExtension* extension)
 
     dialog_title = _("Customize Keyboard shortcuts");
     dialog = gtk_dialog_new_with_buttons (dialog_title, GTK_WINDOW (browser),
-#if GTK_CHECK_VERSION(3,0,0)
-        GTK_DIALOG_DESTROY_WITH_PARENT,
-#else
         GTK_DIALOG_DESTROY_WITH_PARENT | GTK_DIALOG_NO_SEPARATOR,
-#endif
         #if !HAVE_OSX
         GTK_STOCK_CLOSE, GTK_RESPONSE_CLOSE,
         #endif
@@ -193,11 +188,7 @@ shortcuts_get_preferences_dialog (MidoriExtension* extension)
     g_signal_connect (dialog, "response",
                       G_CALLBACK (shortcuts_preferences_response_cb), NULL);
 
-#if GTK_CHECK_VERSION(3,0,0)
     dialog_vbox = gtk_dialog_get_content_area(GTK_DIALOG(dialog));
-#else
-    dialog_vbox = GTK_DIALOG (dialog)->vbox;
-#endif
     if ((xfce_heading = sokoke_xfce_header_new (
         gtk_window_get_icon_name (GTK_WINDOW (dialog)), dialog_title)))
         gtk_box_pack_start (GTK_BOX (dialog_vbox),
@@ -260,11 +251,7 @@ shortcuts_get_preferences_dialog (MidoriExtension* extension)
                                           0, GTK_SORT_ASCENDING);
     g_object_unref (model);
 
-#if GTK_CHECK_VERSION(3,0,0)
     gtk_widget_show_all (gtk_dialog_get_content_area(GTK_DIALOG (dialog)));
-#else
-    gtk_widget_show_all (GTK_DIALOG (dialog)->vbox);
-#endif
 
     g_object_unref (browser);
 
@@ -334,7 +321,7 @@ extension_init (void)
     MidoriExtension* extension = g_object_new (MIDORI_TYPE_EXTENSION,
         "name", _("Shortcuts"),
         "description", _("View and edit keyboard shortcuts"),
-        "version", "0.1",
+        "version", "0.1" MIDORI_VERSION_SUFFIX,
         "authors", "Christian Dywan <christian@twotoasts.de>",
         NULL);
 

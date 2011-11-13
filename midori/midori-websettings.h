@@ -41,7 +41,7 @@ enum
     MIDORI_CLEAR_COOKIES = 2, /* deprecated */
     MIDORI_CLEAR_FLASH_COOKIES = 4, /* deprecated */
     MIDORI_CLEAR_WEBSITE_ICONS = 8, /* deprecated */
-    MIDORI_CLEAR_TRASH = 16,
+    MIDORI_CLEAR_TRASH = 16, /* deprecated */
     MIDORI_CLEAR_ON_QUIT = 32,
     MIDORI_CLEAR_WEB_CACHE = 64, /* deprecated */
     MIDORI_CLEAR_SESSION = 128,
@@ -157,6 +157,19 @@ midori_web_settings_get_type               (void) G_GNUC_CONST;
 
 MidoriWebSettings*
 midori_web_settings_new                    (void);
+
+void
+midori_web_settings_add_style              (MidoriWebSettings* settings,
+                                            const gchar*       rule_id,
+                                            const gchar*       style);
+
+void
+midori_web_settings_remove_style           (MidoriWebSettings* settings,
+                                            const gchar*       rule_id);
+
+const gchar*
+midori_web_settings_get_system_name        (gchar**            architecture,
+                                            gchar**            platform);
 
 G_END_DECLS
 

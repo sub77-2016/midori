@@ -12,11 +12,9 @@
 #define MINCHARS 2
 
 #include <midori/midori.h>
+#include <glib/gstdio.h>
 
 #include "config.h"
-#include "midori/sokoke.h"
-
-#include <glib/gstdio.h>
 #if HAVE_UNISTD_H
     #include <unistd.h>
 #endif
@@ -32,27 +30,22 @@ formhistory_toggle_state_cb (GtkAction*     action,
 static gboolean
 formhistory_prepare_js ()
 {
-   gchar* data_path;
    gchar* autosuggest;
    gchar* style;
    guint i;
    gchar* file;
 
-   data_path = g_build_filename (PACKAGE_NAME, "res", "autosuggestcontrol.js", NULL);
-   file = sokoke_find_data_filename (data_path);
+   file = sokoke_find_data_filename ("autosuggestcontrol.js", TRUE);
    if (!g_file_get_contents (file, &autosuggest, NULL, NULL))
    {
-       g_free (data_path);
        g_free (file);
        return FALSE;
    }
    g_strchomp (autosuggest);
 
-   katze_assign (data_path, g_build_filename (PACKAGE_NAME, "res", "autosuggestcontrol.css", NULL));
-   katze_assign (file, sokoke_find_data_filename (data_path));
+   katze_assign (file, sokoke_find_data_filename ("autosuggestcontrol.css", TRUE));
    if (!g_file_get_contents (file, &style, NULL, NULL))
    {
-       g_free (data_path);
        g_free (file);
        return FALSE;
    }
@@ -83,7 +76,6 @@ formhistory_prepare_js ()
         autosuggest,
         style);
    g_strstrip (jsforms);
-   g_free (data_path);
    g_free (file);
    g_free (style);
    g_free (autosuggest);
@@ -572,7 +564,7 @@ extension_init (void)
 
     if (formhistory_prepare_js ())
     {
-        ver = "1.0";
+        ver = "1.0" MIDORI_VERSION_SUFFIX;
         desc = g_strdup (_("Stores history of entered form data"));
     }
     else
@@ -590,12 +582,11 @@ extension_init (void)
         "authors", "Alexander V. Butenko <a.butenka@gmail.com>",
         NULL);
 
-    midori_extension_install_boolean (extension, "always-load", TRUE);
-
     g_free (desc);
 
     if (should_init)
     {
+        midori_extension_install_boolean (extension, "always-load", TRUE);
         g_signal_connect (extension, "activate",
             G_CALLBACK (formhistory_activate_cb), NULL);
         g_signal_connect (extension, "open-preferences",

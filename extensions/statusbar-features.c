@@ -10,7 +10,6 @@
 */
 
 #include <midori/midori.h>
-#include <midori/sokoke.h>
 
 typedef struct
 {
@@ -154,10 +153,10 @@ statusbar_features_app_add_browser_cb (MidoriApp*       app,
     gtk_box_pack_start (GTK_BOX (bbox), button, FALSE, FALSE, 2);
     button = katze_property_proxy (settings, "identify-as", "custom-user-agent");
     gtk_box_pack_start (GTK_BOX (bbox), button, FALSE, FALSE, 2);
-    button = gtk_combo_box_entry_new_text ();
+    button = gtk_combo_box_text_new_with_entry ();
     gtk_entry_set_width_chars (GTK_ENTRY (gtk_bin_get_child (GTK_BIN (button))), 4);
     for (i = 0; i < G_N_ELEMENTS (zoom_levels); i++)
-        gtk_combo_box_append_text (GTK_COMBO_BOX (button), zoom_levels[i].label);
+        gtk_combo_box_text_append_text (GTK_COMBO_BOX_TEXT (button), zoom_levels[i].label);
     gtk_box_pack_start (GTK_BOX (bbox), button, FALSE, FALSE, 2);
     g_signal_connect (button, "changed",
         G_CALLBACK (statusbar_features_zoom_level_changed_cb), browser);
@@ -192,7 +191,7 @@ extension_init (void)
     MidoriExtension* extension = g_object_new (MIDORI_TYPE_EXTENSION,
         "name", _("Statusbar Features"),
         "description", _("Easily toggle features on web pages on and off"),
-        "version", "0.1",
+        "version", "0.1" MIDORI_VERSION_SUFFIX,
         "authors", "Christian Dywan <christian@twotoasts.de>",
         NULL);
 

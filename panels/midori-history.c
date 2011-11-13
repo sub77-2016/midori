@@ -10,21 +10,16 @@
 */
 
 #include "midori-history.h"
-#include "gtk3-compat.h"
 
 #include "midori-app.h"
 #include "midori-array.h"
 #include "midori-browser.h"
-#include "midori-stock.h"
+#include "midori-platform.h"
 #include "midori-view.h"
 #include "midori-viewable.h"
 
-#include "sokoke.h"
-#include "gtkiconentry.h"
-
 #include <glib/gi18n.h>
 #include <string.h>
-
 #include <gdk/gdkkeysyms.h>
 
 #define COMPLETION_DELAY 200
@@ -1026,19 +1021,3 @@ midori_history_finalize (GObject* object)
     katze_assign (history->filter, NULL);
 }
 
-/**
- * midori_history_new:
- *
- * Creates a new empty history.
- *
- * Return value: a new #MidoriHistory
- *
- * Since: 0.1.3
- **/
-GtkWidget*
-midori_history_new (void)
-{
-    MidoriHistory* history = g_object_new (MIDORI_TYPE_HISTORY, NULL);
-
-    return GTK_WIDGET (history);
-}

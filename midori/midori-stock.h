@@ -12,8 +12,6 @@
 #ifndef __MIDORI_STOCK_H__
 #define __MIDORI_STOCK_H__ 1
 
-#include <gtk/gtk.h>
-
 /* Custom stock items
 
    We should distribute these
@@ -32,8 +30,8 @@
 #define STOCK_TRANSFERS          "package"
 #define STOCK_PLUGINS            "gnome-mime-application-x-shockwave-flash"
 
-#define STOCK_BOOKMARK_ADD       "stock_add-bookmark"
-#define STOCK_HOMEPAGE           GTK_STOCK_HOME
+#define STOCK_BOOKMARK_ADD       "bookmark-new"
+#define STOCK_HOMEPAGE           "go-home"
 #define STOCK_IMAGE              "gnome-mime-image"
 #define STOCK_NETWORK_OFFLINE    "network-offline"
 #define STOCK_SCRIPT             "stock_script"

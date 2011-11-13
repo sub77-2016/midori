@@ -9,10 +9,6 @@
  See the file COPYING for the full license text.
 */
 
-#if HAVE_CONFIG_H
-    #include <config.h>
-#endif
-
 #include "midori.h"
 
 const gpointer magic = (gpointer)0xdeadbeef;
@@ -172,6 +168,7 @@ extension_activate (gconstpointer data)
 {
     MidoriApp* app = midori_app_new ();
     MidoriExtension* extension = MIDORI_EXTENSION (data);
+    g_object_set (app, "settings", midori_web_settings_new (), NULL);
     g_signal_emit_by_name (extension, "activate", app);
     midori_extension_deactivate (extension);
     g_object_unref (app);
@@ -234,9 +231,9 @@ int
 main (int    argc,
       char** argv)
 {
+    midori_app_setup (argv);
     g_test_init (&argc, &argv, NULL);
     gtk_init_check (&argc, &argv);
-    if (!g_thread_supported ()) g_thread_init (NULL);
     soup_session_add_feature_by_type (webkit_get_default_session (),
         SOUP_TYPE_COOKIE_JAR);
 

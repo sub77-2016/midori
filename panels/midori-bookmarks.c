@@ -10,17 +10,13 @@
 */
 
 #include "midori-bookmarks.h"
-#include "gtk3-compat.h"
 
 #include "midori-array.h"
 #include "midori-app.h"
 #include "midori-browser.h"
-#include "midori-stock.h"
+#include "midori-platform.h"
 #include "midori-view.h"
 #include "midori-viewable.h"
-
-#include "sokoke.h"
-#include "gtkiconentry.h"
 
 #include <glib/gi18n.h>
 #include <string.h>
@@ -1032,19 +1028,3 @@ midori_bookmarks_finalize (GObject* object)
         g_object_unref (bookmarks->app);
 }
 
-/**
- * midori_bookmarks_new:
- *
- * Creates a new empty bookmarks.
- *
- * Return value: a new #MidoriBookmarks
- *
- * Since: 0.1.3
- **/
-GtkWidget*
-midori_bookmarks_new (void)
-{
-    MidoriBookmarks* bookmarks = g_object_new (MIDORI_TYPE_BOOKMARKS, NULL);
-
-    return GTK_WIDGET (bookmarks);
-}

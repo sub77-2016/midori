@@ -9,13 +9,8 @@
  See the file COPYING for the full license text.
 */
 
-#if HAVE_CONFIG_H
-    #include <config.h>
-#endif
-
 #include "midori.h"
 #include "midori-bookmarks.h"
-#include "sokoke.h"
 
 typedef struct
 {
@@ -193,12 +188,11 @@ int
 main (int    argc,
       char** argv)
 {
-    /* libSoup uses threads, therefore if WebKit is built with libSoup
-       or Midori is using it, we need to initialize threads. */
-    if (!g_thread_supported ()) g_thread_init (NULL);
+    midori_app_setup (argv);
+    g_object_set_data (G_OBJECT (webkit_get_default_session ()),
+                       "midori-session-initialized", (void*)1);
     g_test_init (&argc, &argv, NULL);
     gtk_init_check (&argc, &argv);
-    sokoke_register_stock_items ();
 
     g_test_add_data_func ("/properties/app",
         (gconstpointer)MIDORI_TYPE_APP, properties_type_test);

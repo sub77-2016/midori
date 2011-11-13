@@ -1,5 +1,5 @@
 /*
- Copyright (C) 2007-2009 Christian Dywan <christian@twotoasts.de>
+ Copyright (C) 2007-2011 Christian Dywan <christian@twotoasts.de>
  Copyright (C) 2009 Dale Whittaker <dayul@users.sf.net>
  Copyright (C) 2009 Alexander Butenko <a.butenka@gmail.com>
 
@@ -12,14 +12,11 @@
 */
 
 #include "sokoke.h"
-#include "gtk3-compat.h"
 
-#if HAVE_CONFIG_H
-    #include <config.h>
-#endif
+#include "midori-core.h"
+#include "midori-platform.h"
 
-#include "midori-stock.h"
-
+#include <config.h>
 #if HAVE_UNISTD_H
     #include <unistd.h>
 #endif
@@ -35,12 +32,6 @@
 #include <glib/gprintf.h>
 #include <glib/gstdio.h>
 
-#if HAVE_LIBIDN
-    #include <stringprep.h>
-    #include <punycode.h>
-    #include <idna.h>
-#endif
-
 #ifdef HAVE_HILDON_FM
     #include <hildon/hildon-file-chooser-dialog.h>
 #endif
@@ -50,44 +41,6 @@
     #include <hildon/hildon.h>
     #include <hildon-mime.h>
     #include <hildon-uri.h>
-#endif
-
-#if !GTK_CHECK_VERSION(2, 12, 0)
-
-void
-gtk_widget_set_has_tooltip (GtkWidget* widget,
-                            gboolean   has_tooltip)
-{
-    /* Do nothing */
-}
-
-void
-gtk_widget_set_tooltip_text (GtkWidget*   widget,
-                             const gchar* text)
-{
-    if (text && *text)
-    {
-        static GtkTooltips* tooltips = NULL;
-        if (G_UNLIKELY (!tooltips))
-            tooltips = gtk_tooltips_new ();
-        gtk_tooltips_set_tip (tooltips, widget, text, NULL);
-    }
-}
-
-void
-gtk_tool_item_set_tooltip_text (GtkToolItem* toolitem,
-                                const gchar* text)
-{
-    if (text && *text)
-    {
-        static GtkTooltips* tooltips = NULL;
-        if (G_UNLIKELY (!tooltips))
-            tooltips = gtk_tooltips_new ();
-
-        gtk_tool_item_set_tooltip (toolitem, tooltips, text, NULL);
-    }
-}
-
 #endif
 
 static gchar*
@@ -615,162 +568,6 @@ sokoke_spawn_app (const gchar* uri,
     g_free (command);
 }
 
-/**
- * sokoke_hostname_from_uri:
- * @uri: an URI string
- * @path: location of a string, or %NULL
- *
- * Returns the hostname of the specified URI.
- *
- * If there is a path, it is stored in @path.
- *
- * Return value: a newly allocated hostname
- **/
-gchar*
-sokoke_hostname_from_uri (const gchar* uri,
-                          gchar**      path)
-{
-    gchar* hostname;
-
-    if ((hostname = strchr (uri, '/')))
-    {
-        gchar* pathname;
-        if (hostname[1] == '/')
-            hostname += 2;
-        if ((pathname = strchr (hostname, '/')))
-        {
-            if (path != NULL)
-                *path = pathname;
-            return g_strndup (hostname, pathname - hostname);
-        }
-        else
-            return g_strdup (hostname);
-    }
-
-    return g_strdup (uri);
-}
-
-/**
- * sokoke_hostname_to_ascii:
- * @uri: an URI string
- *
- * The specified hostname is encoded if it is not ASCII.
- *
- * If no IDN support is available at compile time,
- * the hostname will be returned unaltered.
- *
- * Return value: a newly allocated hostname
- **/
-static gchar*
-sokoke_hostname_to_ascii (const gchar* hostname)
-{
-    #ifdef HAVE_LIBSOUP_2_27_90
-    return g_hostname_to_ascii (hostname);
-    #elif HAVE_LIBIDN
-    uint32_t* q;
-    char* encoded;
-    int rc;
-
-    if ((q = stringprep_utf8_to_ucs4 (hostname, -1, NULL)))
-    {
-        rc = idna_to_ascii_4z (q, &encoded, IDNA_ALLOW_UNASSIGNED);
-        free (q);
-        if (rc == IDNA_SUCCESS)
-            return encoded;
-    }
-    #endif
-    return g_strdup (hostname);
-}
-
-/**
- * sokoke_uri_to_ascii:
- * @uri: an URI string
- *
- * The specified URI is parsed and the hostname
- * part of it is encoded if it is not ASCII.
- *
- * If no IDN support is available at compile time,
- * the URI will be returned unaltered.
- *
- * Return value: a newly allocated URI
- **/
-gchar*
-sokoke_uri_to_ascii (const gchar* uri)
-{
-    gchar* proto = NULL;
-    gchar* path = NULL;
-    gchar* hostname;
-    gchar* encoded;
-
-    if (strchr (uri, '/') && (proto = strchr (uri, ':')))
-    {
-        gulong offset;
-        gchar* buffer;
-
-        offset = g_utf8_pointer_to_offset (uri, proto);
-        buffer = g_malloc0 (offset + 1);
-        g_utf8_strncpy (buffer, uri, offset);
-        proto = buffer;
-    }
-
-    hostname = sokoke_hostname_from_uri (uri, &path);
-    encoded = sokoke_hostname_to_ascii (hostname);
-
-    if (encoded)
-    {
-        gchar* res = g_strconcat (proto ? proto : "", proto ? "://" : "",
-                                  encoded, path, NULL);
-        g_free (encoded);
-        return res;
-    }
-    g_free (hostname);
-    return g_strdup (uri);
-}
-
-static gchar*
-sokoke_idn_to_punycode (gchar* uri)
-{
-    #if HAVE_LIBIDN
-    gchar* result = sokoke_uri_to_ascii (uri);
-    g_free (uri);
-    return result;
-    #else
-    return uri;
-    #endif
-}
-
-/**
- * sokoke_search_uri:
- * @uri: a search URI with or without %s
- * @keywords: keywords
- *
- * Takes a search engine URI and inserts the specified
- * keywords. The @keywords are percent encoded. If the
- * search URI contains a %s they keywords are inserted
- * in that place, otherwise appended to the URI.
- *
- * Return value: a newly allocated search URI
- **/
-gchar* sokoke_search_uri (const gchar* uri,
-                          const gchar* keywords)
-{
-    gchar* escaped;
-    gchar* search;
-
-    g_return_val_if_fail (keywords != NULL, NULL);
-
-    if (!uri)
-        return g_strdup (keywords);
-
-    escaped = g_uri_escape_string (keywords, ":/", TRUE);
-    if (strstr (uri, "%s"))
-        search = g_strdup_printf (uri, escaped);
-    else
-        search = g_strconcat (uri, escaped, NULL);
-    g_free (escaped);
-    return search;
-}
-
 static void
 sokoke_resolve_hostname_cb (SoupAddress *address,
                             guint        status,
@@ -846,13 +643,6 @@ sokoke_magic_uri (const gchar* uri)
 
     g_return_val_if_fail (uri, NULL);
 
-    /* Just return if it's a javascript: or mailto: uri */
-    if (!strncmp (uri, "javascript:", 11)
-     || !strncmp (uri, "mailto:", 7)
-     || sokoke_external_uri (uri)
-     || !strncmp (uri, "data:", 5)
-     || !strncmp (uri, "about:", 6))
-        return g_strdup (uri);
     /* Add file:// if we have a local path */
     if (g_path_is_absolute (uri))
         return g_strconcat ("file://", uri, NULL);
@@ -883,18 +673,15 @@ sokoke_magic_uri (const gchar* uri)
         g_free (longitude);
         return geo;
     }
-    /* Do we have a protocol? */
-    if (g_strstr_len (uri, 8, "://"))
-        return sokoke_idn_to_punycode (g_strdup (uri));
-
-    /* Do we have an IP address? */
-    if (g_ascii_isdigit (uri[0]) && g_strstr_len (uri, 4, "."))
+    if (midori_uri_is_location (uri) || sokoke_external_uri (uri))
+        return g_strdup (uri);
+    if (midori_uri_is_ip_address (uri))
         return g_strconcat ("http://", uri, NULL);
     search = NULL;
     if (!strchr (uri, ' ') &&
         ((search = strchr (uri, ':')) || (search = strchr (uri, '@'))) &&
         search[0] && !g_ascii_isalpha (search[1]))
-        return sokoke_idn_to_punycode (g_strconcat ("http://", uri, NULL));
+        return g_strconcat ("http://", uri, NULL);
     if ((!strcmp (uri, "localhost") || strchr (uri, '/'))
       && sokoke_resolve_hostname (uri))
         return g_strconcat ("http://", uri, NULL);
@@ -908,100 +695,12 @@ sokoke_magic_uri (const gchar* uri)
                 {
                     search = g_strconcat ("http://", uri, NULL);
                     g_strfreev (parts);
-                   return sokoke_idn_to_punycode (search);
+                   return search;
                 }
         }
         g_strfreev (parts);
     }
     return NULL;
-}
-
-/**
- * sokoke_uri_unescape_string:
- * @uri: an URI string
- *
- * Unescape @uri if needed, and pass through '+' and '%20'.
- *
- * Return value: a newly allocated URI
- **/
-gchar*
-sokoke_uri_unescape_string (const gchar* uri)
-{
-    if (strchr (uri,'%') || strchr (uri, ' '))
-    {
-        /* Preserve %20 for pasting URLs into other windows */
-        gchar* unescaped = g_uri_unescape_string (uri, "+");
-        if (!unescaped)
-            return g_strdup (uri);
-        gchar* spaced = sokoke_replace_variables (unescaped, " ", "%20", NULL);
-        g_free (unescaped);
-        return spaced;
-    }
-
-    return g_strdup (uri);
-}
-
-/**
- * sokoke_format_uri_for_display:
- * @uri: an URI string
- *
- * Formats an URI for display, for instance by converting
- * percent encoded characters and by decoding punycode.
- *
- * Return value: a newly allocated URI
- **/
-gchar*
-sokoke_format_uri_for_display (const gchar* uri)
-{
-    if (uri && g_str_has_prefix (uri, "http://"))
-    {
-        gchar* unescaped = sokoke_uri_unescape_string (uri);
-        #ifdef HAVE_LIBSOUP_2_27_90
-        gchar* path = NULL;
-        gchar* hostname;
-        gchar* decoded;
-
-        if (!unescaped)
-            return g_strdup (uri);
-        else if (!g_utf8_validate (unescaped, -1, NULL))
-        {
-            g_free (unescaped);
-            return g_strdup (uri);
-        }
-
-        hostname = sokoke_hostname_from_uri (unescaped, &path);
-        decoded = g_hostname_to_unicode (hostname);
-
-        if (decoded)
-        {
-            gchar* result = g_strconcat ("http://", decoded, path, NULL);
-            g_free (unescaped);
-            g_free (decoded);
-            g_free (hostname);
-            return result;
-        }
-        g_free (hostname);
-        return unescaped;
-        #elif HAVE_LIBIDN
-        gchar* decoded;
-
-        if (!unescaped)
-            return g_strdup (uri);
-        else if (!g_utf8_validate (unescaped, -1, NULL))
-        {
-            g_free (unescaped);
-            return g_strdup (uri);
-        }
-
-        if (!idna_to_unicode_8z8z (unescaped, &decoded, 0) == IDNA_SUCCESS)
-            return unescaped;
-        g_free (unescaped);
-        return decoded;
-        #else
-        return unescaped;
-        #endif
-    }
-    return g_strdup (uri);
 }
 
 void
@@ -1028,13 +727,6 @@ void sokoke_widget_set_visible (GtkWidget* widget, gboolean visible)
         gtk_widget_show (widget);
     else
         gtk_widget_hide (widget);
-}
-
-void
-sokoke_container_show_children (GtkContainer* container)
-{
-    /* Show every child but not the container itself */
-    gtk_container_foreach (container, (GtkCallback)(gtk_widget_show_all), NULL);
 }
 
 typedef enum
@@ -1156,107 +848,6 @@ sokoke_xfce_header_new (const gchar* icon,
         return vbox;
     }
     return NULL;
-}
-
-void
-sokoke_widget_set_pango_font_style (GtkWidget* widget,
-                                    PangoStyle style)
-{
-    /* Conveniently change the pango font style
-       For some reason we need to reset if we actually want the normal style */
-    if (style == PANGO_STYLE_NORMAL)
-        gtk_widget_modify_font (widget, NULL);
-    else
-    {
-        PangoFontDescription* font_description = pango_font_description_new ();
-        pango_font_description_set_style (font_description, PANGO_STYLE_ITALIC);
-        gtk_widget_modify_font (widget, font_description);
-        pango_font_description_free (font_description);
-    }
-}
-
-static gboolean
-sokoke_on_entry_focus_in_event (GtkEntry*      entry,
-                                GdkEventFocus* event,
-                                gpointer       userdata)
-{
-    gint has_default = GPOINTER_TO_INT (
-        g_object_get_data (G_OBJECT (entry), "sokoke_has_default"));
-    if (has_default)
-    {
-        gtk_entry_set_text (entry, "");
-        g_object_set_data (G_OBJECT (entry), "sokoke_has_default",
-                           GINT_TO_POINTER (0));
-        sokoke_widget_set_pango_font_style (GTK_WIDGET (entry),
-                                            PANGO_STYLE_NORMAL);
-    }
-    return FALSE;
-}
-
-static gboolean
-sokoke_on_entry_focus_out_event (GtkEntry*      entry,
-                                 GdkEventFocus* event,
-                                 gpointer       userdata)
-{
-    const gchar* text = gtk_entry_get_text (entry);
-    if (text && !*text)
-    {
-        const gchar* default_text = (const gchar*)g_object_get_data (
-            G_OBJECT (entry), "sokoke_default_text");
-        gtk_entry_set_text (entry, default_text);
-        g_object_set_data (G_OBJECT (entry),
-                           "sokoke_has_default", GINT_TO_POINTER (1));
-        sokoke_widget_set_pango_font_style (GTK_WIDGET (entry),
-                                            PANGO_STYLE_ITALIC);
-    }
-    return FALSE;
-}
-
-static void
-sokoke_on_entry_drag_data_received (GtkEntry*       entry,
-                                    GdkDragContext* drag_context,
-                                    gint            x,
-                                    gint            y,
-                                    guint           timestamp,
-                                    gpointer        user_data)
-{
-    sokoke_on_entry_focus_in_event (entry, NULL, NULL);
-}
-
-void
-sokoke_entry_set_default_text (GtkEntry*    entry,
-                               const gchar* default_text)
-{
-    /* Note: The default text initially overwrites any previous text */
-    gchar* old_value = g_object_get_data (G_OBJECT (entry),
-                                          "sokoke_default_text");
-    if (!old_value)
-    {
-        g_object_set_data (G_OBJECT (entry), "sokoke_has_default",
-                           GINT_TO_POINTER (1));
-        sokoke_widget_set_pango_font_style (GTK_WIDGET (entry),
-                                            PANGO_STYLE_ITALIC);
-        gtk_entry_set_text (entry, default_text);
-        g_signal_connect (entry, "drag-data-received",
-            G_CALLBACK (sokoke_on_entry_drag_data_received), NULL);
-        g_signal_connect (entry, "focus-in-event",
-            G_CALLBACK (sokoke_on_entry_focus_in_event), NULL);
-        g_signal_connect (entry, "focus-out-event",
-           G_CALLBACK (sokoke_on_entry_focus_out_event), NULL);
-    }
-    else if (!gtk_widget_has_focus (GTK_WIDGET (entry)))
-    {
-        gint has_default = GPOINTER_TO_INT (
-            g_object_get_data (G_OBJECT (entry), "sokoke_has_default"));
-        if (has_default)
-        {
-            gtk_entry_set_text (entry, default_text);
-            sokoke_widget_set_pango_font_style (GTK_WIDGET (entry),
-                                                PANGO_STYLE_ITALIC);
-        }
-    }
-    g_object_set_data (G_OBJECT (entry), "sokoke_default_text",
-                       (gpointer)default_text);
 }
 
 gchar*
@@ -1483,124 +1074,6 @@ sokoke_days_between (const time_t* day1,
 }
 
 /**
- * sokoke_register_stock_items:
- *
- * Registers several custom stock items used throughout Midori.
- **/
-void
-sokoke_register_stock_items (void)
-{
-    GtkIconSource* icon_source;
-    GtkIconSet* icon_set;
-    GtkIconFactory* factory;
-    gsize i;
-
-    typedef struct
-    {
-        const gchar* stock_id;
-        const gchar* label;
-        GdkModifierType modifier;
-        guint keyval;
-        const gchar* fallback;
-    } FatStockItem;
-    static FatStockItem items[] =
-    {
-        { STOCK_EXTENSION, NULL, 0, 0, GTK_STOCK_CONVERT },
-        { STOCK_IMAGE, NULL, 0, 0, GTK_STOCK_ORIENTATION_PORTRAIT },
-        { STOCK_WEB_BROWSER, NULL, 0, 0, "gnome-web-browser" },
-        { STOCK_NEWS_FEED, NULL, 0, 0, GTK_STOCK_INDEX },
-        { STOCK_SCRIPT, NULL, 0, 0, GTK_STOCK_EXECUTE },
-        { STOCK_STYLE, NULL, 0, 0, GTK_STOCK_SELECT_COLOR },
-        { STOCK_TRANSFER, NULL, 0, 0, GTK_STOCK_SAVE },
-
-        { STOCK_BOOKMARK,       N_("_Bookmark"), 0, 0, GTK_STOCK_FILE },
-        { STOCK_BOOKMARKS,      N_("_Bookmarks"), GDK_CONTROL_MASK | GDK_SHIFT_MASK, GDK_KEY_B, GTK_STOCK_DIRECTORY },
-        { STOCK_BOOKMARK_ADD,   N_("Add Boo_kmark"), 0, 0, GTK_STOCK_ADD },
-        { STOCK_CONSOLE,        N_("_Console"), 0, 0, GTK_STOCK_DIALOG_WARNING },
-        { STOCK_EXTENSIONS,     N_("_Extensions"), 0, 0, GTK_STOCK_CONVERT },
-        { STOCK_HISTORY,        N_("_History"), GDK_CONTROL_MASK | GDK_SHIFT_MASK, GDK_KEY_H, GTK_STOCK_SORT_ASCENDING },
-        { STOCK_HOMEPAGE,       N_("_Homepage"), 0, 0, GTK_STOCK_HOME },
-        { STOCK_SCRIPTS,        N_("_Userscripts"), 0, 0, GTK_STOCK_EXECUTE },
-        { STOCK_TAB_NEW,        N_("New _Tab"), 0, 0, GTK_STOCK_ADD },
-        { STOCK_TRANSFERS,      N_("_Transfers"), GDK_CONTROL_MASK | GDK_SHIFT_MASK, GDK_KEY_J, GTK_STOCK_SAVE },
-        { STOCK_PLUGINS,        N_("Netscape p_lugins"), 0, 0, GTK_STOCK_CONVERT },
-        { STOCK_USER_TRASH,     N_("_Closed Tabs"), 0, 0, "gtk-undo-ltr" },
-        { STOCK_WINDOW_NEW,     N_("New _Window"), 0, 0, GTK_STOCK_ADD },
-        { GTK_STOCK_DIRECTORY,  N_("New _Folder"), 0, 0, NULL },
-    };
-
-    factory = gtk_icon_factory_new ();
-    for (i = 0; i < G_N_ELEMENTS (items); i++)
-    {
-        icon_set = gtk_icon_set_new ();
-        icon_source = gtk_icon_source_new ();
-        if (items[i].fallback)
-        {
-            gtk_icon_source_set_icon_name (icon_source, items[i].fallback);
-            items[i].fallback = NULL;
-            gtk_icon_set_add_source (icon_set, icon_source);
-        }
-        gtk_icon_source_set_icon_name (icon_source, items[i].stock_id);
-        gtk_icon_set_add_source (icon_set, icon_source);
-        gtk_icon_source_free (icon_source);
-        gtk_icon_factory_add (factory, items[i].stock_id, icon_set);
-        gtk_icon_set_unref (icon_set);
-    }
-    gtk_stock_add_static ((GtkStockItem*)items, G_N_ELEMENTS (items));
-    gtk_icon_factory_add_default (factory);
-    g_object_unref (factory);
-
-    #if HAVE_HILDON
-    /* Maemo doesn't theme stock icons. So we map platform icons
-        to stock icons. These are all monochrome toolbar icons. */
-    typedef struct
-    {
-        const gchar* stock_id;
-        const gchar* icon_name;
-    } CompatItem;
-    static CompatItem compat_items[] =
-    {
-        { GTK_STOCK_ADD,        "general_add" },
-        { GTK_STOCK_BOLD,       "general_bold" },
-        { GTK_STOCK_CLOSE,      "general_close_b" },
-        { GTK_STOCK_DELETE,     "general_delete" },
-        { GTK_STOCK_DIRECTORY,  "general_toolbar_folder" },
-        { GTK_STOCK_FIND,       "general_search" },
-        { GTK_STOCK_FULLSCREEN, "general_fullsize_b" },
-        { GTK_STOCK_GO_BACK,    "general_back" },
-        { GTK_STOCK_GO_FORWARD, "general_forward" },
-        { GTK_STOCK_GO_UP,      "filemanager_folder_up" },
-        { GTK_STOCK_GOTO_FIRST, "pdf_viewer_first_page" },
-        { GTK_STOCK_GOTO_LAST,  "pdf_viewer_last_page" },
-        { GTK_STOCK_INFO,       "general_information" },
-        { GTK_STOCK_ITALIC,     "general_italic" },
-        { GTK_STOCK_JUMP_TO,    "general_move_to_folder" },
-        { GTK_STOCK_PREFERENCES,"general_settings" },
-        { GTK_STOCK_REFRESH,    "general_refresh" },
-        { GTK_STOCK_SAVE,       "notes_save" },
-        { GTK_STOCK_STOP,       "general_stop" },
-        { GTK_STOCK_UNDERLINE,  "notes_underline" },
-        { GTK_STOCK_ZOOM_IN,    "pdf_zoomin" },
-        { GTK_STOCK_ZOOM_OUT,   "pdf_zoomout" },
-    };
-
-    factory = gtk_icon_factory_new ();
-    for (i = 0; i < G_N_ELEMENTS (compat_items); i++)
-    {
-        icon_set = gtk_icon_set_new ();
-        icon_source = gtk_icon_source_new ();
-        gtk_icon_source_set_icon_name (icon_source, compat_items[i].icon_name);
-        gtk_icon_set_add_source (icon_set, icon_source);
-        gtk_icon_source_free (icon_source);
-        gtk_icon_factory_add (factory, compat_items[i].stock_id, icon_set);
-        gtk_icon_set_unref (icon_set);
-    }
-    gtk_icon_factory_add_default (factory);
-    g_object_unref (factory);
-    #endif
-}
-
-/**
  * sokoke_set_config_dir:
  * @new_config_dir: an absolute path, or %NULL
  *
@@ -1633,7 +1106,7 @@ sokoke_set_config_dir (const gchar* new_config_dir)
 gboolean
 sokoke_is_app_or_private (void)
 {
-    return strcmp ("/", sokoke_set_config_dir (NULL));
+    return !strcmp ("/", sokoke_set_config_dir (NULL));
 }
 
 /**
@@ -1765,8 +1238,11 @@ gchar* sokoke_find_lib_path (const gchar* folder)
  * Return value: a newly allocated full path
  **/
 gchar*
-sokoke_find_data_filename (const gchar* filename)
+sokoke_find_data_filename (const gchar* filename,
+                           gboolean     res)
 {
+    const gchar* res1 = res ? PACKAGE_NAME : "";
+    const gchar* res2 = res ? "res" : "";
     const gchar* const* data_dirs = g_get_system_data_dirs ();
     guint i = 0;
     const gchar* data_dir;
@@ -1774,7 +1250,7 @@ sokoke_find_data_filename (const gchar* filename)
 
     #ifdef G_OS_WIN32
     gchar* install_path = g_win32_get_package_installation_directory_of_module (NULL);
-    path = g_build_filename (install_path, "share", filename, NULL);
+    path = g_build_filename (install_path, "share", res1, res2, filename, NULL);
     g_free (install_path);
     if (g_access (path, F_OK) == 0)
         return path;
@@ -1782,19 +1258,19 @@ sokoke_find_data_filename (const gchar* filename)
     g_free (path);
     #endif
 
-    path = g_build_filename (g_get_user_data_dir (), filename, NULL);
+    path = g_build_filename (g_get_user_data_dir (), res1, res2, filename, NULL);
     if (g_access (path, F_OK) == 0)
         return path;
     g_free (path);
 
     while ((data_dir = data_dirs[i++]))
     {
-        path = g_build_filename (data_dir, filename, NULL);
+        path = g_build_filename (data_dir, res1, res2, filename, NULL);
         if (g_access (path, F_OK) == 0)
             return path;
         g_free (path);
     }
-    return g_build_filename (MDATADIR, filename, NULL);
+    return g_build_filename (MDATADIR, res1, res2, filename, NULL);
 }
 
 /**
@@ -1969,42 +1445,28 @@ sokoke_prefetch_uri (MidoriWebSettings*  settings,
     #define MAXHOSTS 50
     static gchar* hosts = NULL;
     static gint host_count = G_MAXINT;
-
-    SoupURI* s_uri;
-
-    if (!uri)
-        return FALSE;
+    gchar* hostname;
 
     if (settings && !katze_object_get_boolean (settings, "enable-dns-prefetching"))
         return FALSE;
 
-    s_uri = soup_uri_new (uri);
-    if (!s_uri || !s_uri->host)
-        return FALSE;
-
-    #if GLIB_CHECK_VERSION (2, 22, 0)
-    if (g_hostname_is_ip_address (s_uri->host))
-    #else
-    if (g_ascii_isdigit (s_uri->host[0]) && g_strstr_len (s_uri->host, 4, "."))
-    #endif
+    if (!(hostname = midori_uri_parse (uri, NULL))
+     || !strcmp (hostname, uri)
+     || g_hostname_is_ip_address (hostname)
+     || !midori_uri_is_http (uri))
     {
-        soup_uri_free (s_uri);
-        return FALSE;
-    }
-    if (!g_str_has_prefix (uri, "http"))
-    {
-        soup_uri_free (s_uri);
+        g_free (hostname);
         return FALSE;
     }
 
     if (!hosts ||
-        !g_regex_match_simple (s_uri->host, hosts,
+        !g_regex_match_simple (hostname, hosts,
                                G_REGEX_CASELESS, G_REGEX_MATCH_NOTEMPTY))
     {
         SoupAddress* address;
         gchar* new_hosts;
 
-        address = soup_address_new (s_uri->host, SOUP_ADDRESS_ANY_PORT);
+        address = soup_address_new (hostname, SOUP_ADDRESS_ANY_PORT);
         soup_address_resolve_async (address, 0, 0, callback, user_data);
         g_object_unref (address);
 
@@ -2014,12 +1476,12 @@ sokoke_prefetch_uri (MidoriWebSettings*  settings,
             host_count = 0;
         }
         host_count++;
-        new_hosts = g_strdup_printf ("%s|%s", hosts, s_uri->host);
+        new_hosts = g_strdup_printf ("%s|%s", hosts, hostname);
         katze_assign (hosts, new_hosts);
     }
     else if (callback)
         callback (NULL, SOUP_STATUS_OK, user_data);
-    soup_uri_free (s_uri);
+    g_free (hostname);
     return TRUE;
 }
 
@@ -2181,9 +1643,9 @@ sokoke_widget_copy_clipboard (GtkWidget*   widget,
     GtkClipboard* clipboard;
 
     clipboard = gtk_clipboard_get_for_display (display, GDK_SELECTION_CLIPBOARD);
-    gtk_clipboard_set_text (clipboard, text, -1);
+    gtk_clipboard_set_text (clipboard, text ? text : "", -1);
     clipboard = gtk_clipboard_get_for_display (display, GDK_SELECTION_PRIMARY);
-    gtk_clipboard_set_text (clipboard, text, -1);
+    gtk_clipboard_set_text (clipboard, text ? text : "", -1);
 }
 
 gchar*
@@ -2230,8 +1692,8 @@ midori_download_prepare_tooltip_text (WebKitDownload* download)
     minutes_str = g_strdup_printf (ngettext ("%d minute", "%d minutes", minutes_left), minutes_left);
     seconds_str = g_strdup_printf (ngettext ("%d second", "%d seconds", seconds_left), seconds_left);
 
-    current = g_format_size_for_display (current_size);
-    total = g_format_size_for_display (total_size);
+    current = g_format_size (current_size);
+    total = g_format_size (total_size);
     last_time = g_object_get_data (G_OBJECT (download), "last-time");
     last_size = g_object_get_data (G_OBJECT (download), "last-size");
 
@@ -2241,7 +1703,7 @@ midori_download_prepare_tooltip_text (WebKitDownload* download)
     g_free (total);
 
     if (time_elapsed != *last_time)
-        download_speed = g_format_size_for_display (
+        download_speed = g_format_size (
                 (current_size - *last_size) / (time_elapsed - *last_time));
     else
         /* i18n: Unknown number of bytes, used for transfer rate like ?B/s */

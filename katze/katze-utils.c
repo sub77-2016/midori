@@ -13,6 +13,7 @@
 
 #include "katze-utils.h"
 #include "katze-array.h"
+#include "midori-core.h"
 
 #include <glib/gstdio.h>
 #include <glib/gi18n.h>
@@ -30,14 +31,6 @@
 
 #ifdef HAVE_HILDON_2_2
     #include <hildon/hildon.h>
-#endif
-
-#if !GTK_CHECK_VERSION (2, 14, 0)
-    #define gtk_widget_get_window(wdgt) wdgt->window
-#endif
-#if !GTK_CHECK_VERSION (2, 18, 0)
-    #define gtk_widget_get_has_window(wdgt) !GTK_WIDGET_NO_WINDOW (wdgt)
-    #define gtk_widget_get_allocation(wdgt, alloc) *alloc = wdgt->allocation
 #endif
 
 #define I_ g_intern_static_string
@@ -101,11 +94,7 @@ katze_app_info_get_commandline (GAppInfo* info)
 {
     const gchar* exe;
 
-    #if GLIB_CHECK_VERSION (2, 20, 0)
     exe = g_app_info_get_commandline (info);
-    #else
-    exe = g_object_get_data (G_OBJECT (info), "katze-cmdline");
-    #endif
     if (!exe)
         exe = g_app_info_get_executable (info);
     if (!exe)
@@ -370,95 +359,6 @@ katze_app_info_get_all_for_category (const gchar* category)
     g_list_free (all_apps);
     return apps;
 }
-
-#if !GLIB_CHECK_VERSION (2, 20, 0)
-/* Icon tokenization, for Glib < 2.20 */
-static gboolean
-g_icon_to_string_tokenized (GIcon   *icon,
-                            GString *s)
-{
-  GPtrArray *tokens;
-  guint i;
-
-  if (G_IS_THEMED_ICON (icon))
-    {
-      guint n;
-      const char * const *names;
-      tokens = g_ptr_array_new ();
-      g_object_get (icon, "names", &names, NULL);
-      for (n = 0; names[n] != NULL; n++)
-        g_ptr_array_add (tokens, g_strdup (names[n]));
-    }
-  else if (G_IS_FILE_ICON (icon))
-    {
-      tokens = g_ptr_array_new ();
-      g_ptr_array_add (tokens,
-                       g_file_get_uri (g_file_icon_get_file (G_FILE_ICON (icon))));
-    }
-  else
-    return FALSE;
-
-  g_string_append (s, g_type_name_from_instance ((GTypeInstance *)icon));
-
-  for (i = 0; i < tokens->len; i++)
-    {
-      char *token = g_ptr_array_index (tokens, i);
-
-      g_string_append_c (s, ' ');
-      g_string_append_uri_escaped (s, token, "!$&'()*+,;=:@/", TRUE);
-
-      g_free (token);
-    }
-
-  g_ptr_array_free (tokens, TRUE);
-
-  return TRUE;
-}
-
-/* GIcon serialization, for Glib < 2.20 */
-static gchar *
-g_icon_to_string (GIcon *icon)
-{
-  gchar *ret = NULL;
-
-  g_return_val_if_fail (G_IS_ICON (icon), NULL);
-
-  if (G_IS_FILE_ICON (icon))
-    {
-      GFile *file = g_file_icon_get_file (G_FILE_ICON (icon));
-      if (g_file_is_native (file))
-        {
-          ret = g_file_get_path (file);
-          if (!g_utf8_validate (ret, -1, NULL))
-            {
-              g_free (ret);
-              ret = NULL;
-            }
-        }
-      else
-        ret = g_file_get_uri (file);
-    }
-  else if (G_IS_THEMED_ICON (icon))
-    {
-      const char * const *names;
-      g_object_get (icon, "names", &names, NULL);
-      if (names && names[0] && names[0][0] != '.' &&
-          g_utf8_validate (names[0], -1, NULL) && names[1] == NULL)
-        ret = g_strdup (names[0]);
-    }
-
-  if (ret == NULL)
-    {
-      GString *s = g_string_new (". ");
-      if (g_icon_to_string_tokenized (icon, s))
-        ret = g_string_free (s, FALSE);
-      else
-        g_string_free (s, TRUE);
-    }
-
-  return ret;
-}
-#endif
 
 /**
  * katze_property_proxy:
@@ -744,9 +644,6 @@ katze_property_proxy (gpointer     object,
 
                     info = g_app_info_create_from_commandline (string,
                         NULL, G_APP_INFO_CREATE_NONE, NULL);
-                    #if !GLIB_CHECK_VERSION (2, 20, 0)
-                    g_object_set_data (G_OBJECT (info), "katze-cmdline", string);
-                    #endif
                     entry = gtk_entry_new ();
                     exe = g_app_info_get_executable (info);
                     if (exe && *exe && strcmp (exe, "%f"))
@@ -1575,7 +1472,7 @@ katze_load_cached_icon (const gchar* uri,
 
     g_return_val_if_fail (uri != NULL, NULL);
 
-    if (g_str_has_prefix (uri, "http://") || g_str_has_prefix (uri,"https://"))
+    if (midori_uri_is_http (uri))
     {
         guint i;
         gchar* icon_uri;
@@ -1622,12 +1519,7 @@ katze_uri_entry_changed_cb (GtkWidget* entry,
                             GtkWidget* other_widget)
 {
     const gchar* uri = gtk_entry_get_text (GTK_ENTRY (entry));
-    gboolean valid = g_str_has_prefix (uri, "http://")
-                  || g_str_has_prefix (uri, "https://")
-                  || g_str_has_prefix (uri, "file://")
-                  || g_str_has_prefix (uri, "data:")
-                  || g_str_has_prefix (uri, "about:")
-                  || g_str_has_prefix (uri, "javascript:");
+    gboolean valid = midori_uri_is_location (uri);
     if (*uri && !valid)
     {
         GdkColor bg_color = { 0 };
@@ -1644,7 +1536,7 @@ katze_uri_entry_changed_cb (GtkWidget* entry,
     }
 
     if (other_widget != NULL)
-        gtk_widget_set_sensitive (other_widget, *uri && valid);
+        gtk_widget_set_sensitive (other_widget, valid);
 }
 
 /**
