@@ -1,3 +1,9 @@
+midori (0.4.2-1) UNRELEASED; urgency=low
+
+  * New upstream release.
+
+ -- Yves-Alexis Perez <corsac@debian.org>  Mon, 14 Nov 2011 11:02:09 +0100
+
 midori (0.4.1-2) unstable; urgency=low
 
   * debian/control:
