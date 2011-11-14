@@ -9,7 +9,9 @@ case "$1" in
             x-www-browser.1.gz /usr/share/man/man1/midori.1.gz
         ;;
 esac
-dpkg-maintscript-helper rm_conffile \
- /etc/midori/extensions/libadblock.so/config 0.2.2-1 midori -- "$@"
+dpkg-maintscript-helper mv_conffile \
+ /etc/xdg/midori/extensions/libadblock.so/config \
+ /etc/xdg/midori/extensions/adblock/config \
+ 0.4.1-2 midori -- "$@"
 #DEBHELPER#
 exit 0
