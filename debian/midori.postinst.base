@@ -13,5 +13,6 @@ dpkg-maintscript-helper mv_conffile \
  /etc/xdg/midori/extensions/libadblock.so/config \
  /etc/xdg/midori/extensions/adblock/config \
  0.4.1-2 midori -- "$@"
+rmdir /etc/xdg/midori/extensions/libadblock.so || true
 #DEBHELPER#
 exit 0
