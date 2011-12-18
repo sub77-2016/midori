@@ -15,20 +15,6 @@
 #define SM "http://www.searchmash.com/search/"
 
 static void
-sokoke_assert_str_equal (const gchar* input,
-                         const gchar* result,
-                         const gchar* expected)
-{
-    if (g_strcmp0 (result, expected))
-    {
-        g_error ("Input: %s\nExpected: %s\nResult: %s",
-                 input ? input : "NULL",
-                 expected ? expected : "NULL",
-                 result ? result : "NULL");
-    }
-}
-
-static void
 test_input (const gchar* input,
             const gchar* expected)
 {
@@ -76,13 +62,16 @@ test_input (const gchar* input,
 
         g_free (keywords);
     }
-    sokoke_assert_str_equal (input, uri, expected);
+    katze_assert_str_equal (input, uri, expected);
     g_free (uri);
 }
 
 static void
 magic_uri_uri (void)
 {
+    const gchar* uri;
+    gchar* path;
+
     test_input ("ftp://ftp.mozilla.org", "ftp://ftp.mozilla.org");
     test_input ("ftp://ftp.mozilla.org/pub", "ftp://ftp.mozilla.org/pub");
     test_input ("http://www.example.com", "http://www.example.com");
@@ -91,6 +80,8 @@ magic_uri_uri (void)
     test_input ("example.com", "http://example.com");
     test_input ("www.google..com", "http://www.google..com");
     test_input ("/home/user/midori.html", "file:///home/user/midori.html");
+    test_input ("http://www.google.com/search?q=query test",
+                "http://www.google.com/search?q=query test");
     if (sokoke_resolve_hostname ("localhost"))
     {
         test_input ("localhost", "http://localhost");
@@ -105,6 +96,20 @@ magic_uri_uri (void)
     test_input ("foo:123@bar.baz", "http://foo:123@bar.baz");
     /* test_input ("foo:f1o2o3@bar.baz", "http://f1o2o3:foo@bar.baz"); */
     /* test_input ("foo:foo@bar.baz", "http://foo:foo@bar.baz"); */
+
+    uri = "http://bugs.launchpad.net/midori";
+    g_assert_cmpstr ("bugs.launchpad.net", ==, midori_uri_parse_hostname (uri, NULL));
+    uri = "https://bugs.launchpad.net/midori";
+    g_assert_cmpstr ("bugs.launchpad.net", ==, midori_uri_parse_hostname (uri, NULL));
+    g_assert_cmpstr ("bugs.launchpad.net", ==, midori_uri_parse_hostname (uri, &path));
+    g_assert_cmpstr ("/midori", ==, path);
+    uri = "http://айкидо.ru/users/kotyata";
+    g_assert_cmpstr ("айкидо.ru", ==, midori_uri_parse_hostname (uri, &path));
+    g_assert_cmpstr ("/users/kotyata", ==, path);
+    uri = "invalid:/uri.like/thing";
+    g_assert_cmpstr (NULL, ==, midori_uri_parse_hostname (uri, NULL));
+    uri = "invalid-uri.like:thing";
+    g_assert_cmpstr (NULL, ==, midori_uri_parse_hostname (uri, NULL));
 }
 
 static void
@@ -132,7 +137,7 @@ magic_uri_idn (void)
     {
         gchar* result = midori_uri_to_ascii (items[i].before);
         const gchar* after = items[i].after ? items[i].after : items[i].before;
-        sokoke_assert_str_equal (items[i].before, result, after);
+        katze_assert_str_equal (items[i].before, result, after);
         g_free (result);
     }
 
@@ -250,7 +255,7 @@ magic_uri_format (void)
     {
         gchar* result = midori_uri_format_for_display (items[i].before);
         const gchar* after = items[i].after ? items[i].after : items[i].before;
-        sokoke_assert_str_equal (items[i].before, result, after);
+        katze_assert_str_equal (items[i].before, result, after);
         g_free (result);
     }
 }

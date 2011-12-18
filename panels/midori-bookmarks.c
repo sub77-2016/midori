@@ -124,19 +124,13 @@ midori_bookmarks_export_array_db (sqlite3*     db,
                                   KatzeArray*  array,
                                   const gchar* folder)
 {
-    gchar* sqlcmd;
     KatzeArray* root_array;
     KatzeArray* subarray;
     KatzeItem* item;
     GList* list;
 
-    if (!db)
+    if (!(root_array = midori_array_query (array, "*", "folder='%q'", folder)))
         return;
-
-    sqlcmd = g_strdup_printf ("SELECT * FROM bookmarks where folder='%s'", folder);
-    root_array = katze_array_from_sqlite (db, sqlcmd);
-    g_free (sqlcmd);
-
     KATZE_ARRAY_FOREACH_ITEM_L (item, root_array, list)
     {
         if (KATZE_ITEM_IS_FOLDER (item))
@@ -177,40 +171,15 @@ midori_bookmarks_read_from_db (MidoriBookmarks* bookmarks,
                                const gchar*     folder,
                                const gchar*     keyword)
 {
-    sqlite3* db;
-    sqlite3_stmt* statement;
-    gint result;
-    const gchar* sqlcmd;
-
-    db = g_object_get_data (G_OBJECT (bookmarks->array), "db");
-
-    if (!db)
-        return katze_array_new (KATZE_TYPE_ITEM);
+    KatzeArray* array;
 
     if (keyword && *keyword)
-    {
-        gchar* filterstr;
-        sqlcmd = "SELECT uri, title, desc, app, toolbar, folder from bookmarks where "
-                 " title like ? ORDER BY uri DESC";
-        result = sqlite3_prepare_v2 (db, sqlcmd, -1, &statement, NULL);
-        filterstr = g_strdup_printf ("%%%s%%", keyword);
-        sqlite3_bind_text (statement, 1, g_strdup (filterstr), -1, g_free);
-        g_free (filterstr);
-    }
+        array = midori_array_query (bookmarks->array,
+           "uri, title, desc, app, toolbar, folder", "title LIKE '%%%q%%'", keyword);
     else
-    {
-        if (!folder)
-            folder = "";
-        sqlcmd = "SELECT uri, title, desc, app, toolbar, folder from bookmarks where "
-                 " folder = ? ORDER BY title DESC";
-        result = sqlite3_prepare_v2 (db, sqlcmd, -1, &statement, NULL);
-        sqlite3_bind_text (statement, 1, g_strdup (folder), -1, g_free);
-    }
-
-    if (result != SQLITE_OK)
-        return katze_array_new (KATZE_TYPE_ITEM);
-
-    return katze_array_from_statement (statement);
+        array = midori_array_query (bookmarks->array,
+           "uri, title, desc, app, toolbar, folder", "folder = '%q'", folder);
+    return array ? array : katze_array_new (KATZE_TYPE_ITEM);
 }
 
 static void
@@ -247,9 +216,9 @@ midori_bookmarks_insert_item_db (sqlite3*     db,
     gchar* sqlcmd;
     char* errmsg = NULL;
     KatzeItem* old_parent;
-    gchar* parent;
-    gchar* uri;
-    gchar* desc;
+    const gchar* parent;
+    const gchar* uri = NULL;
+    const gchar* desc = NULL;
 
     /* Bookmarks must have a name, import may produce invalid items */
     g_return_if_fail (katze_item_get_name (item));
@@ -258,30 +227,26 @@ midori_bookmarks_insert_item_db (sqlite3*     db,
         return;
 
     if (KATZE_ITEM_IS_BOOKMARK (item))
-        uri = g_strdup (katze_item_get_uri (item));
-    else
-        uri = g_strdup ("");
+        uri = katze_item_get_uri (item);
 
     if (katze_item_get_text (item))
-        desc = g_strdup (katze_item_get_text (item));
-    else
-        desc = g_strdup ("");
+        desc = katze_item_get_text (item);
 
     /* Use folder, otherwise fallback to parent folder */
     old_parent = katze_item_get_parent (item);
     if (folder && *folder)
-        parent = g_strdup (folder);
+        parent = folder;
     else if (old_parent && katze_item_get_name (old_parent))
-        parent = g_strdup (katze_item_get_name (old_parent));
+        parent = katze_item_get_name (old_parent);
     else
-        parent = g_strdup ("");
+        parent = "";
 
     sqlcmd = sqlite3_mprintf (
             "INSERT into bookmarks (uri, title, desc, folder, toolbar, app) values"
             " ('%q', '%q', '%q', '%q', %d, %d)",
-            uri,
+            uri ? uri : "",
             katze_item_get_name (item),
-            desc,
+            desc ? desc : "",
             parent,
             katze_item_get_meta_boolean (item, "toolbar"),
             katze_item_get_meta_boolean (item, "app"));
@@ -292,9 +257,6 @@ midori_bookmarks_insert_item_db (sqlite3*     db,
         sqlite3_free (errmsg);
     }
 
-    g_free (uri);
-    g_free (parent);
-    g_free (desc);
     sqlite3_free (sqlcmd);
 }
 
@@ -346,30 +308,31 @@ midori_bookmarks_row_changed_cb (GtkTreeModel*    model,
 {
     KatzeItem* item;
     GtkTreeIter parent;
-    gchar* parent_name;
+    KatzeItem* new_parent = NULL;
+    const gchar* parent_name;
 
     gtk_tree_model_get (model, iter, 0, &item, -1);
 
     if (gtk_tree_model_iter_parent (model, &parent, iter))
     {
-        KatzeItem* new_parent;
-
         gtk_tree_model_get (model, &parent, 0, &new_parent, -1);
 
         /* Bookmarks must not be moved into non-folder items */
         if (!KATZE_ITEM_IS_FOLDER (new_parent))
-            parent_name = g_strdup ("");
+            parent_name = "";
         else
-            parent_name = g_strdup (katze_item_get_name (new_parent));
-
-        g_object_unref (new_parent);
+            parent_name = katze_item_get_name (new_parent);
     }
     else
-        parent_name = g_strdup ("");
+        parent_name = "";
 
     katze_array_remove_item (bookmarks->array, item);
     katze_item_set_meta_string (item, "folder", parent_name);
     katze_array_add_item (bookmarks->array, item);
+
+    g_object_unref (item);
+    if (new_parent)
+        g_object_unref (new_parent);
 }
 
 static void

@@ -109,7 +109,7 @@ addons_install_response (GtkWidget*  infobar,
             WebKitNetworkRequest* request;
             WebKitDownload* download;
 
-            hostname = midori_uri_parse (uri, &path);
+            hostname = midori_uri_parse_hostname (uri, &path);
             temp_uri = NULL;
             filename = NULL;
             folder = NULL;
@@ -118,7 +118,7 @@ addons_install_response (GtkWidget*  infobar,
                 folder = "scripts";
             else if (g_str_has_suffix (uri, ".user.css"))
                 folder = "styles";
-            else if (!strcmp (hostname, "userscripts.org"))
+            else if (!g_strcmp0 (hostname, "userscripts.org"))
             {
                 /* http://userscripts.org/scripts/ACTION/SCRIPT_ID/NAME */
                 gchar* subpage = strchr (strchr (path + 1, '/') + 1, '/');
@@ -148,7 +148,7 @@ addons_install_response (GtkWidget*  infobar,
                     folder = "scripts";
                 }
             }
-            else if (!strcmp (hostname, "userstyles.org"))
+            else if (!g_strcmp0 (hostname, "userstyles.org"))
             {
                 /* http://userstyles.org/styles/STYLE_ID/NAME */
                 gchar* subpage = strchr (path + 1, '/');
@@ -259,15 +259,15 @@ addons_notify_load_status_cb (MidoriView*      view,
            else
            {
                gchar* path;
-               gchar* hostname = midori_uri_parse (uri, &path);
-               if (!strcmp (hostname, "userscripts.org")
+               gchar* hostname = midori_uri_parse_hostname (uri, &path);
+               if (!g_strcmp0 (hostname, "userscripts.org")
                 && (g_str_has_prefix (path, "/scripts/show/")
                  || g_str_has_prefix (path, "/scripts/review/")))
                {
                    /* Main (with desc) and "source view" pages */
                    addons_uri_install (view, ADDONS_USER_SCRIPTS);
                }
-               else if (!strcmp (hostname, "userstyles.org")
+               else if (!g_strcmp0 (hostname, "userstyles.org")
                 && g_str_has_prefix (path, "/styles/"))
                {
                    gchar* subpage = strchr (path + 1, '/');
@@ -1365,7 +1365,7 @@ addons_convert_to_simple_regexp (const gchar* pattern)
     gchar c;
 
     len = strlen (pattern);
-    dest = g_malloc0 (len * 2 + 1);
+    dest = g_malloc0 (len * 2 + 2);
     dest[0] = '^';
     pos = 1;
 
@@ -1471,6 +1471,11 @@ addons_context_ready_cb (WebKitWebView*   web_view,
     GSList* scripts, *styles;
     struct AddonElement* script, *style;
     struct AddonsList* scripts_list, *styles_list;
+    const gchar* page_uri;
+
+    page_uri = webkit_web_frame_get_uri (web_frame);
+    if (!midori_uri_is_http (page_uri) && !midori_uri_is_blank (page_uri))
+        return;
 
     /* Not a main frame! Abort */
     if (web_frame != webkit_web_view_get_main_frame (web_view))
@@ -1860,6 +1865,47 @@ addons_activate_cb (MidoriExtension* extension,
     g_signal_connect (extension, "deactivate",
         G_CALLBACK (addons_deactivate_cb), app);
 }
+
+#ifdef G_ENABLE_DEBUG
+static void
+test_addons_simple_regexp (void)
+{
+    typedef struct
+    {
+        const gchar* before;
+        const gchar* after;
+    } RegexItem;
+    guint i;
+
+    static const RegexItem items[] = {
+    { "*", "^.*" },
+    { "http://", "^http://" },
+    { "https://", "^https://" },
+    { "about:blank", "^about:blank" },
+    { "file://", "^file://" },
+    { "ftp://", "^ftp://" },
+    { "https://bugzilla.mozilla.org/", "^https://bugzilla\\.mozilla\\.org/" },
+    { "http://92.48.103.52/fantasy3/*", "^http://92\\.48\\.103\\.52/fantasy3/.*" },
+    { "http://www.rpg.co.uk/fantasy/*", "^http://www\\.rpg\\.co\\.uk/fantasy/.*" },
+    { "http://cookpad.com/recipe/*", "^http://cookpad\\.com/recipe/.*" },
+    { "https://*/*post_bug.cgi", "^https://.*/.*post_bug\\.cgi" },
+    };
+
+    for (i = 0; i < G_N_ELEMENTS (items); i++)
+    {
+        gchar* result = addons_convert_to_simple_regexp (items[i].before);
+        const gchar* after = items[i].after ? items[i].after : items[i].before;
+        katze_assert_str_equal (items[i].before, result, after);
+        g_free (result);
+    }
+}
+
+void
+extension_test (void)
+{
+    g_test_add_func ("/extensions/addons/simple_regexp", test_addons_simple_regexp);
+}
+#endif
 
 MidoriExtension*
 extension_init (void)

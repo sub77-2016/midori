@@ -796,7 +796,7 @@ katze_item_metadata_to_xbel (KatzeItem* item)
     const gchar* value;
 
     if (!keys)
-        return g_strdup ("");
+        return NULL;
 
     markup = g_string_new ("<info>\n<metadata");
     markdown = g_string_new (NULL);
@@ -856,7 +856,7 @@ katze_array_to_xbel (KatzeArray* array,
         ">\n");
     string_append_xml_element (markup, "title", katze_item_get_name (KATZE_ITEM (array)));
     string_append_xml_element (markup, "desc", katze_item_get_text (KATZE_ITEM (array)));
-    g_string_append (markup, metadata);
+    g_string_append (markup, metadata ? metadata : "");
     KATZE_ARRAY_FOREACH_ITEM_L (item, array, list)
         string_append_item (markup, item);
     g_string_append (markup, "</xbel>\n");
@@ -905,10 +905,9 @@ midori_array_to_file_format (KatzeArray*  array,
 
     if (!g_strcmp0 (format, "xbel"))
         data = katze_array_to_xbel (array, error);
-    if (!g_strcmp0 (format, "netscape"))
+    else if (!g_strcmp0 (format, "netscape"))
         data = katze_array_to_netscape_html (array, error);
-
-    if (!data)
+    else
         return FALSE;
     if (!(fp = fopen (filename, "w")))
     {
@@ -968,19 +967,19 @@ katze_item_set_value_from_column (sqlite3_stmt* stmt,
         const unsigned char* uri;
         uri = sqlite3_column_text (stmt, column);
         if (uri && uri[0] && uri[0] != '(')
-            katze_item_set_uri (item, (gchar*)uri);
+            item->uri = g_strdup ((gchar*)uri);
     }
     else if (g_str_equal (name, "title") || g_str_equal (name, "name"))
     {
         const unsigned char* title;
         title = sqlite3_column_text (stmt, column);
-        katze_item_set_name (item, (gchar*)title);
+        item->name = g_strdup ((gchar*)title);
     }
     else if (g_str_equal (name, "date"))
     {
         gint date;
         date = sqlite3_column_int64 (stmt, column);
-        katze_item_set_added (item, date);
+        item->added = date;
     }
     else if (g_str_equal (name, "day") || g_str_equal (name, "app")
           || g_str_equal (name, "toolbar"))
@@ -999,7 +998,7 @@ katze_item_set_value_from_column (sqlite3_stmt* stmt,
     {
         const unsigned char* text;
         text = sqlite3_column_text (stmt, column);
-        katze_item_set_text (item, (gchar*)text);
+        item->text =  g_strdup ((gchar*)text);
     }
     else
         g_warn_if_reached ();
@@ -1066,3 +1065,49 @@ katze_array_from_sqlite (sqlite3*     db,
 
     return katze_array_from_statement (stmt);
 }
+
+/**
+ * midori_array_query:
+ * @array: the main bookmark array
+ * @fields: comma separated list of fields
+ * @condition: condition, like "folder = '%q'"
+ * @value: a value to be inserted if @condition contains %q
+ *
+ * Stores the result in a #KatzeArray.
+ *
+ * Return value: a #KatzeArray on success, %NULL otherwise
+ *
+ * Since: 0.4.3
+ **/
+KatzeArray*
+midori_array_query (KatzeArray*  bookmarks,
+                    const gchar* fields,
+                    const gchar* condition,
+                    const gchar* value)
+{
+    sqlite3* db;
+    gchar* sqlcmd;
+    char* sqlcmd_value;
+    KatzeArray* array;
+
+    g_return_val_if_fail (KATZE_IS_ARRAY (bookmarks), NULL);
+    g_return_val_if_fail (fields, NULL);
+    g_return_val_if_fail (condition, NULL);
+    db = g_object_get_data (G_OBJECT (bookmarks), "db");
+    if (db == NULL)
+        return NULL;
+
+    sqlcmd = g_strdup_printf ("SELECT %s FROM bookmarks WHERE %s "
+                              "ORDER BY title DESC", fields, condition);
+    if (strstr (condition, "%q"))
+    {
+        sqlcmd_value = sqlite3_mprintf (sqlcmd, value ? value : "");
+        array = katze_array_from_sqlite (db, sqlcmd_value);
+        sqlite3_free (sqlcmd_value);
+    }
+    else
+        array = katze_array_from_sqlite (db, sqlcmd);
+    g_free (sqlcmd);
+    return array;
+}
+

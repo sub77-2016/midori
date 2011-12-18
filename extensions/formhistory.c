@@ -101,27 +101,22 @@ formhistory_fixup_value (char* value)
 static gchar*
 formhistory_build_js ()
 {
-    gchar* suggestions = g_strdup ("");
+    GString* suggestions;
     GHashTableIter iter;
     gpointer key, value;
-    gchar* script;
 
+    suggestions = g_string_new (
+        "function FormSuggestions(eid) { "
+        "arr = new Array();");
     g_hash_table_iter_init (&iter, global_keys);
     while (g_hash_table_iter_next (&iter, &key, &value))
     {
-       gchar* _suggestions = g_strdup_printf ("%s arr[\"%s\"] = [%s]; ",
-                                              suggestions, (char*)key, (char*)value);
-       katze_assign (suggestions, _suggestions);
+        g_string_append_printf (suggestions, " arr[\"%s\"] = [%s]; ",
+                                (gchar*)key, (gchar*)value);
     }
-    script = g_strdup_printf ("function FormSuggestions(eid) { "
-                              "arr = new Array();"
-                              "%s"
-                              "this.suggestions = arr[eid]; }"
-                              "%s",
-                              suggestions,
-                              jsforms);
-    g_free (suggestions);
-    return script;
+    g_string_append (suggestions, "this.suggestions = arr[eid]; }");
+    g_string_append (suggestions, jsforms);
+    return g_string_free (suggestions, FALSE);
 }
 
 static void
@@ -255,6 +250,12 @@ formhistory_window_object_cleared_cb (WebKitWebView*  web_view,
                                       JSObjectRef     js_window)
 {
     gchar* script;
+    const gchar* page_uri;
+
+    page_uri = webkit_web_frame_get_uri (web_frame);
+    if (!midori_uri_is_http (page_uri))
+        return;
+
     script = formhistory_build_js ();
     sokoke_js_script_eval (js_context, script, NULL);
     g_free (script);
@@ -412,7 +413,9 @@ formhistory_activate_cb (MidoriExtension* extension,
     filename = g_build_filename (config_dir, "forms.db", NULL);
     if (sqlite3_open (filename, &db) != SQLITE_OK)
     {
-        g_warning (_("Failed to open database: %s\n"), sqlite3_errmsg (db));
+        /* If the folder is /, this is a test run, thus no error */
+        if (!g_str_equal (midori_extension_get_config_dir (extension), "/"))
+            g_warning (_("Failed to open database: %s\n"), sqlite3_errmsg (db));
         sqlite3_close (db);
     }
     g_free (filename);

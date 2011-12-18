@@ -216,12 +216,10 @@ settings_save_to_file (MidoriWebSettings* settings,
             }
 
             g_object_get (settings, property, &string, NULL);
-            if (!string)
-                string = g_strdup ("");
             if (!def_string)
                 def_string = "";
-            if (strcmp (string, def_string))
-                g_key_file_set_string (key_file, "settings", property, string);
+            if (strcmp (string ? string : "", def_string))
+                g_key_file_set_string (key_file, "settings", property, string ? string : "");
             g_free (string);
         }
         else if (type == G_TYPE_PARAM_INT)
@@ -596,17 +594,6 @@ midori_bookmarks_import (const gchar* filename,
 }
 
 static void
-midori_session_add_delay (KatzeArray* session)
-{
-    KatzeItem* item;
-    KATZE_ARRAY_FOREACH_ITEM (item, session)
-    {
-        if (katze_item_get_meta_integer (item, "delay") == -1)
-            katze_item_set_meta_integer (item, "delay", 1);
-    }
-}
-
-static void
 settings_notify_cb (MidoriWebSettings* settings,
                     GParamSpec*        pspec,
                     MidoriApp*         app)
@@ -615,9 +602,7 @@ settings_notify_cb (MidoriWebSettings* settings,
     gchar* config_file;
 
     /* Skip state related properties to avoid disk IO */
-    if ((pspec && g_str_has_prefix (pspec->name, "last-window-"))
-     || (pspec && g_str_has_prefix (pspec->name, "user-stylesheet-uri"))
-     || (pspec && g_str_has_prefix (pspec->name, "last-panel-")))
+    if (pspec && pspec->flags & MIDORI_PARAM_DELAY_SAVING)
         return;
 
     config_file = build_config_filename ("config");
@@ -675,23 +660,12 @@ midori_search_engines_move_item_cb (KatzeArray* array,
 }
 
 static void
-midori_trash_add_item_cb (KatzeArray* trash,
-                          GObject*    item)
+midori_trash_add_item_no_save_cb (KatzeArray* trash,
+                                  GObject*    item)
 {
-    gchar* config_file = build_config_filename ("tabtrash.xbel");
-    GError* error = NULL;
-    GObject* obsolete_item;
-    if (!midori_array_to_file (trash, config_file, "xbel", &error))
-    {
-        /* i18n: Trash, or wastebin, containing closed tabs */
-        g_warning (_("The trash couldn't be saved. %s"), error->message);
-        g_error_free (error);
-    }
-    g_free (config_file);
-
     if (katze_array_get_nth_item (trash, 10))
     {
-        obsolete_item = katze_array_get_nth_item (trash, 0);
+        KatzeItem* obsolete_item = katze_array_get_nth_item (trash, 0);
         katze_array_remove_item (trash, obsolete_item);
     }
 }
@@ -702,12 +676,21 @@ midori_trash_remove_item_cb (KatzeArray* trash,
 {
     gchar* config_file = build_config_filename ("tabtrash.xbel");
     GError* error = NULL;
+    midori_trash_add_item_no_save_cb (trash, item);
     if (!midori_array_to_file (trash, config_file, "xbel", &error))
     {
+        /* i18n: Trash, or wastebin, containing closed tabs */
         g_warning (_("The trash couldn't be saved. %s"), error->message);
         g_error_free (error);
     }
     g_free (config_file);
+}
+
+static void
+midori_trash_add_item_cb (KatzeArray* trash,
+                          GObject*    item)
+{
+    midori_trash_remove_item_cb (trash, item);
 }
 
 static void
@@ -1008,7 +991,12 @@ midori_load_soup_session (gpointer settings)
 {
     SoupSession* session = webkit_get_default_session ();
 
-    #if defined (HAVE_LIBSOUP_2_29_91)
+    #if defined (HAVE_LIBSOUP_2_37_1)
+    g_object_set (session,
+                  "ssl-use-system-ca-file", TRUE,
+                  "ssl-strict", FALSE,
+                  NULL);
+    #elif defined (HAVE_LIBSOUP_2_29_91)
     const gchar* certificate_files[] =
     {
         "/etc/pki/tls/certs/ca-bundle.crt",
@@ -1239,9 +1227,7 @@ midori_load_extensions (gpointer data)
     KatzeArray* extensions;
     #ifdef G_ENABLE_DEBUG
     gboolean startup_timer = g_getenv ("MIDORI_STARTTIME") != NULL;
-    GTimer* timer;
-    if (startup_timer)
-        timer = g_timer_new ();
+    GTimer* timer = startup_timer ? g_timer_new () : NULL;
     #endif
 
     /* Load extensions */
@@ -1325,7 +1311,7 @@ midori_load_extensions (gpointer data)
 
     #ifdef G_ENABLE_DEBUG
     if (startup_timer)
-        g_debug ("Extensions:\t%f", g_test_timer_elapsed ());
+        g_debug ("Extensions:\t%f", g_timer_elapsed (timer, NULL));
     #endif
 
     return FALSE;
@@ -1371,9 +1357,7 @@ midori_load_session (gpointer data)
     gchar** command = g_object_get_data (G_OBJECT (app), "execute-command");
     #ifdef G_ENABLE_DEBUG
     gboolean startup_timer = g_getenv ("MIDORI_STARTTIME") != NULL;
-    GTimer* timer;
-    if (startup_timer)
-        timer = g_timer_new ();
+    GTimer* timer = startup_timer ? g_timer_new () : NULL;
     #endif
 
     browser = midori_app_create_browser (app);
@@ -1414,14 +1398,13 @@ midori_load_session (gpointer data)
         g_object_unref (item);
     }
 
-    if (load_on_startup == MIDORI_STARTUP_DELAYED_PAGES)
-        midori_session_add_delay (_session);
-
     session = midori_browser_get_proxy_array (browser);
     KATZE_ARRAY_FOREACH_ITEM (item, _session)
     {
-        g_object_set_data (G_OBJECT (item), "midori-view-append", (void*)1);
+        katze_item_set_meta_integer (item, "append", 1);
         katze_item_set_meta_integer (item, "dont-write-history", 1);
+        if (load_on_startup == MIDORI_STARTUP_DELAYED_PAGES)
+            katze_item_set_meta_integer (item, "delay", 1);
         midori_browser_add_item (browser, item);
     }
     current = katze_item_get_meta_integer (KATZE_ITEM (_session), "current");
@@ -1452,7 +1435,7 @@ midori_load_session (gpointer data)
 
     #ifdef G_ENABLE_DEBUG
     if (startup_timer)
-        g_debug ("Session setup:\t%f", g_test_timer_elapsed ());
+        g_debug ("Session setup:\t%f", g_timer_elapsed (timer, NULL));
     #endif
 
     return FALSE;
@@ -1541,7 +1524,7 @@ midori_prepare_uri (const gchar *uri)
     if (g_path_is_absolute (uri))
         return g_filename_to_uri (uri, NULL, NULL);
     else if (g_str_has_prefix(uri, "javascript:"))
-        return g_strdup (uri);
+        return NULL;
     else if (g_file_test (uri, G_FILE_TEST_EXISTS | G_FILE_TEST_IS_REGULAR))
     {
         gchar* current_dir = g_get_current_dir ();
@@ -1551,11 +1534,7 @@ midori_prepare_uri (const gchar *uri)
         return uri_ready;
     }
 
-    uri_ready = sokoke_magic_uri (uri);
-    if (uri_ready)
-        return midori_uri_to_ascii (uri_ready);
-
-    return midori_uri_to_ascii (uri);
+    return sokoke_magic_uri (uri);
 }
 
 #ifdef HAVE_SIGNAL_H
@@ -2030,11 +2009,6 @@ main (int    argc,
     else
         g_set_application_name (_("Midori"));
 
-    #ifdef G_ENABLE_DEBUG
-    if (startup_timer)
-        g_test_timer_start ();
-    #endif
-
     if (version)
     {
         g_print (
@@ -2182,6 +2156,8 @@ main (int    argc,
         {
             /* In-memory trash for re-opening closed tabs */
             trash = katze_array_new (KATZE_TYPE_ITEM);
+            g_signal_connect_after (trash, "add-item",
+              G_CALLBACK (midori_trash_add_item_no_save_cb), NULL);
             g_object_set (browser, "trash", trash, NULL);
 
             g_object_set (settings,
@@ -2201,6 +2177,11 @@ main (int    argc,
                           "strip-referer", TRUE, NULL);
             midori_browser_set_action_visible (browser, "Tools", FALSE);
             midori_browser_set_action_visible (browser, "ClearPrivateData", FALSE);
+            #if GTK_CHECK_VERSION (3, 0, 0)
+            g_object_set (gtk_widget_get_settings (GTK_WIDGET (browser)),
+                          "gtk-application-prefer-dark-theme", TRUE,
+                          NULL);
+            #endif
         }
 
         if (private || !config)
@@ -2226,7 +2207,7 @@ main (int    argc,
                 GtkWidget* offscreen = gtk_offscreen_window_new ();
                 #endif
                 gchar* msg = NULL;
-                GtkWidget* view = midori_view_new_with_title (NULL, settings, FALSE);
+                GtkWidget* view = midori_view_new_with_item (NULL, settings);
                 g_object_set (settings, "open-new-pages-in", MIDORI_NEW_PAGE_WINDOW, NULL);
                 midori_browser_add_tab (browser, view);
                 #if 0 /* HAVE_OFFSCREEN */
@@ -2257,7 +2238,8 @@ main (int    argc,
         {
             gchar* tmp_uri = midori_prepare_uri (webapp);
             midori_browser_set_action_visible (browser, "Menubar", FALSE);
-            midori_browser_add_uri (browser, tmp_uri);
+            midori_browser_set_action_visible (browser, "CompactMenu", FALSE);
+            midori_browser_add_uri (browser, tmp_uri ? tmp_uri : webapp);
             g_object_set (settings, "homepage", tmp_uri, NULL);
             g_free (tmp_uri);
 
@@ -2334,7 +2316,10 @@ main (int    argc,
             while (uris[i] != NULL)
             {
                 gchar* new_uri = midori_prepare_uri (uris[i]);
-                katze_assign (uris[i], new_uri);
+                gchar* escaped_uri = g_uri_escape_string (
+                    new_uri ? new_uri : uris[i], NULL, FALSE);
+                g_free (new_uri);
+                katze_assign (uris[i], escaped_uri);
                 i++;
             }
             result = midori_app_instance_send_uris (app, uris);
@@ -2507,7 +2492,7 @@ main (int    argc,
         {
             item = katze_item_new ();
             uri_ready = midori_prepare_uri (uri);
-            katze_item_set_uri (item, uri_ready);
+            katze_item_set_uri (item, uri_ready ? uri_ready : uri);
             g_free (uri_ready);
             /* Never delay command line arguments */
             katze_item_set_meta_integer (item, "delay", 0);

@@ -194,7 +194,11 @@ sokoke_show_uri_with_mime_type (GdkScreen*   screen,
     g_free (content_type);
     files = g_list_prepend (NULL, file);
     #if GTK_CHECK_VERSION (2, 14, 0)
+    #if GTK_CHECK_VERSION (3, 0, 0)
+    context = gdk_display_get_app_launch_context (gdk_screen_get_display (screen));
+    #else
     context = gdk_app_launch_context_new ();
+    #endif
     gdk_app_launch_context_set_screen (context, screen);
     gdk_app_launch_context_set_timestamp (context, timestamp);
     #else
@@ -701,23 +705,6 @@ sokoke_magic_uri (const gchar* uri)
         g_strfreev (parts);
     }
     return NULL;
-}
-
-void
-sokoke_combo_box_add_strings (GtkComboBox* combobox,
-                              const gchar* label_first, ...)
-{
-    const gchar* label;
-
-    /* Add a number of strings to a combobox, terminated with NULL
-       This works only for text comboboxes */
-    va_list args;
-    va_start (args, label_first);
-
-    for (label = label_first; label; label = va_arg (args, const gchar*))
-        gtk_combo_box_text_append_text (GTK_COMBO_BOX_TEXT (combobox), label);
-
-    va_end (args);
 }
 
 void sokoke_widget_set_visible (GtkWidget* widget, gboolean visible)
@@ -1450,8 +1437,7 @@ sokoke_prefetch_uri (MidoriWebSettings*  settings,
     if (settings && !katze_object_get_boolean (settings, "enable-dns-prefetching"))
         return FALSE;
 
-    if (!(hostname = midori_uri_parse (uri, NULL))
-     || !strcmp (hostname, uri)
+    if (!(hostname = midori_uri_parse_hostname (uri, NULL))
      || g_hostname_is_ip_address (hostname)
      || !midori_uri_is_http (uri))
     {
@@ -1715,7 +1701,7 @@ midori_download_prepare_tooltip_text (WebKitDownload* download)
 
     if (time_estimated > 0)
     {
-        gchar* eta;
+        gchar* eta = NULL;
         if (hours_left > 0)
             eta = g_strdup_printf ("%s, %s", hours_str, minutes_str);
         else if (minutes_left >= 10)
@@ -1724,11 +1710,12 @@ midori_download_prepare_tooltip_text (WebKitDownload* download)
             eta = g_strdup_printf ("%s, %s", minutes_str, seconds_str);
         else if (seconds_left > 0)
             eta = g_strdup_printf ("%s", seconds_str);
-        else
-            eta = g_strdup ("");
-        /* i18n: Download tooltip (estimated time) : - 1 hour, 5 minutes remaning */
-        g_string_append_printf (tooltip, _(" - %s remaining"), eta);
-        g_free (eta);
+        if (eta != NULL)
+        {
+            /* i18n: Download tooltip (estimated time) : - 1 hour, 5 minutes remaning */
+            g_string_append_printf (tooltip, _(" - %s remaining"), eta);
+            g_free (eta);
+        }
     }
 
     g_free (hours_str);

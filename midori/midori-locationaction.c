@@ -763,6 +763,30 @@ midori_location_action_create_tool_item (GtkAction* action)
     gtk_widget_show (entry);
     gtk_container_add (GTK_CONTAINER (alignment), entry);
 
+    #if GTK_CHECK_VERSION (3, 0, 0)
+    {
+    static const gchar default_style[] =
+        ".security_unknown {\n"
+        "background-image: none;\n"
+        "background-color: #ef7070;\n"
+        "color: #000;\n"
+        "}\n"
+        ".security_trusted {\n"
+        "background-image: none;\n"
+        "background-color: #d1eeb9;\n"
+        "color: #000;\n"
+        "}\n";
+    GtkCssProvider* css_provider;
+    GtkStyleContext* context;
+
+    css_provider = gtk_css_provider_new ();
+    context = gtk_widget_get_style_context (entry);
+    gtk_css_provider_load_from_data (css_provider, default_style, -1, NULL);
+    gtk_style_context_add_provider (context, GTK_STYLE_PROVIDER (css_provider),
+                                    GTK_STYLE_PROVIDER_PRIORITY_FALLBACK);
+    }
+    #endif
+
     return toolitem;
 }
 
@@ -1274,6 +1298,8 @@ midori_location_action_populate_popup_cb (GtkWidget*            entry,
     MidoriBrowser* browser = midori_browser_get_for_widget (entry);
     GtkActionGroup* actions = midori_browser_get_action_group (browser);
     GtkWidget* menuitem;
+    GtkClipboard* clipboard = gtk_clipboard_get_for_display (
+        gtk_widget_get_display (entry),GDK_SELECTION_CLIPBOARD);
 
     menuitem = gtk_separator_menu_item_new ();
     gtk_widget_show (menuitem);
@@ -1288,6 +1314,8 @@ midori_location_action_populate_popup_cb (GtkWidget*            entry,
     gtk_menu_shell_insert (menu, menuitem, 3);
     g_signal_connect (menuitem, "activate",
         G_CALLBACK (midori_location_action_paste_proceed_cb), location_action);
+    if (!gtk_clipboard_wait_is_text_available (clipboard))
+        gtk_widget_set_sensitive (menuitem, FALSE);
 }
 
 static void
@@ -1631,18 +1659,21 @@ midori_location_action_set_security_hint (MidoriLocationAction* location_action,
     for (; proxies != NULL; proxies = g_slist_next (proxies))
     if (GTK_IS_TOOL_ITEM (proxies->data))
     {
-        GdkColor bg_color = { 0, 1 };
-        GdkColor fg_color = { 0, 1 };
+        const gchar* bg_color = NULL;
+        const gchar* fg_color = NULL;
         GtkWidget* entry = midori_location_action_entry_for_proxy (proxies->data);
         GdkScreen* screen = gtk_widget_get_screen (entry);
         GtkIconTheme* icon_theme = gtk_icon_theme_get_for_screen (screen);
 
         if (hint == MIDORI_SECURITY_UNKNOWN)
         {
-            gdk_color_parse ("#ef7070", &bg_color);
-            gdk_color_parse ("#000", &fg_color);
+            bg_color = "#ef7070";
+            fg_color = "#000";
             #if !HAVE_HILDON
-            if (gtk_icon_theme_has_icon (icon_theme, "lock-insecure"))
+            if (gtk_icon_theme_has_icon (icon_theme, "channel-insecure-symbolic"))
+                gtk_icon_entry_set_icon_from_icon_name (GTK_ICON_ENTRY (entry),
+                    GTK_ICON_ENTRY_SECONDARY, "channel-insecure-symbolic");
+            else if (gtk_icon_theme_has_icon (icon_theme, "lock-insecure"))
                 gtk_icon_entry_set_icon_from_icon_name (GTK_ICON_ENTRY (entry),
                     GTK_ICON_ENTRY_SECONDARY, "lock-insecure");
             else
@@ -1654,10 +1685,13 @@ midori_location_action_set_security_hint (MidoriLocationAction* location_action,
         }
         else if (hint == MIDORI_SECURITY_TRUSTED)
         {
-            gdk_color_parse ("#d1eeb9", &bg_color);
-            gdk_color_parse ("#000", &fg_color);
+            bg_color = "#d1eeb9";
+            fg_color = "#000";
             #if !HAVE_HILDON
-            if (gtk_icon_theme_has_icon (icon_theme, "lock-secure"))
+            if (gtk_icon_theme_has_icon (icon_theme, "channel-secure-symbolic"))
+                gtk_icon_entry_set_icon_from_icon_name (GTK_ICON_ENTRY (entry),
+                    GTK_ICON_ENTRY_SECONDARY, "channel-secure-symbolic");
+            else if (gtk_icon_theme_has_icon (icon_theme, "lock-secure"))
                 gtk_icon_entry_set_icon_from_icon_name (GTK_ICON_ENTRY (entry),
                     GTK_ICON_ENTRY_SECONDARY, "lock-secure");
             else
@@ -1671,9 +1705,31 @@ midori_location_action_set_security_hint (MidoriLocationAction* location_action,
             gtk_icon_entry_set_tooltip (GTK_ICON_ENTRY (entry),
                 GTK_ICON_ENTRY_SECONDARY, NULL);
 
-        gtk_widget_modify_base (entry, GTK_STATE_NORMAL,
-            bg_color.red == 1 ? NULL : &bg_color);
-        gtk_widget_modify_text (entry, GTK_STATE_NORMAL,
-            bg_color.red == 1 ? NULL : &fg_color);
+        {
+        #if GTK_CHECK_VERSION (3, 0, 0)
+        GtkStyleContext* context = gtk_widget_get_style_context (entry);
+        if (hint == MIDORI_SECURITY_UNKNOWN)
+        {
+            gtk_style_context_add_class (context, "security_unknown");
+            gtk_style_context_remove_class (context, "security_trusted");
+        }
+        else if (hint == MIDORI_SECURITY_TRUSTED)
+        {
+            gtk_style_context_add_class (context, "security_trusted");
+            gtk_style_context_remove_class (context, "security_unknown");
+        }
+        else if (hint == MIDORI_SECURITY_NONE)
+        {
+            gtk_style_context_remove_class (context, "security_unknown");
+            gtk_style_context_remove_class (context, "security_trusted");
+        }
+        #else
+        GdkColor color = { 0 };
+        if (bg_color) gdk_color_parse (bg_color, &color);
+        gtk_widget_modify_base (entry, GTK_STATE_NORMAL, bg_color ? &color : NULL);
+        if (fg_color) gdk_color_parse (fg_color, &color);
+        gtk_widget_modify_text (entry, GTK_STATE_NORMAL, fg_color ? &color : NULL);
+        #endif
+        }
     }
 }

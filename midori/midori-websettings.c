@@ -67,6 +67,7 @@ struct _MidoriWebSettings
     gint last_web_search;
     gint maximum_cookie_age;
     gint maximum_history_age;
+    gint search_width;
 
     gchar* toolbar_items;
     gchar* homepage;
@@ -176,6 +177,8 @@ enum
     PROP_STRIP_REFERER,
     PROP_ENFORCE_FONT_FAMILY,
     PROP_USER_STYLESHEET_URI,
+
+    PROP_SEARCH_WIDTH,
 };
 
 GType
@@ -366,7 +369,7 @@ midori_web_settings_class_init (MidoriWebSettingsClass* class)
                                      _("Last window width"),
                                      _("The last saved window width"),
                                      0, G_MAXINT, 0,
-                                     flags));
+                                     flags | MIDORI_PARAM_DELAY_SAVING));
 
     g_object_class_install_property (gobject_class,
                                      PROP_LAST_WINDOW_HEIGHT,
@@ -375,7 +378,7 @@ midori_web_settings_class_init (MidoriWebSettingsClass* class)
                                      _("Last window height"),
                                      _("The last saved window height"),
                                      0, G_MAXINT, 0,
-                                     flags));
+                                     flags | MIDORI_PARAM_DELAY_SAVING));
 
     /**
     * MidoriWebSettings:last-window-state:
@@ -392,7 +395,7 @@ midori_web_settings_class_init (MidoriWebSettingsClass* class)
                                      "The last saved window state",
                                      MIDORI_TYPE_WINDOW_STATE,
                                      MIDORI_WINDOW_NORMAL,
-                                     flags));
+                                     flags | MIDORI_PARAM_DELAY_SAVING));
 
     g_object_class_install_property (gobject_class,
                                      PROP_LAST_PANEL_POSITION,
@@ -401,7 +404,7 @@ midori_web_settings_class_init (MidoriWebSettingsClass* class)
                                      _("Last panel position"),
                                      _("The last saved panel position"),
                                      0, G_MAXINT, 0,
-                                     flags));
+                                     flags | MIDORI_PARAM_DELAY_SAVING));
 
     g_object_class_install_property (gobject_class,
                                      PROP_LAST_PANEL_PAGE,
@@ -411,7 +414,7 @@ midori_web_settings_class_init (MidoriWebSettingsClass* class)
                                      _("Last panel page"),
                                      _("The last saved panel page"),
                                      0, G_MAXINT, 0,
-                                     flags));
+                                     flags | MIDORI_PARAM_DELAY_SAVING));
 
     g_object_class_install_property (gobject_class,
                                      PROP_LAST_WEB_SEARCH,
@@ -1076,7 +1079,23 @@ midori_web_settings_class_init (MidoriWebSettingsClass* class)
                                      "User stylesheet URI",
                                      "Load stylesheets from a local URI",
                                      NULL,
-                                     flags));
+                                     flags | MIDORI_PARAM_DELAY_SAVING));
+
+    /**
+     * MidoriWebSettings:search-entry-width:
+     *
+     * Search action width in pixels
+     *
+     * Since: 0.4.3
+     **/
+    g_object_class_install_property (gobject_class,
+                                     PROP_SEARCH_WIDTH,
+                                     g_param_spec_int (
+                                     "search-width",
+                                     "Search action width",
+                                     "Search action width in pixels",
+                                     10, G_MAXINT, 200,
+                                     flags | MIDORI_PARAM_DELAY_SAVING));
 }
 
 static void
@@ -1125,6 +1144,12 @@ midori_web_settings_init (MidoriWebSettings* web_settings)
     web_settings->kinetic_scrolling = TRUE;
     web_settings->user_stylesheet_uri = web_settings->user_stylesheet_uri_cached = NULL;
     web_settings->user_stylesheets = NULL;
+
+    #if WEBKIT_CHECK_VERSION (1, 2, 6) && !WEBKIT_CHECK_VERSION (1, 2, 8)
+    /* Shadows are very slow with WebKitGTK+ 1.2.7 */
+    midori_web_settings_add_style (web_settings, "box-shadow-workaround",
+        "* { -webkit-box-shadow: none !important; }");
+    #endif
 
     g_signal_connect (web_settings, "notify::default-encoding",
                       G_CALLBACK (notify_default_encoding_cb), NULL);
@@ -1532,10 +1557,15 @@ midori_web_settings_set_property (GObject*      object,
         {
             gchar* font_family = katze_object_get_string (web_settings,
                                                           "default-font-family");
-            gchar* css = g_strdup_printf ("* { font-family: %s !important; }",
-                                          font_family);
+            gchar* monospace = katze_object_get_string (web_settings,
+                                                        "monospace-font-family");
+            gchar* css = g_strdup_printf ("body * { font-family: %s !important; } \
+                code, code *, pre, pre *, blockquote, blockquote *, \
+                input, textarea { font-family: %s !important; }",
+                                          font_family, monospace);
             midori_web_settings_add_style (web_settings, "enforce-font-family", css);
             g_free (font_family);
+            g_free (monospace);
             g_free (css);
         }
         else
@@ -1564,6 +1594,9 @@ midori_web_settings_set_property (GObject*      object,
                 web_settings->user_stylesheet_uri);
             midori_web_settings_process_stylesheets (web_settings, new_len - old_len);
         }
+        break;
+    case PROP_SEARCH_WIDTH:
+        web_settings->search_width = g_value_get_int (value);
         break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -1678,9 +1711,9 @@ midori_web_settings_get_property (GObject*    object,
             GdkScreen* screen = gdk_screen_get_default ();
             GtkSettings* settings = gtk_settings_get_for_screen (screen);
             gchar* theme = katze_object_get_string (settings, "gtk-theme-name");
-            gchar* folder = gtk_rc_get_theme_dir ();
-            gchar* filename = g_build_filename (folder, theme, "index.theme", NULL);
-            g_free (folder);
+            gchar* theme_file = g_build_filename ("themes", theme, "index.theme", NULL);
+            gchar* filename = sokoke_find_data_filename (theme_file, FALSE);
+            g_free (theme_file);
             web_settings->close_buttons_left = 1;
             if (g_access (filename, F_OK) != 0)
                 katze_assign (filename,
@@ -1829,6 +1862,9 @@ midori_web_settings_get_property (GObject*    object,
     case PROP_USER_STYLESHEET_URI:
         g_value_take_string (value, katze_object_get_string (web_settings,
             "WebKitWebSettings::user-stylesheet-uri"));
+        break;
+    case PROP_SEARCH_WIDTH:
+        g_value_set_int (value, web_settings->search_width);
         break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);

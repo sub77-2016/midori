@@ -15,6 +15,7 @@
 
 #include <gtk/gtk.h>
 #include "katze-array.h"
+#include "gtk3-compat.h"
 
 G_BEGIN_DECLS
 
@@ -141,6 +142,11 @@ katze_load_cached_icon               (const gchar*    uri,
 
 GtkWidget*
 katze_uri_entry_new                  (GtkWidget*      other_widget);
+
+void
+katze_assert_str_equal               (const gchar*    input,
+                                      const gchar*    result,
+                                      const gchar*    expected);
 
 G_END_DECLS
 

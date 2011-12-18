@@ -61,14 +61,21 @@ adblock_build_js (const gchar* private)
         "function () {"
         "   if (document.getElementById('madblock'))"
         "       return;"
-        "   var URL = location.href;"
+            // Get just domain name from URL
+        "   var URL = location.href.match(/:\\/\\/(.[^/]+)/)[1];"
         "   var sites = new Array(); %s;"
         "   var public = '.madblockplaceholder ';"
-        "   for (var i in sites) {"
-        "       if (URL.indexOf(i) != -1 && sites[i] ){"
-        "           public += ', .'+sites[i];"
-        "           break;"
-        "   }}"
+            // Split domain into subdomain parts
+        "   var subdomains = URL.split ('.');"
+        "   var hostname = subdomains [subdomains.length - 1];"
+        "   var i = subdomains.length - 2;"
+            // Check if any of subdomains do have blocking rules
+        "   while (i >= 0) {"
+        "       hostname = subdomains [i] + '.' + hostname;"
+        "       if (sites [hostname])"
+        "           public += ', ' + sites [hostname];"
+        "       i--;"
+        "   }"
         "   public += ' {display: none !important}';"
         "   var mystyle = document.createElement('style');"
         "   mystyle.setAttribute('type', 'text/css');"
@@ -344,7 +351,8 @@ static void
 adblock_preferences_add_clicked_cb (GtkWidget*    button,
                                     GtkTreeModel* model)
 {
-    GtkEntry* entry = g_object_get_data (G_OBJECT (button), "entry");
+    GtkEntry* entry = GTK_IS_ENTRY (button)
+        ? button : g_object_get_data (G_OBJECT (button), "entry");
     gtk_list_store_insert_with_values (GTK_LIST_STORE (model),
         NULL, 0, 0, gtk_entry_get_text (entry), -1);
     gtk_entry_set_text (entry, "");
@@ -534,6 +542,8 @@ adblock_get_preferences_dialog (MidoriExtension* extension)
     g_object_set_data (G_OBJECT (button), "entry", entry);
     g_signal_connect (button, "clicked",
         G_CALLBACK (adblock_preferences_add_clicked_cb), liststore);
+    g_signal_connect (entry, "activate",
+        G_CALLBACK (adblock_preferences_add_clicked_cb), liststore);
     gtk_box_pack_start (GTK_BOX (vbox), button, FALSE, FALSE, 0);
     button = gtk_button_new_from_stock (GTK_STOCK_EDIT);
     g_object_set_data (G_OBJECT (button), "treeview", treeview);
@@ -593,29 +603,35 @@ adblock_open_preferences_cb (MidoriExtension* extension)
         gtk_window_present (GTK_WINDOW (dialog));
 }
 
-static inline gboolean
-adblock_check_filter_options (GRegex*       regex,
-                              const gchar*  opts,
-                              const gchar*  req_uri,
-                              const gchar*  page_uri)
+static inline gint
+adblock_check_rule (GRegex*      regex,
+                    const gchar* patt,
+                    const gchar* req_uri,
+                    const gchar* page_uri)
 {
-    if (g_regex_match_simple (",third-party", opts,
+    gchar* opts;
+
+    if (!g_regex_match_full (regex, req_uri, -1, 0, 0, NULL, NULL))
+        return FALSE;
+
+    opts = g_hash_table_lookup (optslist, patt);
+    if (opts && g_regex_match_simple (",third-party", opts,
                               G_REGEX_CASELESS, G_REGEX_MATCH_NOTEMPTY))
     {
         if (page_uri && g_regex_match_full (regex, page_uri, -1, 0, 0, NULL, NULL))
-            return TRUE;
+            return FALSE;
     }
     /* TODO: Domain opt check */
-    return FALSE;
+    adblock_debug ("blocked by pattern regexp=%s -- %s", g_regex_get_pattern (regex), req_uri);
+    return TRUE;
 }
 
 static inline gboolean
-adblock_is_matched_by_pattern (const gchar*  req_uri,
-                               const gchar*  page_uri)
+adblock_is_matched_by_pattern (const gchar* req_uri,
+                               const gchar* page_uri)
 {
     GHashTableIter iter;
     gpointer patt, regex;
-    gchar* opts;
 
     if (USE_PATTERN_MATCHING == 0)
         return FALSE;
@@ -623,68 +639,47 @@ adblock_is_matched_by_pattern (const gchar*  req_uri,
     g_hash_table_iter_init (&iter, pattern);
     while (g_hash_table_iter_next (&iter, &patt, &regex))
     {
-        if (g_regex_match_full (regex, req_uri, -1, 0, 0, NULL, NULL))
-        {
-            opts = g_hash_table_lookup (optslist, patt);
-            if (opts && adblock_check_filter_options (regex, opts, req_uri, page_uri) == TRUE)
-                return FALSE;
-            else
-            {
-                adblock_debug ("blocked by pattern regexp=%s -- %s", g_regex_get_pattern (regex), req_uri);
-                return TRUE;
-            }
-        }
+        if (adblock_check_rule (regex, patt, req_uri, page_uri))
+            return TRUE;
     }
     return FALSE;
 }
 
 static inline gboolean
-adblock_is_matched_by_key (const gchar*  req_uri,
-                           const gchar*  page_uri)
+adblock_is_matched_by_key (const gchar* req_uri,
+                           const gchar* page_uri)
 {
     gchar* uri;
     gint len;
     int pos = 0;
     GList* regex_bl = NULL;
     GString* guri;
+    gboolean ret = FALSE;
+    gchar sig[SIGNATURE_SIZE + 1];
 
+    memset (&sig[0], 0, sizeof (sig));
+    /* Signatures are made on pattern, so we need to convert url to a pattern as well */
     guri = adblock_fixup_regexp ("", (gchar*)req_uri);
     uri = guri->str;
     len = guri->len;
 
     for (pos = len - SIGNATURE_SIZE; pos >= 0; pos--)
     {
-        gchar* sig = g_strndup (uri + pos, SIGNATURE_SIZE);
-        GRegex* regex = g_hash_table_lookup (keys, sig);
-        gchar* opts;
+        GRegex* regex;
+        strncpy (sig, uri + pos, SIGNATURE_SIZE);
+        regex = g_hash_table_lookup (keys, sig);
 
-        if (regex && !g_list_find (regex_bl, regex))
-        {
-            if (g_regex_match_full (regex, req_uri, -1, 0, 0, NULL, NULL))
-            {
-                opts = g_hash_table_lookup (optslist, sig);
-                g_free (sig);
-                if (opts && adblock_check_filter_options (regex, opts, req_uri, page_uri))
-                {
-                    g_free (uri);
-                    g_list_free (regex_bl);
-                    return FALSE;
-                }
-                else
-                {
-                    adblock_debug ("blocked by regexp=%s -- %s", g_regex_get_pattern (regex), uri);
-                    g_free (uri);
-                    g_list_free (regex_bl);
-                    return TRUE;
-                }
-            }
-            regex_bl = g_list_prepend (regex_bl, regex);
-        }
-        g_free (sig);
+        /* Dont check if regex is already blacklisted */
+        if (!regex || g_list_find (regex_bl, regex))
+            continue;
+        ret = adblock_check_rule (regex, sig, req_uri, page_uri);
+        if (ret)
+            break;
+        regex_bl = g_list_prepend (regex_bl, regex);
     }
     g_string_free (guri, TRUE);
     g_list_free (regex_bl);
-    return FALSE;
+    return ret;
 }
 
 static gboolean
@@ -938,9 +933,9 @@ adblock_window_object_cleared_cb (WebKitWebView*  web_view,
 {
     const char *page_uri;
 
-    page_uri = webkit_web_view_get_uri (web_view);
+    page_uri = webkit_web_frame_get_uri (web_frame);
     /* Don't add adblock css into speeddial and about: pages */
-    if (midori_uri_is_blank (page_uri))
+    if (!midori_uri_is_http (page_uri))
         return;
 
     g_free (sokoke_js_script_eval (js_context, blockscript, NULL));
@@ -1141,31 +1136,35 @@ adblock_add_url_pattern (gchar* prefix,
 
     data = g_strsplit (line, "$", -1);
     if (!data || !data[0])
+    {
+        g_strfreev (data);
         return NULL;
+    }
 
     if (data[1] && data[2])
     {
         patt = g_strconcat (data[0], data[1], NULL);
         opts = g_strconcat (type, ",", data[2], NULL);
-        g_strfreev (data);
     }
     else if (data[1])
     {
         patt = data[0];
         opts = g_strconcat (type, ",", data[1], NULL);
-        g_free (data[1]);
     }
     else
     {
         patt = data[0];
-        opts = g_strdup (type);
+        opts = type;
     }
 
     if (g_regex_match_simple ("subdocument", opts,
                               G_REGEX_CASELESS, G_REGEX_MATCH_NOTEMPTY))
     {
-        g_free (patt);
-        g_free (opts);
+        if (data[1] && data[2])
+            g_free (patt);
+        if (data[1])
+            g_free (opts);
+        g_strfreev (data);
         return NULL;
     }
 
@@ -1174,14 +1173,13 @@ adblock_add_url_pattern (gchar* prefix,
     adblock_debug ("got: %s opts %s", format_patt->str, opts);
     should_free = adblock_compile_regexp (format_patt, opts);
 
-    g_free (opts);
-    g_free (patt);
+    if (data[1] && data[2])
+        g_free (patt);
+    if (data[1])
+        g_free (opts);
+    g_strfreev (data);
 
-    #if G_ENABLE_DEBUG
-    return g_string_free (format_patt, FALSE);
-    #else
     return g_string_free (format_patt, should_free);
-    #endif
 }
 
 static inline void
@@ -1227,8 +1225,17 @@ adblock_frame_add_private (const gchar* line,
         domains = g_strsplit (data[0], ",", -1);
         for (i = 0; domains[i]; i++)
         {
+            gchar* domain;
+
+            domain = domains[i];
+            /* Ignore Firefox-specific option */
+            if (!g_strcmp0 (domain, "~pregecko2"))
+                continue;
+            /* strip ~ from domain */
+            if (domain[0] == '~')
+                domain++;
             g_string_append_printf (blockcssprivate, ";sites['%s']+=',%s'",
-                g_strstrip (domains[i]), data[1]);
+                g_strstrip (domain), data[1]);
         }
         g_strfreev (domains);
     }

@@ -29,7 +29,7 @@ from Configure import find_program_impl
 
 major = 0
 minor = 4
-micro = 2
+micro = 3
 
 APPNAME = 'midori'
 VERSION = VERSION_FULL = str (major) + '.' + str (minor) + '.' + str (micro)
@@ -230,7 +230,7 @@ def configure (conf):
                 'Pass --disable-gtk3 to build without GTK+3.')
             sys.exit (1)
         if check_version (conf.check_cfg (modversion='webkitgtk-3.0'), 1, 5, 1):
-            check_pkg ('javascriptcoregtk-1.0', '1.5.1', args=args)
+            check_pkg ('javascriptcoregtk-3.0', '1.5.1', args=args)
         conf.env.append_value ('VALAFLAGS', '-D HAVE_GTK3')
     else:
         check_pkg ('gtk+-2.0', '2.10.0', var='GTK')
@@ -243,6 +243,7 @@ def configure (conf):
     conf.define ('HAVE_LIBSOUP_2_27_90', 1)
     check_pkg ('libsoup-2.4', '2.29.3', False, var='LIBSOUP_2_29_3')
     check_pkg ('libsoup-2.4', '2.29.91', False, var='LIBSOUP_2_29_91')
+    check_pkg ('libsoup-2.4', '2.37.1', False, var='LIBSOUP_2_37_1')
     conf.define ('LIBSOUP_VERSION', conf.check_cfg (modversion='libsoup-2.4'))
     check_pkg ('libxml-2.0', '2.6')
     check_pkg ('sqlite3', '3.0', True, var='SQLITE')
