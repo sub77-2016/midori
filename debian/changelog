@@ -1,3 +1,10 @@
+midori (0.4.3-2) UNRELEASED; urgency=low
+
+  * Apply patch from Colin Watson to improve conffile handling, using new
+    debhelper features.                                         closes: #659773
+
+ -- Yves-Alexis Perez <corsac@debian.org>  Mon, 13 Feb 2012 18:33:57 +0100
+
 midori (0.4.3-1) unstable; urgency=low
 
   * New upstream release.
