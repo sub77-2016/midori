@@ -10,5 +10,4 @@ case "$1" in
         ;;
 esac
 #DEBHELPER#
-rmdir /etc/xdg/midori/extensions/libadblock.so || true
 exit 0

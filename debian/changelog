@@ -5,6 +5,8 @@ midori (0.4.4-1) UNRELEASED; urgency=low
     debhelper features.                                         closes: #659773
   * debian/control:
     - update standards version to 3.9.3.
+  * debian/midori.maintscript:
+    - handle the /etc/xdg/midori/extensions/libadblock.so removal there.
 
  -- Yves-Alexis Perez <corsac@debian.org>  Thu, 08 Mar 2012 23:42:54 +0100
 
