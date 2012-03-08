@@ -910,21 +910,29 @@ katze_widget_popup_position_menu (GtkMenu*  menu,
     GtkRequisition widget_req;
     KatzePopupInfo* info = user_data;
     GtkWidget* widget = info->widget;
+    GdkWindow* window = gtk_widget_get_window (widget);
     gint widget_height;
 
-    gtk_widget_get_allocation (widget, &allocation);
+    if (!window)
+        return;
+
+    #if !GTK_CHECK_VERSION (3, 0, 0)
+    if (GTK_IS_ENTRY (widget))
+        window = gdk_window_get_parent (window);
+    #endif
 
     /* Retrieve size and position of both widget and menu */
-    if (!gtk_widget_get_has_window (widget))
-    {
-        gdk_window_get_position (gtk_widget_get_window (widget), &wx, &wy);
-        wx += allocation.x;
-        wy += allocation.y;
-    }
-    else
-        gdk_window_get_origin (gtk_widget_get_window (widget), &wx, &wy);
+    gtk_widget_get_allocation (widget, &allocation);
+    gdk_window_get_origin (window, &wx, &wy);
+    wx += allocation.x;
+    wy += allocation.y;
+    #if GTK_CHECK_VERSION (3, 0, 0)
+    gtk_widget_get_preferred_size (GTK_WIDGET (menu), &menu_req, NULL);
+    gtk_widget_get_preferred_size (widget, &widget_req, NULL);
+    #else
     gtk_widget_size_request (GTK_WIDGET (menu), &menu_req);
     gtk_widget_size_request (widget, &widget_req);
+    #endif
     menu_width = menu_req.width;
     widget_height = widget_req.height; /* Better than allocation.height */
 
@@ -1188,6 +1196,16 @@ katze_strip_mnemonics (const gchar* original)
   *q = '\0';
 
   return result;
+}
+
+const gchar*
+katze_skip_whitespace (const gchar* str)
+{
+    if (str == NULL)
+        return NULL;
+    while (*str == ' ' || *str == '\t' || *str == '\n')
+        str++;
+    return str;
 }
 
 /**
@@ -1520,6 +1538,8 @@ katze_uri_entry_changed_cb (GtkWidget* entry,
 {
     const gchar* uri = gtk_entry_get_text (GTK_ENTRY (entry));
     gboolean valid = midori_uri_is_location (uri);
+    if (!valid && g_object_get_data (G_OBJECT (entry), "allow_%s"))
+        valid = uri && g_str_has_prefix (uri, "%s");
     if (*uri && !valid)
     {
         GdkColor bg_color = { 0 };

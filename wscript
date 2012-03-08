@@ -29,7 +29,7 @@ from Configure import find_program_impl
 
 major = 0
 minor = 4
-micro = 3
+micro = 4
 
 APPNAME = 'midori'
 VERSION = VERSION_FULL = str (major) + '.' + str (minor) + '.' + str (micro)
@@ -61,6 +61,9 @@ def is_mingw (env):
             cc = ''.join (cc)
         return cc.find ('mingw') != -1# or cc.find ('wine') != -1
     return False
+
+def is_win32 (env):
+    return is_mingw (env) or Options.platform == 'win32'
 
 # Compile Win32 res files to (resource) object files
 def rc_file(self, node):
@@ -109,7 +112,7 @@ def configure (conf):
     else:
         icons = 'no '
 
-    if is_mingw (conf.env) or Options.platform == 'win32':
+    if is_win32 (conf.env):
         conf.find_program ('windres', var='WINRC')
         conf.env['platform'] = 'win32'
 
@@ -271,8 +274,6 @@ def configure (conf):
     if not conf.env['HAVE_UNIQUE']:
         if Options.platform == 'win32':
             conf.check (lib='ws2_32')
-        check_pkg ('openssl', mandatory=False)
-        conf.define ('USE_SSL', [0,1][conf.env['HAVE_OPENSSL'] == 1])
         conf.define ('HAVE_NETDB_H', [0,1][conf.check (header_name='netdb.h')])
         conf.check (header_name='sys/wait.h')
         conf.check (header_name='sys/select.h')
@@ -391,7 +392,7 @@ def set_options (opt):
     add_enable_option ('apidocs', 'API documentation', group, disable=True)
 
     group = opt.add_option_group ('Optional features', '')
-    add_enable_option ('unique', 'single instance support', group)
+    add_enable_option ('unique', 'single instance support', group, disable=is_win32 (os.environ))
     add_enable_option ('libnotify', 'notification support', group)
     add_enable_option ('addons', 'building of extensions', group)
     add_enable_option ('tests', 'building of tests', group, disable=True)
@@ -452,7 +453,7 @@ def build (bld):
         bld.install_files ('${DOCDIR}/api/', blddir + '/docs/api/*')
 
     for desktop in [APPNAME + '.desktop', APPNAME + '-private.desktop']:
-        if is_mingw (bld.env) or Options.platform == 'win32':
+        if is_win32 (bld.env):
             break
         if bld.env['HAVE_HILDON']:
             appdir = '${MDATADIR}/applications/hildon'
@@ -497,7 +498,7 @@ def build (bld):
         else:
             Utils.pprint ('BLUE', "logo-shade could not be rasterized.")
 
-    for res_file in ['error.html', 'close.png']:
+    for res_file in ['about.css', 'error.html', 'close.png']:
         bld.install_files ('${MDATADIR}/' + APPNAME + '/res', 'data/' + res_file)
     bld.install_as ( \
         '${MDATADIR}/' + APPNAME + '/res/speeddial-head-%s.html' % VERSION, \

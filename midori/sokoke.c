@@ -64,13 +64,15 @@ sokoke_js_script_eval (JSContextRef js_context,
 {
     gchar* value;
     JSStringRef js_value_string;
+    JSStringRef js_script;
+    JSValueRef js_exception = NULL;
+    JSValueRef js_value;
 
     g_return_val_if_fail (js_context, FALSE);
     g_return_val_if_fail (script, FALSE);
 
-    JSStringRef js_script = JSStringCreateWithUTF8CString (script);
-    JSValueRef js_exception = NULL;
-    JSValueRef js_value = JSEvaluateScript (js_context, js_script,
+    js_script = JSStringCreateWithUTF8CString (script);
+    js_value = JSEvaluateScript (js_context, js_script,
         JSContextGetGlobalObject (js_context), NULL, 0, &js_exception);
     JSStringRelease (js_script);
 
@@ -649,7 +651,7 @@ sokoke_magic_uri (const gchar* uri)
 
     /* Add file:// if we have a local path */
     if (g_path_is_absolute (uri))
-        return g_strconcat ("file://", uri, NULL);
+        return g_filename_to_uri (uri, NULL, NULL);
     /* Parse geo URI geo:48.202778,16.368472;crs=wgs84;u=40 as a location */
     if (!strncmp (uri, "geo:", 4))
     {
@@ -684,7 +686,7 @@ sokoke_magic_uri (const gchar* uri)
     search = NULL;
     if (!strchr (uri, ' ') &&
         ((search = strchr (uri, ':')) || (search = strchr (uri, '@'))) &&
-        search[0] && !g_ascii_isalpha (search[1]))
+        search[0] && g_ascii_isdigit (search[1]))
         return g_strconcat ("http://", uri, NULL);
     if ((!strcmp (uri, "localhost") || strchr (uri, '/'))
       && sokoke_resolve_hostname (uri))
@@ -793,7 +795,6 @@ sokoke_xfce_header_new (const gchar* icon,
     if (sokoke_get_desktop () == SOKOKE_DESKTOP_XFCE)
     {
         GtkWidget* entry;
-        GtkStyle* style;
         gchar* markup;
         GtkWidget* xfce_heading;
         GtkWidget* hbox;
@@ -804,9 +805,7 @@ sokoke_xfce_header_new (const gchar* icon,
 
         xfce_heading = gtk_event_box_new ();
         entry = gtk_entry_new ();
-        style = gtk_widget_get_style (entry);
-        gtk_widget_modify_bg (xfce_heading, GTK_STATE_NORMAL,
-            &style->base[GTK_STATE_NORMAL]);
+
         hbox = gtk_hbox_new (FALSE, 12);
         gtk_container_set_border_width (GTK_CONTAINER (hbox), 6);
         if (icon)
@@ -816,8 +815,6 @@ sokoke_xfce_header_new (const gchar* icon,
                 GTK_ICON_SIZE_DIALOG);
         gtk_box_pack_start (GTK_BOX (hbox), image, FALSE, FALSE, 0);
         label = gtk_label_new (NULL);
-        gtk_widget_modify_fg (label, GTK_STATE_NORMAL
-         , &style->text[GTK_STATE_NORMAL]);
         markup = g_strdup_printf ("<span size='large' weight='bold'>%s</span>",
                                   title);
         gtk_label_set_markup (GTK_LABEL (label), markup);
@@ -825,6 +822,16 @@ sokoke_xfce_header_new (const gchar* icon,
         gtk_container_add (GTK_CONTAINER (xfce_heading), hbox);
         g_free (markup);
         gtk_widget_destroy (entry);
+
+        #if !GTK_CHECK_VERSION (3, 0, 0)
+        {
+        GtkStyle* style = gtk_widget_get_style (entry);
+        gtk_widget_modify_bg (xfce_heading, GTK_STATE_NORMAL,
+            &style->base[GTK_STATE_NORMAL]);
+        gtk_widget_modify_fg (label, GTK_STATE_NORMAL
+         , &style->text[GTK_STATE_NORMAL]);
+        }
+        #endif
 
         vbox = gtk_vbox_new (FALSE, 0);
         gtk_box_pack_start (GTK_BOX (vbox), xfce_heading, FALSE, FALSE, 0);
@@ -1027,37 +1034,6 @@ sokoke_time_t_to_julian (const time_t* timestamp)
     g_date_free (date);
 
     return julian;
-}
-
-/**
- * sokoke_days_between:
- * @day1: a time_t timestamp value
- * @day2: a time_t timestamp value
- *
- * Calculates the number of days between two timestamps.
- *
- * Return value: an integer.
- **/
-gint
-sokoke_days_between (const time_t* day1,
-                     const time_t* day2)
-{
-    GDate* date1;
-    GDate* date2;
-    gint age;
-
-    date1 = g_date_new ();
-    date2 = g_date_new ();
-
-    g_date_set_time_t (date1, *day1);
-    g_date_set_time_t (date2, *day2);
-
-    age = g_date_days_between (date1, date2);
-
-    g_date_free (date1);
-    g_date_free (date2);
-
-    return age;
 }
 
 /**
@@ -1729,5 +1705,89 @@ midori_download_prepare_tooltip_text (WebKitDownload* download)
     }
 
     return g_string_free (tooltip, FALSE);
+}
+
+static gboolean
+sokoke_entry_has_placeholder_text (GtkEntry* entry)
+{
+    const gchar* text = gtk_entry_get_text (entry);
+    const gchar* hint = gtk_entry_get_placeholder_text (entry);
+    if (!gtk_widget_has_focus (GTK_WIDGET (entry))
+     && hint != NULL
+     && (text == NULL || !strcmp (text, hint)))
+        return TRUE;
+    return FALSE;
+}
+
+static void
+sokoke_entry_changed_cb (GtkEditable* editable,
+                         GtkEntry*    entry)
+{
+    const gchar* text = gtk_entry_get_text (entry);
+    gboolean visible = text && *text
+      && ! sokoke_entry_has_placeholder_text (entry);
+    gtk_icon_entry_set_icon_from_stock (
+        GTK_ICON_ENTRY (entry),
+        GTK_ICON_ENTRY_SECONDARY,
+        visible ? GTK_STOCK_CLEAR : NULL);
+}
+
+static gboolean
+sokoke_entry_focus_out_event_cb (GtkEditable*   editable,
+                                 GdkEventFocus* event,
+                                 GtkEntry*      entry)
+{
+    sokoke_entry_changed_cb (editable, entry);
+    return FALSE;
+}
+
+static void
+sokoke_entry_icon_released_cb (GtkEntry*            entry,
+                               GtkIconEntryPosition icon_pos,
+                               GdkEvent*            event,
+                               gpointer             user_data)
+{
+    if (icon_pos != GTK_ICON_ENTRY_SECONDARY)
+        return;
+
+    gtk_entry_set_text (entry, "");
+    gtk_widget_grab_focus (GTK_WIDGET (entry));
+}
+
+void
+sokoke_entry_set_clear_button_visible (GtkEntry* entry,
+                                       gboolean  visible)
+{
+    g_return_if_fail (GTK_IS_ENTRY (entry));
+
+    gtk_icon_entry_set_icon_highlight (GTK_ICON_ENTRY (entry),
+        GTK_ICON_ENTRY_SECONDARY, TRUE);
+    if (visible)
+    {
+        g_object_connect (entry,
+            "signal::icon-release",
+            G_CALLBACK (sokoke_entry_icon_released_cb), NULL,
+            "signal::focus-in-event",
+            G_CALLBACK (sokoke_entry_focus_out_event_cb), entry,
+            "signal::focus-out-event",
+            G_CALLBACK (sokoke_entry_focus_out_event_cb), entry,
+            "signal::changed",
+            G_CALLBACK (sokoke_entry_changed_cb), entry, NULL);
+        sokoke_entry_changed_cb ((GtkEditable*)entry, entry);
+    }
+    else
+    {
+        g_object_disconnect (entry,
+            "any_signal::icon-release",
+            G_CALLBACK (sokoke_entry_icon_released_cb), NULL,
+            "any_signal::focus-in-event",
+            G_CALLBACK (sokoke_entry_focus_out_event_cb), entry,
+            "any_signal::focus-out-event",
+            G_CALLBACK (sokoke_entry_focus_out_event_cb), entry,
+            "any_signal::changed",
+            G_CALLBACK (sokoke_entry_changed_cb), entry, NULL);
+        gtk_icon_entry_set_icon_from_stock (
+            GTK_ICON_ENTRY (entry), GTK_ICON_ENTRY_SECONDARY, NULL);
+    }
 }
 

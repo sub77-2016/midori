@@ -69,7 +69,6 @@ struct _MidoriApp
     GObject parent_instance;
 
     MidoriBrowser* browser;
-    GtkAccelGroup* accel_group;
 
     gchar* name;
     MidoriWebSettings* settings;
@@ -216,7 +215,6 @@ _midori_app_add_browser (MidoriApp*     app,
     g_return_if_fail (MIDORI_IS_APP (app));
     g_return_if_fail (MIDORI_IS_BROWSER (browser));
 
-    gtk_window_add_accel_group (GTK_WINDOW (browser), app->accel_group);
     g_object_connect (browser,
         "signal::focus-in-event", midori_browser_focus_in_event_cb, app,
         "signal::new-window", midori_browser_new_window_cb, app,
@@ -722,12 +720,16 @@ midori_app_create_instance (MidoriApp* app)
 
     if (!app->name)
     {
+        #if HAVE_UNIQUE
         const gchar* config = sokoke_set_config_dir (NULL);
         gchar* name_hash;
         name_hash = g_compute_checksum_for_string (G_CHECKSUM_MD5, config, -1);
         app->name = g_strconcat ("midori", "_", name_hash, NULL);
         g_free (name_hash);
         g_object_notify (G_OBJECT (app), "name");
+        #else
+        app->name = g_strdup (PACKAGE_NAME);
+        #endif
     }
 
     if (!(display = gdk_display_get_default ()))
@@ -767,8 +769,6 @@ midori_app_create_instance (MidoriApp* app)
 static void
 midori_app_init (MidoriApp* app)
 {
-    app->accel_group = gtk_accel_group_new ();
-
     app->settings = NULL;
     app->bookmarks = NULL;
     app->trash = NULL;
@@ -792,8 +792,6 @@ static void
 midori_app_finalize (GObject* object)
 {
     MidoriApp* app = MIDORI_APP (object);
-
-    g_object_unref (app->accel_group);
 
     katze_assign (app->name, NULL);
     katze_object_assign (app->settings, NULL);
@@ -1351,7 +1349,9 @@ midori_app_setup (gchar** argument_vector)
 
     /* libSoup uses threads, therefore if WebKit is built with libSoup
      * or Midori is using it, we need to initialize threads. */
+    #if !GLIB_CHECK_VERSION (2, 32, 0)
     if (!g_thread_supported ()) g_thread_init (NULL);
+    #endif
 
     #if ENABLE_NLS
     setlocale (LC_ALL, "");

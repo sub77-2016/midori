@@ -277,43 +277,96 @@ midori_location_action_create_model (void)
 }
 
 static void
-midori_location_action_popup_position (GtkWidget* popup,
-                                       GtkWidget* widget)
+midori_location_action_popup_position (MidoriLocationAction* action,
+                                       gint                  matches)
 {
+    GtkWidget* popup = action->popup;
+    GtkWidget* widget = action->entry;
     GdkWindow* window = gtk_widget_get_window (widget);
-    gint wx, wy;
+    gint wx, wy, x_border, y_border, items;
     GtkRequisition menu_req;
     GtkRequisition widget_req;
     GdkScreen* screen;
     gint monitor_num;
     GdkRectangle monitor;
-    GtkAllocation allocation;
+    GtkAllocation alloc;
+    gint height, sep, width, toplevel_height;
+    gboolean above;
+    GtkWidget* scrolled = gtk_widget_get_parent (action->treeview);
+    GtkWidget* toplevel;
+    GtkTreePath* path;
 
+    if (!window)
+        return;
+
+    gtk_widget_get_allocation (widget, &alloc);
+    #if GTK_CHECK_VERSION (3, 0, 0)
+    gtk_widget_get_preferred_size (widget, &widget_req, NULL);
+    #else
+    gtk_widget_size_request (widget, &widget_req);
+    #endif
     gdk_window_get_origin (window, &wx, &wy);
 
-    if (!gtk_widget_get_has_window (widget))
-    {
-        GtkAllocation alloc;
-        gtk_widget_get_allocation (widget, &alloc);
-        wx += alloc.x;
-        wy += alloc.y;
-    }
+    #if GTK_CHECK_VERSION (3, 0, 0)
+    wx += alloc.x;
+    wy += alloc.y + (alloc.height - widget_req.height) / 2;
+    #endif
+    /* _gtk_entry_get_borders (GTK_ENTRY (widget), &x_border, &y_border); */
+    x_border = y_border = 0;
 
-    gtk_widget_size_request (popup, &menu_req);
-    gtk_widget_size_request (widget, &widget_req);
+    gtk_tree_view_column_cell_get_size (
+        gtk_tree_view_get_column (GTK_TREE_VIEW (action->treeview), 0),
+        NULL, NULL, NULL, NULL, &height);
+    gtk_widget_style_get (action->treeview, "vertical-separator", &sep, NULL);
+    height += sep;
 
+    /* Constrain to screen/ window size */
     screen = gtk_widget_get_screen (widget);
     monitor_num = gdk_screen_get_monitor_at_window (screen, window);
     gdk_screen_get_monitor_geometry (screen, monitor_num, &monitor);
-
-    if (wy + widget_req.height + menu_req.height <= monitor.y + monitor.height
-     || wy - monitor.y < (monitor.y + monitor.height) - (wy + widget_req.height))
-        wy += widget_req.height;
+    toplevel = gtk_widget_get_toplevel (widget);
+    gtk_window_get_size (GTK_WINDOW (toplevel), NULL, &toplevel_height);
+    toplevel_height = MIN (toplevel_height, monitor.height);
+    if (wy > toplevel_height / 2)
+        items = MIN (matches, ((monitor.y + wy) / height) - 1);
     else
+        items = MIN (matches, ((toplevel_height - wy) / height) - 1);
+    width = MIN (alloc.width, monitor.width) - 2 * x_border;
+
+    gtk_tree_view_columns_autosize (GTK_TREE_VIEW (action->treeview));
+    #if GTK_CHECK_VERSION (3, 0, 0)
+    gtk_widget_set_size_request (scrolled, width, -1);
+    gtk_scrolled_window_set_min_content_width (GTK_SCROLLED_WINDOW (scrolled), width);
+    gtk_scrolled_window_set_min_content_height (GTK_SCROLLED_WINDOW (scrolled), items * height);
+    gtk_widget_get_preferred_size (popup, &menu_req, NULL);
+    #else
+    gtk_widget_set_size_request (scrolled, width, items * height);
+    gtk_widget_size_request (popup, &menu_req);
+    #endif
+
+    if (wx < monitor.x)
+        wx = monitor.x;
+    else if (wx + menu_req.width > monitor.x + monitor.width)
+        wx = monitor.x + monitor.width - menu_req.width;
+
+    if (wy + widget_req.height + menu_req.height <= monitor.y + monitor.height ||
+        wy - monitor.y < (monitor.y + monitor.height) - (wy + widget_req.height))
+    {
+        wy += widget_req.height;
+        above = FALSE;
+    }
+    else
+    {
         wy -= menu_req.height;
-    gtk_window_move (GTK_WINDOW (popup),  wx, wy);
-    gtk_widget_get_allocation (widget, &allocation);
-    gtk_window_resize (GTK_WINDOW (popup), allocation.width, 1);
+        above = TRUE;
+    }
+
+    path = gtk_tree_path_new_from_indices (above ? matches - 1 : 0, -1);
+    gtk_tree_view_scroll_to_cell (GTK_TREE_VIEW (action->treeview), path,
+                                  NULL, FALSE, 0.0, 0.0);
+    gtk_tree_path_free (path);
+
+    gtk_window_move (GTK_WINDOW (popup), wx, wy);
 }
 
 static gboolean
@@ -357,28 +410,21 @@ midori_location_action_popup_timeout_cb (gpointer data)
     gint result;
     static sqlite3_stmt* stmt;
     const gchar* sqlcmd;
-    gint matches, searches, height, screen_height, browser_height, sep;
-    MidoriBrowser* browser;
+    gint matches, searches;
     GtkStyle* style;
 
     if (!action->entry || !gtk_widget_has_focus (action->entry) || !action->history)
         return FALSE;
 
     /* No completion when typing a search token */
-    if (action->search_engines != NULL)
+    if (action->search_engines
+     && katze_array_find_token (action->search_engines, action->key))
     {
-        gchar** parts = g_strsplit (action->key, " ", 2);
-        if (parts && *parts && parts[1]
-                  && katze_array_find_token (action->search_engines, *parts))
-        {
-            g_strfreev (parts);
-            midori_location_action_popdown_completion (action);
-            return FALSE;
-        }
-        g_strfreev (parts);
+        midori_location_action_popdown_completion (action);
+        return FALSE;
     }
 
-    /* Empaty string or starting with a space means: no completion */
+    /* Empty string or starting with a space means: no completion */
     if (!(action->key && *action->key && *action->key != ' '))
     {
         midori_location_action_popdown_completion (action);
@@ -443,6 +489,8 @@ midori_location_action_popup_timeout_cb (gpointer data)
 
         popup = gtk_window_new (GTK_WINDOW_POPUP);
         gtk_window_set_type_hint (GTK_WINDOW (popup), GDK_WINDOW_TYPE_HINT_COMBO);
+        /* Window managers may ignore programmatic resize without this */
+        gtk_window_set_resizable (GTK_WINDOW (popup), FALSE);
         popup_frame = gtk_frame_new (NULL);
         gtk_frame_set_shadow_type (GTK_FRAME (popup_frame), GTK_SHADOW_ETCHED_IN);
         gtk_container_add (GTK_CONTAINER (popup), popup_frame);
@@ -489,6 +537,7 @@ midori_location_action_popup_timeout_cb (gpointer data)
     gtk_list_store_clear (store);
 
     matches = searches = 0;
+    gtk_widget_realize (action->treeview);
     style = gtk_widget_get_style (action->treeview);
     while (result == SQLITE_ROW)
     {
@@ -507,9 +556,11 @@ midori_location_action_popup_timeout_cb (gpointer data)
         else if (type == 2 /* search_view */)
         {
             gchar* search_title = g_strdup_printf (_("Search for %s"), title);
+            gchar* search_desc = g_strdup_printf ("%s\n%s", search_title, uri);
             gtk_list_store_insert_with_values (store, NULL, matches,
-                URI_COL, uri, TITLE_COL, search_title, YALIGN_COL, 0.25,
+                URI_COL, uri, TITLE_COL, search_desc, YALIGN_COL, 0.25,
                 STYLE_COL, 1, FAVICON_COL, icon, -1);
+            g_free (search_desc);
             g_free (search_title);
         }
         if (icon != NULL)
@@ -518,8 +569,12 @@ midori_location_action_popup_timeout_cb (gpointer data)
         matches++;
         result = sqlite3_step (stmt);
     }
-    sqlite3_reset (stmt);
-    sqlite3_clear_bindings (stmt);
+
+    if (stmt)
+    {
+        sqlite3_reset (stmt);
+        sqlite3_clear_bindings (stmt);
+    }
 
     if (action->search_engines)
     {
@@ -529,17 +584,22 @@ midori_location_action_popup_timeout_cb (gpointer data)
         {
             gchar* uri;
             gchar* title;
+            const gchar* text;
+            gchar* desc;
             GdkPixbuf* icon;
 
             uri = midori_uri_for_search (katze_item_get_uri (item), action->key);
             title = g_strdup_printf (_("Search with %s"), katze_item_get_name (item));
+            text = katze_item_get_text (item);
+            desc = g_strdup_printf ("%s\n%s", title, text ? text : uri);
             icon = midori_search_action_get_icon (item, action->treeview, NULL, FALSE);
             gtk_list_store_insert_with_values (store, NULL, matches + i,
-                URI_COL, uri, TITLE_COL, title, YALIGN_COL, 0.25,
+                URI_COL, uri, TITLE_COL, desc, YALIGN_COL, 0.25,
                 BACKGROUND_COL, style ? &style->bg[GTK_STATE_NORMAL] : NULL,
                 STYLE_COL, 1, FAVICON_COL, icon, -1);
             g_free (uri);
             g_free (title);
+            g_free (desc);
             if (icon != NULL)
                 g_object_unref (icon);
             i++;
@@ -553,22 +613,10 @@ midori_location_action_popup_timeout_cb (gpointer data)
         gtk_window_set_screen (GTK_WINDOW (action->popup),
                                gtk_widget_get_screen (action->entry));
         gtk_window_set_transient_for (GTK_WINDOW (action->popup), GTK_WINDOW (toplevel));
-        gtk_tree_view_columns_autosize (GTK_TREE_VIEW (action->treeview));
+        gtk_widget_show_all (action->popup);
     }
 
-    browser = midori_browser_get_for_widget (action->entry);
-    column = gtk_tree_view_get_column (GTK_TREE_VIEW (action->treeview), 0);
-    gtk_tree_view_column_cell_get_size (column, NULL, NULL, NULL, NULL, &height);
-    screen_height = gdk_screen_get_height (gtk_widget_get_screen (action->popup));
-    gtk_window_get_size (GTK_WINDOW (browser), NULL, &browser_height);
-    screen_height = MIN (MIN (browser_height, screen_height / 1.5), screen_height / 1.5);
-    gtk_widget_style_get (action->treeview, "vertical-separator", &sep, NULL);
-    /* FIXME: Instead of 1.5 we should relate to the height of one line */
-    height = MIN (matches * height + (matches + searches) * sep
-                                   + searches * height / 1.5, screen_height);
-    gtk_widget_set_size_request (action->treeview, -1, height);
-    midori_location_action_popup_position (action->popup, action->entry);
-    gtk_widget_show_all (action->popup);
+    midori_location_action_popup_position (action, matches + searches);
 
     return FALSE;
 }
@@ -1532,30 +1580,22 @@ midori_location_action_add_item (MidoriLocationAction* location_action,
     #endif
 }
 
+/**
+ * midori_location_action_set_icon_for_uri:
+ * @location_action: a #MidoriLocationAction
+ * @icon: a #GdkPixbuf
+ * @uri: an URI string
+ *
+ * Sets the icon for the specified URI.
+ *
+ * Deprecated: 0.4.4
+ **/
 void
 midori_location_action_set_icon_for_uri (MidoriLocationAction* location_action,
                                          GdkPixbuf*            icon,
                                          const gchar*          uri)
 {
-    #if !HAVE_HILDON
-    GSList* proxies;
-    #endif
-
-    g_return_if_fail (MIDORI_IS_LOCATION_ACTION (location_action));
-    g_return_if_fail (!icon || GDK_IS_PIXBUF (icon));
-    g_return_if_fail (uri != NULL);
-
-    #if !HAVE_HILDON
-    proxies = gtk_action_get_proxies (GTK_ACTION (location_action));
-
-    for (; proxies != NULL; proxies = g_slist_next (proxies))
-    if (GTK_IS_TOOL_ITEM (proxies->data))
-    {
-        GtkWidget* entry = midori_location_action_entry_for_proxy (proxies->data);
-        gtk_icon_entry_set_icon_from_pixbuf (GTK_ICON_ENTRY (entry),
-            GTK_ICON_ENTRY_PRIMARY, icon);
-    }
-    #endif
+    midori_location_action_set_icon (location_action, icon);
 }
 
 /**
@@ -1659,16 +1699,20 @@ midori_location_action_set_security_hint (MidoriLocationAction* location_action,
     for (; proxies != NULL; proxies = g_slist_next (proxies))
     if (GTK_IS_TOOL_ITEM (proxies->data))
     {
+        #if !GTK_CHECK_VERSION (3, 0, 0)
         const gchar* bg_color = NULL;
         const gchar* fg_color = NULL;
+        #endif
         GtkWidget* entry = midori_location_action_entry_for_proxy (proxies->data);
         GdkScreen* screen = gtk_widget_get_screen (entry);
         GtkIconTheme* icon_theme = gtk_icon_theme_get_for_screen (screen);
 
         if (hint == MIDORI_SECURITY_UNKNOWN)
         {
+            #if !GTK_CHECK_VERSION (3, 0, 0)
             bg_color = "#ef7070";
             fg_color = "#000";
+            #endif
             #if !HAVE_HILDON
             if (gtk_icon_theme_has_icon (icon_theme, "channel-insecure-symbolic"))
                 gtk_icon_entry_set_icon_from_icon_name (GTK_ICON_ENTRY (entry),
@@ -1685,8 +1729,10 @@ midori_location_action_set_security_hint (MidoriLocationAction* location_action,
         }
         else if (hint == MIDORI_SECURITY_TRUSTED)
         {
+            #if !GTK_CHECK_VERSION (3, 0, 0)
             bg_color = "#d1eeb9";
             fg_color = "#000";
+            #endif
             #if !HAVE_HILDON
             if (gtk_icon_theme_has_icon (icon_theme, "channel-secure-symbolic"))
                 gtk_icon_entry_set_icon_from_icon_name (GTK_ICON_ENTRY (entry),

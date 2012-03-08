@@ -30,6 +30,11 @@
 #if HAVE_UNISTD_H
     #include <unistd.h>
 #endif
+
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+
 #ifndef G_OS_WIN32
     #include <sys/utsname.h>
 #endif
@@ -79,6 +84,7 @@ struct _MidoriView
     gchar* statusbar_text;
     WebKitHitTestResult* hit_test;
     gchar* link_uri;
+    gboolean button_press_handled;
     gboolean has_selection;
     gchar* selected_text;
     MidoriWebSettings* settings;
@@ -492,7 +498,7 @@ midori_view_class_init (MidoriViewClass* class)
                                      "mime-type",
                                      "MIME Type",
                                      "The MIME type of the currently loaded page",
-                                     "text/html",
+                                     NULL,
                                      G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
 
     g_object_class_install_property (gobject_class,
@@ -662,6 +668,9 @@ midori_view_apply_icon (MidoriView*  view,
                         const gchar* icon_name)
 {
     katze_item_set_icon (view->item, icon_name);
+    /* katze_item_get_image knows about this pixbuf */
+    g_object_set_data_full (G_OBJECT (view->item), "pixbuf", g_object_ref (icon),
+                            (GDestroyNotify)g_object_unref);
     katze_object_assign (view->icon, icon);
     g_object_notify (G_OBJECT (view), "icon");
 
@@ -676,11 +685,7 @@ midori_view_apply_icon (MidoriView*  view,
     }
     if (view->menu_item)
     {
-        GtkWidget* image;
-        if (icon_name && !strchr (icon_name, '/'))
-            image = gtk_image_new_from_icon_name (icon_name, GTK_ICON_SIZE_MENU);
-        else
-            image = gtk_image_new_from_pixbuf (view->icon);
+        GtkWidget* image = katze_item_get_image (view->item);
         gtk_image_menu_item_set_image (GTK_IMAGE_MENU_ITEM (view->menu_item), image);
     }
 }
@@ -710,31 +715,23 @@ midori_view_mime_icon (MidoriView*   view,
 }
 
 static void
-midori_view_update_icon (MidoriView* view,
-                         GdkPixbuf*  icon)
+midori_view_unset_icon (MidoriView* view)
 {
     GdkScreen* screen;
     GtkIconTheme* theme;
     gchar** parts = NULL;
+    GdkPixbuf* icon;
 
-    if (icon)
-    {
-        midori_view_apply_icon (view, icon, view->icon_uri);
-        return;
-    }
-
-    if (!((screen = gtk_widget_get_screen (GTK_WIDGET (view)))
+    if (!((screen = gtk_widget_get_screen (view->web_view))
         && (theme = gtk_icon_theme_get_for_screen (screen))))
         return;
-    if (view->mime_type == NULL)
-        return;
 
-    if (!((parts = g_strsplit (view->mime_type, "/", 2)) && (*parts && parts[1])))
+    if (!(view->mime_type
+       && (parts = g_strsplit (view->mime_type, "/", 2))
+       && (*parts && parts[1])))
     {
-        /* This is a hack to have a Find icon in the location while the
-           blank page has a File icon. */
-        icon = gtk_widget_render_icon (GTK_WIDGET (view),
-            GTK_STOCK_FIND, GTK_ICON_SIZE_MENU, NULL);
+        icon = gtk_widget_render_icon (view->web_view,
+            GTK_STOCK_FILE, GTK_ICON_SIZE_MENU, NULL);
         midori_view_apply_icon (view, icon, GTK_STOCK_FILE);
         goto free_parts;
     }
@@ -748,46 +745,29 @@ midori_view_update_icon (MidoriView* view,
     if (midori_view_mime_icon (view, theme, "gnome-mime-%s-x-generic", *parts, NULL))
         goto free_parts;
 
-    icon = gtk_widget_render_icon (GTK_WIDGET (view),
+    icon = gtk_widget_render_icon (view->web_view,
         GTK_STOCK_FILE, GTK_ICON_SIZE_MENU, NULL);
-    midori_view_apply_icon (view, icon, NULL);
+    midori_view_apply_icon (view, icon, GTK_STOCK_FILE);
 
 free_parts:
     g_strfreev (parts);
 }
 
-typedef struct
-{
-    gchar* icon_file;
-    gchar* icon_uri;
-    MidoriView* view;
-} KatzeNetIconPriv;
-
-static void
-katze_net_icon_priv_free (KatzeNetIconPriv* priv)
-{
-    g_free (priv->icon_file);
-    g_free (priv->icon_uri);
-    g_slice_free (KatzeNetIconPriv, priv);
-}
-
 static gboolean
 katze_net_icon_status_cb (KatzeNetRequest*  request,
-                          KatzeNetIconPriv* priv)
+                          MidoriView*       view)
 {
     switch (request->status)
     {
         case KATZE_NET_VERIFIED:
             if (request->mime_type && strncmp (request->mime_type, "image/", 6))
             {
-                katze_net_icon_priv_free (priv);
                 return FALSE;
             }
             break;
         case KATZE_NET_MOVED:
             break;
         default:
-            katze_net_icon_priv_free (priv);
             return FALSE;
     }
     return TRUE;
@@ -795,7 +775,7 @@ katze_net_icon_status_cb (KatzeNetRequest*  request,
 
 static void
 katze_net_icon_transfer_cb (KatzeNetRequest*  request,
-                            KatzeNetIconPriv* priv)
+                            MidoriView*       view)
 {
     GdkPixbuf* pixbuf;
     FILE* fp;
@@ -810,61 +790,52 @@ katze_net_icon_transfer_cb (KatzeNetRequest*  request,
     pixbuf = NULL;
     if (request->data)
     {
-        if ((fp = fopen (priv->icon_file, "wb")))
+        gchar* icon_file = katze_net_get_cached_path (NULL, view->icon_uri, "icons");
+        if ((fp = fopen (icon_file, "wb")))
         {
             ret  = fwrite (request->data, 1, request->length, fp);
             fclose (fp);
             if ((ret - request->length != 0))
             {
                 g_warning ("Error writing to file %s "
-                           "in  katze_net_icon_transfer_cb()", priv->icon_file);
+                           "in  katze_net_icon_transfer_cb()", icon_file);
             }
-            pixbuf = gdk_pixbuf_new_from_file (priv->icon_file, NULL);
         }
-        else
-            pixbuf = katze_pixbuf_new_from_buffer ((guchar*)request->data,
+        g_free (icon_file);
+
+        pixbuf = katze_pixbuf_new_from_buffer ((guchar*)request->data,
                             request->length, request->mime_type, NULL);
 
-        if (pixbuf)
-            g_object_ref (pixbuf);
-
-        g_hash_table_insert (priv->view->memory,
-                g_strdup (priv->icon_file), pixbuf);
     }
 
     if (!pixbuf)
     {
-        midori_view_update_icon (priv->view, NULL);
-        katze_net_icon_priv_free (priv);
+        midori_view_unset_icon (view);
         return;
     }
 
-    settings = gtk_widget_get_settings (priv->view->web_view);
+    g_hash_table_insert (view->memory, g_strdup (view->icon_uri), pixbuf);
+    settings = gtk_widget_get_settings (view->web_view);
     gtk_icon_size_lookup_for_settings (settings, GTK_ICON_SIZE_MENU, &icon_width, &icon_height);
     pixbuf_scaled = gdk_pixbuf_scale_simple (pixbuf, icon_width, icon_height, GDK_INTERP_BILINEAR);
-
-    g_object_unref (pixbuf);
-
-    katze_assign (priv->view->icon_uri, g_strdup (priv->icon_uri));
-    midori_view_update_icon (priv->view, pixbuf_scaled);
-    katze_net_icon_priv_free (priv);
+    midori_view_apply_icon (view, pixbuf_scaled, view->icon_uri);
 }
 
 static void
 _midori_web_view_load_icon (MidoriView* view)
 {
-    GdkPixbuf* pixbuf;
-    gchar* icon_file;
+    GdkPixbuf* pixbuf = NULL;
     gint icon_width, icon_height;
     GdkPixbuf* pixbuf_scaled;
     GtkSettings* settings;
 
-    pixbuf = NULL;
+    if (!midori_uri_is_http (view->icon_uri))
+        katze_assign (view->icon_uri, NULL);
 
-    if (midori_uri_is_http (view->icon_uri) || midori_uri_is_http (view->uri))
+    if (midori_uri_is_http (view->uri) || g_str_has_prefix (view->uri, "file://"))
     {
-        gchar* icon_uri = g_strdup (view->icon_uri);
-        if (!icon_uri)
+        gchar* icon_file = NULL;
+        if (!view->icon_uri)
         {
             guint i = 8;
             while (view->uri[i] != '\0' && view->uri[i] != '/')
@@ -872,42 +843,33 @@ _midori_web_view_load_icon (MidoriView* view)
             if (view->uri[i] == '/')
             {
                 gchar* path = g_strndup (view->uri, i);
-                icon_uri = g_strdup_printf ("%s/favicon.ico", path);
+                view->icon_uri = g_strdup_printf ("%s/favicon.ico", path);
                 g_free (path);
             }
             else
-                icon_uri = g_strdup_printf ("%s/favicon.ico", view->uri);
+                view->icon_uri = g_strdup_printf ("%s/favicon.ico", view->uri);
         }
 
-        icon_file = katze_net_get_cached_path (NULL, icon_uri, "icons");
         if (g_hash_table_lookup_extended (view->memory,
-                                          icon_file, NULL, (gpointer)&pixbuf))
+                                          view->icon_uri, NULL, (gpointer)&pixbuf))
         {
-            g_free (icon_file);
-            if (pixbuf)
-            {
-                g_object_ref (pixbuf);
-                katze_assign (view->icon_uri, icon_uri);
-            }
+            g_warn_if_fail (pixbuf != NULL);
+            g_object_ref (pixbuf);
         }
-        else if ((pixbuf = gdk_pixbuf_new_from_file (icon_file, NULL)))
+        else if ((icon_file = katze_net_get_cached_path (NULL, view->icon_uri, "icons")) &&
+                 (pixbuf = gdk_pixbuf_new_from_file (icon_file, NULL)))
         {
-            g_free (icon_file);
-            katze_assign (view->icon_uri, icon_uri);
+            g_hash_table_insert (view->memory,
+                g_strdup (view->icon_uri), g_object_ref (pixbuf));
         }
         else if (!view->special)
         {
-            KatzeNetIconPriv* priv;
-
-            priv = g_slice_new (KatzeNetIconPriv);
-            priv->icon_file = icon_file;
-            priv->icon_uri = icon_uri;
-            priv->view = view;
-
-            katze_net_load_uri (NULL, icon_uri,
+            katze_net_load_uri (NULL, view->icon_uri,
                 (KatzeNetStatusCb)katze_net_icon_status_cb,
-                (KatzeNetTransferCb)katze_net_icon_transfer_cb, priv);
+                (KatzeNetTransferCb)katze_net_icon_transfer_cb, view);
         }
+
+        g_free (icon_file);
     }
 
     if (pixbuf)
@@ -919,9 +881,8 @@ _midori_web_view_load_icon (MidoriView* view)
             icon_height, GDK_INTERP_BILINEAR);
         g_object_unref (pixbuf);
         pixbuf = pixbuf_scaled;
+        midori_view_apply_icon (view, pixbuf, view->icon_uri);
     }
-
-    midori_view_update_icon (view, pixbuf);
 }
 
 static void
@@ -1043,7 +1004,7 @@ webkit_web_view_load_committed_cb (WebKitWebView*  web_view,
     g_object_notify (G_OBJECT (view), "uri");
     g_object_set (view, "title", NULL, NULL);
 
-    midori_view_update_icon (view, NULL);
+    midori_view_unset_icon (view);
 
     if (!strncmp (uri, "https", 5))
     {
@@ -1094,7 +1055,7 @@ midori_view_web_view_resource_request_cb (WebKitWebView*         web_view,
     const gchar* uri = webkit_network_request_get_uri (request);
 
     /* Only apply custom URIs to special pages for security purposes */
-    if (!view->special)
+    if (!view->special && !midori_view_is_blank (view))
         return;
 
     if (g_str_has_prefix (uri, "res://"))
@@ -1327,15 +1288,32 @@ midori_view_web_view_database_quota_exceeded_cb (WebKitWebView*     web_view,
                                                  MidoriView*        view)
 {
     const gchar* uri = webkit_web_frame_get_uri (web_frame);
-    gchar* hostname = midori_uri_parse_hostname (uri, NULL);
-    gchar* message = g_strdup_printf (_("%s wants to save an HTML5 database."),
-                                      hostname && *hostname ? hostname : uri);
-    midori_view_add_info_bar (view, GTK_MESSAGE_QUESTION, message,
-        G_CALLBACK (midori_view_database_response_cb), database,
-        _("_Deny"), GTK_RESPONSE_REJECT, _("_Allow"), GTK_RESPONSE_ACCEPT,
-        NULL);
-    g_free (hostname);
-    g_free (message);
+    MidoriSiteDataPolicy policy = midori_web_settings_get_site_data_policy (view->settings, uri);
+
+    switch (policy)
+    {
+    case MIDORI_SITE_DATA_BLOCK:
+    {
+        WebKitSecurityOrigin* origin = webkit_web_database_get_security_origin (database);
+        webkit_security_origin_set_web_database_quota (origin, 0);
+        webkit_web_database_remove (database);
+    }
+    case MIDORI_SITE_DATA_ACCEPT:
+    case MIDORI_SITE_DATA_PRESERVE:
+        return;
+    case MIDORI_SITE_DATA_UNDETERMINED:
+    {
+        gchar* hostname = midori_uri_parse_hostname (uri, NULL);
+        gchar* message = g_strdup_printf (_("%s wants to save an HTML5 database."),
+                                          hostname && *hostname ? hostname : uri);
+        midori_view_add_info_bar (view, GTK_MESSAGE_QUESTION, message,
+            G_CALLBACK (midori_view_database_response_cb), database,
+            _("_Deny"), GTK_RESPONSE_REJECT, _("_Allow"), GTK_RESPONSE_ACCEPT,
+            NULL);
+        g_free (hostname);
+        g_free (message);
+    }
+    }
 }
 
 #if WEBKIT_CHECK_VERSION (1, 1, 23)
@@ -1496,59 +1474,74 @@ webkit_web_view_load_finished_cb (WebKitWebView*  web_view,
     g_object_notify (G_OBJECT (view), "progress");
     midori_view_update_load_status (view, MIDORI_LOAD_FINISHED);
 
-    if (1)
     {
         JSContextRef js_context = webkit_web_frame_get_global_context (web_frame);
-        /* Join news feeds into like this: URI1|title1,URI2|title2 */
+        /* Icon: URI, News Feed: $URI|title */
         gchar* value = sokoke_js_script_eval (js_context,
         "(function (l) { var f = new Array (); for (i in l) "
         "{ var t = l[i].type; var r = l[i].rel; "
         "if (t && (t.indexOf ('rss') != -1 || t.indexOf ('atom') != -1)) "
-        "f.push (l[i].href + '|' + l[i].title);"
+        "f.push ('$' + l[i].href + '|' + l[i].title);"
         #if !WEBKIT_CHECK_VERSION (1, 1, 18)
         "else if (r && r.indexOf ('icon') != -1) f.push (l[i].href); "
         #endif
         "} return f; })("
         "document.getElementsByTagName ('link'));", NULL);
+
         gchar** items = g_strsplit (value, ",", 0);
-        guint i = 0;
+        gchar** current_item = items;
         gchar* default_uri = NULL;
 
         if (view->news_feeds != NULL)
             katze_array_clear (view->news_feeds);
         else
             view->news_feeds = katze_array_new (KATZE_TYPE_ITEM);
-        if (items != NULL)
-        while (items[i] != NULL)
+
+        while (current_item && *current_item)
         {
-            gchar** parts = g_strsplit (items[i], "|", 2);
-            if (parts == NULL)
-                ;
-            else if (*parts && parts[1])
+            const gchar* uri_and_title = *current_item;
+            if (uri_and_title[0] == '$')
             {
-                KatzeItem* item = g_object_new (KATZE_TYPE_ITEM,
-                    "uri", parts[0], "name", parts[1], NULL);
+                const gchar* title;
+                gchar* uri;
+                KatzeItem* item;
+
+                uri_and_title++;
+                if (uri_and_title == NULL)
+                    continue;
+                title = strchr (uri_and_title, '|');
+                if (title == NULL)
+                    continue;
+                title++;
+
+                uri = g_strndup (uri_and_title, title - 1 - uri_and_title);
+                item = g_object_new (KATZE_TYPE_ITEM,
+                    "uri", uri, "name", title, NULL);
                 katze_array_add_item (view->news_feeds, item);
                 g_object_unref (item);
                 if (!default_uri)
-                    default_uri = g_strdup (parts[0]);
+                    default_uri = uri;
+                else
+                    g_free (uri);
             }
             #if !WEBKIT_CHECK_VERSION (1, 1, 18)
             else
-                katze_assign (view->icon_uri, g_strdup (*parts));
+                katze_assign (view->icon_uri, g_strdup (uri_and_title));
             #endif
 
-            g_strfreev (parts);
-            i++;
+            current_item++;
         }
         g_strfreev (items);
+
         g_object_set_data_full (G_OBJECT (view), "news-feeds", default_uri, g_free);
         g_free (value);
         /* Ensure load-status is notified again, whether it changed or not */
         g_object_notify (G_OBJECT (view), "load-status");
     }
 
+    #if !WEBKIT_CHECK_VERSION (1, 4, 3)
     _midori_web_view_load_icon (view);
+    #endif
 
     g_object_thaw_notify (G_OBJECT (view));
 }
@@ -1622,6 +1615,13 @@ webkit_web_view_hovering_over_link_cb (WebKitWebView* web_view,
         g_object_set (view, "statusbar-text", link_uri, NULL);
 }
 
+static gboolean
+midori_view_always_same_tab (const gchar* uri)
+{
+    /* No opening in tab, window or app for Javascript or mailto links */
+    return g_str_has_prefix (uri, "javascript:") || midori_uri_is_email (uri);
+}
+
 static void
 midori_view_ensure_link_uri (MidoriView* view,
                              gint        *x,
@@ -1660,9 +1660,9 @@ midori_view_ensure_link_uri (MidoriView* view,
     | GDK_MOD1_MASK | GDK_META_MASK | GDK_SUPER_MASK | GDK_HYPER_MASK )
 
 static gboolean
-gtk_widget_button_press_event_cb (WebKitWebView*  web_view,
-                                  GdkEventButton* event,
-                                  MidoriView*     view)
+midori_view_web_view_button_press_event_cb (WebKitWebView*  web_view,
+                                            GdkEventButton* event,
+                                            MidoriView*     view)
 {
     GtkClipboard* clipboard;
     gchar* uri;
@@ -1673,12 +1673,17 @@ gtk_widget_button_press_event_cb (WebKitWebView*  web_view,
     event->state = event->state & MIDORI_KEYS_MODIFIER_MASK;
     midori_view_ensure_link_uri (view, NULL, NULL, event);
     link_uri = midori_view_get_link_uri (view);
+    view->button_press_handled = FALSE;
 
     switch (event->button)
     {
     case 1:
         if (!link_uri)
             return FALSE;
+
+        if (midori_view_always_same_tab (link_uri))
+            return FALSE;
+
         if (MIDORI_MOD_NEW_TAB (event->state))
         {
             /* Open link in new tab */
@@ -1686,23 +1691,29 @@ gtk_widget_button_press_event_cb (WebKitWebView*  web_view,
             if (MIDORI_MOD_BACKGROUND (event->state))
                 background = !background;
             g_signal_emit (view, signals[NEW_TAB], 0, link_uri, background);
+            view->button_press_handled = TRUE;
             return TRUE;
         }
         else if (MIDORI_MOD_NEW_WINDOW (event->state))
         {
             /* Open link in new window */
             g_signal_emit (view, signals[NEW_WINDOW], 0, link_uri);
+            view->button_press_handled = TRUE;
             return TRUE;
         }
         break;
     case 2:
         if (link_uri)
         {
+            if (midori_view_always_same_tab (link_uri))
+                return FALSE;
+
             /* Open link in new tab */
             background = view->open_tabs_in_the_background;
             if (MIDORI_MOD_BACKGROUND (event->state))
                 background = !background;
             g_signal_emit (view, signals[NEW_TAB], 0, link_uri, background);
+            view->button_press_handled = TRUE;
             return TRUE;
         }
         else if (MIDORI_MOD_SCROLL (event->state))
@@ -1766,6 +1777,7 @@ gtk_widget_button_press_event_cb (WebKitWebView*  web_view,
                     gtk_widget_grab_focus (GTK_WIDGET (view));
                 }
                 g_free (uri);
+                view->button_press_handled = TRUE;
                 return TRUE;
             }
         }
@@ -1778,14 +1790,17 @@ gtk_widget_button_press_event_cb (WebKitWebView*  web_view,
             midori_view_populate_popup (view, menu, TRUE);
             katze_widget_popup (GTK_WIDGET (web_view), GTK_MENU (menu), event,
                                 KATZE_MENU_POSITION_CURSOR);
+            view->button_press_handled = TRUE;
             return TRUE;
         }
         break;
     case 8:
         midori_view_go_back (view);
+        view->button_press_handled = TRUE;
         return TRUE;
     case 9:
         midori_view_go_forward (view);
+        view->button_press_handled = TRUE;
         return TRUE;
     /*
      * On some fancier mice the scroll wheel can be used to scroll horizontally.
@@ -1795,8 +1810,8 @@ gtk_widget_button_press_event_cb (WebKitWebView*  web_view,
      * accidentally being interpreted as first button clicks.
      */
     case 11:
-        return TRUE;
     case 12:
+        view->button_press_handled = TRUE;
         return TRUE;
     }
 
@@ -1804,6 +1819,17 @@ gtk_widget_button_press_event_cb (WebKitWebView*  web_view,
     g_signal_emit_by_name (view, "event", event, &background);
 
     return FALSE;
+}
+
+static gboolean
+midori_view_web_view_button_release_event_cb (WebKitWebView*  web_view,
+                                              GdkEventButton* event,
+                                              MidoriView*     view)
+{
+    gboolean button_press_handled = view->button_press_handled;
+    view->button_press_handled = FALSE;
+
+    return button_press_handled;
 }
 
 static gboolean
@@ -1829,7 +1855,7 @@ gtk_widget_key_press_event_cb (WebKitWebView* web_view,
     event->state = event->state & MIDORI_KEYS_MODIFIER_MASK;
 
     /* Handle oddities in Russian keyboard layouts */
-    if (event->hardware_keycode == ';')
+    if (event->hardware_keycode == ';' || event->hardware_keycode == '=')
         event->keyval = ',';
     else if (event->hardware_keycode == '<')
         event->keyval = '.';
@@ -2054,6 +2080,20 @@ midori_web_view_menu_image_save_activate_cb (GtkWidget*  widget,
 }
 
 static void
+midori_web_view_open_picture_cb (GtkWidget* widget,
+                                 MidoriView* view)
+{
+    gchar* uri = katze_object_get_string (view->hit_test, "image-uri");
+    WebKitNetworkRequest* request = webkit_network_request_new (uri);
+    WebKitDownload* download = webkit_download_new (request);
+    gboolean handled;
+    g_object_unref (request);
+    g_object_set_data (G_OBJECT (download), "open-in-viewer", (void*)0xdeadbeef);
+    g_signal_emit (view, signals[DOWNLOAD_REQUESTED], 0, download, &handled);
+    g_free (uri);
+}
+
+static void
 midori_web_view_menu_video_copy_activate_cb (GtkWidget*  widget,
                                              MidoriView* view)
 {
@@ -2224,6 +2264,7 @@ midori_view_populate_popup (MidoriView* view,
     WebKitWebView* web_view = WEBKIT_WEB_VIEW (view->web_view);
     GtkWidget* widget = GTK_WIDGET (view);
     MidoriBrowser* browser = midori_browser_get_for_widget (widget);
+    GdkWindowState state = gdk_window_get_state (gtk_widget_get_window (GTK_WIDGET (browser)));
     GtkActionGroup* actions = midori_browser_get_action_group (browser);
     GtkMenuShell* menu_shell = GTK_MENU_SHELL (menu);
     GtkWidget* menuitem;
@@ -2350,6 +2391,8 @@ midori_view_populate_popup (MidoriView* view,
     }
     if (view->link_uri)
     {
+        if (!midori_view_always_same_tab (view->link_uri))
+        {
         midori_view_insert_menu_item (menu_shell, -1,
             _("Open Link in New _Tab"), STOCK_TAB_NEW,
             G_CALLBACK (midori_web_view_menu_new_tab_activate_cb), widget);
@@ -2364,12 +2407,18 @@ midori_view_populate_popup (MidoriView* view,
         midori_view_insert_menu_item (menu_shell, -1,
             _("Open Link as Web A_pplication"), NULL,
             G_CALLBACK (midori_web_view_menu_web_app_activate_cb), widget);
+        }
+
         midori_view_insert_menu_item (menu_shell, -1,
             _("Copy Link de_stination"), NULL,
             G_CALLBACK (midori_web_view_menu_link_copy_activate_cb), widget);
+
+        if (!midori_view_always_same_tab (view->link_uri))
+        {
         midori_view_insert_menu_item (menu_shell, -1,
             NULL, GTK_STOCK_SAVE_AS,
             G_CALLBACK (midori_web_view_menu_save_activate_cb), widget);
+        }
     }
 
     if (is_image)
@@ -2385,6 +2434,9 @@ midori_view_populate_popup (MidoriView* view,
         midori_view_insert_menu_item (menu_shell, -1,
             _("Save I_mage"), GTK_STOCK_SAVE,
             G_CALLBACK (midori_web_view_menu_image_save_activate_cb), widget);
+        midori_view_insert_menu_item (menu_shell, -1,
+            _("Open in Image _Viewer"), GTK_STOCK_OPEN,
+            G_CALLBACK (midori_web_view_open_picture_cb), widget);
     }
 
     if (is_media)
@@ -2614,7 +2666,6 @@ midori_view_populate_popup (MidoriView* view,
         g_object_set_data (G_OBJECT (menuitem), "y", GINT_TO_POINTER (y));
     }
 
-    GdkWindowState state = gdk_window_get_state (gtk_widget_get_window (GTK_WIDGET (browser)));
     if (state & GDK_WINDOW_STATE_FULLSCREEN)
     {
         menuitem = sokoke_action_create_popup_menu_item (
@@ -2719,6 +2770,8 @@ webkit_web_view_mime_type_decision_cb (GtkWidget*               web_view,
     gchar* content_type;
     gchar* description;
     gchar* file_type;
+    gchar* file_name;
+    WebKitDownload *download;
     WebKitWebDataSource* datasource;
     WebKitNetworkRequest* original_request;
     const gchar* original_uri;
@@ -2750,7 +2803,7 @@ webkit_web_view_mime_type_decision_cb (GtkWidget*               web_view,
         webkit_web_view_set_view_source_mode (WEBKIT_WEB_VIEW (web_view), view_source);
 
         katze_assign (view->mime_type, g_strdup (mime_type));
-        midori_view_update_icon (view, NULL);
+        midori_view_unset_icon (view);
         g_object_notify (G_OBJECT (view), "mime-type");
 
         return FALSE;
@@ -2782,6 +2835,11 @@ webkit_web_view_mime_type_decision_cb (GtkWidget*               web_view,
         file_type = g_strdup_printf (_("File Type: %s ('%s')"), description, mime_type);
     g_free (description);
 
+    download = webkit_download_new (request);
+    file_name = g_strdup_printf (_("File Name: %s"),
+            webkit_download_get_suggested_filename (download));
+    g_object_unref (download);
+
     /* Link Fingerprint */
     /* We look at the original URI because redirection would lose the fragment */
     datasource = webkit_web_frame_get_provisional_data_source (web_frame);
@@ -2789,9 +2847,10 @@ webkit_web_view_mime_type_decision_cb (GtkWidget*               web_view,
     original_uri = webkit_network_request_get_uri (original_request);
     midori_uri_get_fingerprint (original_uri, &fingerprint, &fplabel);
     gtk_message_dialog_format_secondary_text (GTK_MESSAGE_DIALOG (dialog),
-        "%s\n%s %s", file_type, fplabel ? fplabel : "", fingerprint ? fingerprint : "");
+        "%s\n%s\n%s %s", file_name, file_type, fplabel ? fplabel : "", fingerprint ? fingerprint : "");
     g_free (fingerprint);
     g_free (fplabel);
+    g_free (file_name);
     g_free (file_type);
 
     gtk_window_set_skip_taskbar_hint (GTK_WINDOW (dialog), FALSE);
@@ -3410,21 +3469,21 @@ midori_view_web_inspector_construct_window (gpointer       inspector,
                                             MidoriView*    view)
 {
     gchar* title;
-    gchar* label;
+    const gchar* label;
     GtkWidget* window;
     GtkWidget* toplevel;
     GdkScreen* screen;
     gint width, height;
+    const gchar* icon_name;
     GtkIconTheme* icon_theme;
     GdkPixbuf* icon;
     GdkPixbuf* gray_icon;
 
-    label = g_strdup (midori_view_get_display_title (view));
+    label = midori_view_get_display_title (view);
     title = g_strdup_printf (_("Inspect page - %s"), label);
     window = gtk_window_new (GTK_WINDOW_TOPLEVEL);
     gtk_window_set_title (GTK_WINDOW (window), title);
     g_free (title);
-    g_free (label);
 
     toplevel = gtk_widget_get_toplevel (GTK_WIDGET (view));
     if (gtk_widget_is_toplevel (toplevel))
@@ -3438,9 +3497,10 @@ midori_view_web_inspector_construct_window (gpointer       inspector,
     }
 
     /* Attempt to make a gray version of the icon on the fly */
+    icon_name = gtk_window_get_icon_name (GTK_WINDOW (toplevel));
     icon_theme = gtk_icon_theme_get_for_screen (
         gtk_widget_get_screen (GTK_WIDGET (view)));
-    icon = gtk_icon_theme_load_icon (icon_theme, "midori", 32,
+    icon = gtk_icon_theme_load_icon (icon_theme, icon_name, 32,
         GTK_ICON_LOOKUP_USE_BUILTIN, NULL);
     if (icon)
     {
@@ -3454,7 +3514,10 @@ midori_view_web_inspector_construct_window (gpointer       inspector,
         g_object_unref (icon);
     }
     else
-        gtk_window_set_icon_name (GTK_WINDOW (window), "midori");
+        gtk_window_set_icon_name (GTK_WINDOW (window), icon_name);
+    #if GTK_CHECK_VERSION (3, 4, 0)
+    gtk_window_set_hide_titlebar_when_maximized (GTK_WINDOW (window), TRUE);
+    #endif
     gtk_container_add (GTK_CONTAINER (window), inspector_view);
     gtk_widget_show_all (window);
 
@@ -3581,7 +3644,9 @@ midori_view_construct_web_view (MidoriView* view)
                       "signal::hovering-over-link",
                       webkit_web_view_hovering_over_link_cb, view,
                       "signal::button-press-event",
-                      gtk_widget_button_press_event_cb, view,
+                      midori_view_web_view_button_press_event_cb, view,
+                      "signal::button-release-event",
+                      midori_view_web_view_button_release_event_cb, view,
                       "signal-after::key-press-event",
                       gtk_widget_key_press_event_cb, view,
                       "signal::scroll-event",
@@ -3633,6 +3698,8 @@ midori_view_construct_web_view (MidoriView* view)
 
 static gchar* list_netscape_plugins ()
 {
+    if (midori_web_settings_has_plugin_support ())
+    {
     GtkWidget* web_view = webkit_web_view_new ();
     WebKitWebFrame* web_frame = webkit_web_view_get_main_frame (WEBKIT_WEB_VIEW (web_view));
     JSContextRef js_context = webkit_web_frame_get_global_context (web_frame);
@@ -3644,7 +3711,7 @@ static gchar* list_netscape_plugins ()
         "plugins (navigator.plugins)", NULL);
     gchar** items = g_strsplit (value, ",", 0);
     guint i = 0;
-    GString* ns_plugins = g_string_new (NULL);
+    GString* ns_plugins = g_string_new ("<h2>Netscape Plugins:</h2><table>");
     if (items != NULL)
         while (items[i] != NULL)
         {
@@ -3662,10 +3729,14 @@ static gchar* list_netscape_plugins ()
         }
         if (g_str_has_prefix (value, "undefined"))
             g_string_append (ns_plugins, "<tr><td>No plugins found</td></tr>");
+        g_string_append (ns_plugins, "</table>");
         g_strfreev (items);
         g_free (value);
     gtk_widget_destroy (web_view);
     return g_string_free (ns_plugins, FALSE);
+    }
+    else
+        return g_strdup ("");
 }
 
 static gchar*
@@ -3677,13 +3748,14 @@ list_video_formats ()
     gchar* value = sokoke_js_script_eval (js_context,
         "var supported = function (format) { "
         "var video = document.createElement('video');"
-        "return !!video.canPlayType && video.canPlayType (format) != 'no' };"
-        "' H264: ' + "
-        "supported('video/mp4; codecs=\"avc1.42E01E, mp4a.40.2\"') + "
-        "' Ogg Theora: ' + "
-        "supported('video/ogg; codecs=\"theora, vorbis\"') + "
-        "' WebM: ' + "
-        "supported('video/webm; codecs=\"vp8, vorbis\"')"
+        "return !!video.canPlayType && video.canPlayType (format) != 'no' "
+        "? 'x' : '&nbsp;&nbsp;'; };"
+        "' H264 [' +"
+        "supported('video/mp4; codecs=\"avc1.42E01E, mp4a.40.2\"') + ']' + "
+        "' &nbsp; Ogg Theora [' + "
+        "supported('video/ogg; codecs=\"theora, vorbis\"') + ']' + "
+        "' &nbsp; WebM [' + "
+        "supported('video/webm; codecs=\"vp8, vorbis\"') + ']' "
         "", NULL);
     gtk_widget_destroy (web_view);
     return value;
@@ -3848,7 +3920,8 @@ midori_view_set_uri (MidoriView*  view,
             #endif
 
             katze_assign (view->uri, NULL);
-            katze_assign (view->mime_type, g_strdup ("text/html"));
+            katze_assign (view->mime_type, NULL);
+            katze_item_set_meta_integer (view->item, "delay", -1);
 
             if (speeddial_markup == NULL)
                 speeddial_markup = prepare_speed_dial_html (view, TRUE);
@@ -3898,6 +3971,7 @@ midori_view_set_uri (MidoriView*  view,
                     "<p><input type=\"radio\" value=\"demo\"%s> demo",
                     "<p><select%s><option>foo bar</option><option selected>spam eggs</option>",
                     "<p><input type=\"file\"%s>",
+                    "<p><input type=\"file\" multiple%s>",
                     "<input type=\"button\" value=\"demo\"%s>",
                     "<p><input type=\"email\" value=\"user@localhost.com\"%s>",
                     "<input type=\"url\" value=\"http://www.example.com\"%s>",
@@ -3915,24 +3989,49 @@ midori_view_set_uri (MidoriView*  view,
                 };
                 guint i;
                 GString* demo = g_string_new ("<html><head><style>"
-                    ".fallback, .fallback::-webkit-file-upload-button { "
+                    ".fallback::-webkit-slider-thumb,"
+                    ".fallback, .fallback::-webkit-file-upload-button {"
                     "-webkit-appearance: none !important }"
                     ".column { display:inline-block; vertical-align:top;"
                     "width:25%;margin-right:1% }</style><title>");
                 g_string_append_printf (demo,
                     "%s</title></head><body><h1>%s</h1>", uri, uri);
-                g_string_append (demo, "<div class=\"column\"");
+                g_string_append (demo, "<div class=\"column\">");
                 for (i = 0; i < G_N_ELEMENTS (widgets); i++)
                     g_string_append_printf (demo, widgets[i], "");
-                g_string_append (demo, "</div><div class=\"column\"");
+                g_string_append (demo, "</div><div class=\"column\">");
                 for (i = 0; i < G_N_ELEMENTS (widgets); i++)
                     g_string_append_printf (demo, widgets[i], " disabled");
-                g_string_append (demo, "</div><div class=\"column\"");
+                g_string_append (demo, "</div><div class=\"column\">");
                 for (i = 0; i < G_N_ELEMENTS (widgets); i++)
                     g_string_append_printf (demo, widgets[i], " class=\"fallback\"");
                 g_string_append (demo, "</div>");
                 katze_assign (view->uri, g_strdup (uri));
                 data = g_string_free (demo, FALSE);
+            }
+            else if (!strcmp (uri, "about:private"))
+            {
+                katze_assign (view->uri, g_strdup (""));
+                data = g_strdup_printf (
+                    "<html><head><title>%s</title>"
+                    "<link rel=\"stylesheet\" type=\"text/css\" href=\"res://about.css\">"
+                    "</head><body><div id=\"container\">"
+                    "<img id=\"logo\" src=\"res://logo-shade.png\">"
+                    "<img id=\"icon\" src=\"stock://gtk-dialog-info\">"
+                    "<div id=\"main\"><h1>%s</h1>"
+                    "<p>%s</p><ul><li>%s</li><li>%s</li><li>%s</li></ul>"
+                    "<p>%s</p><ul><li>%s</li><li>%s</li><li>%s</li><li>%s</li></ul>"
+                    "</div><br style=\"clear: both\"></div></body></html>",
+                    _("Private Browsing"), _("Private Browsing"),
+                    _("Midori doesn't store any personal data:"),
+                    _("No history or web cookies are being saved."),
+                    _("Extensions are disabled."),
+                    _("HTML5 storage, local database and application caches are disabled."),
+                    _("Midori prevents websites from tracking the user:"),
+                    _("Referrer URLs are stripped down to the hostname."),
+                    _("DNS prefetching is disabled."),
+                    _("The language and timezone are not revealed to websites."),
+                    _("Flash and other Netscape plugins cannot be listed by websites."));
             }
             else if (!strcmp (uri, "about:") || !strcmp (uri, "about:version"))
             {
@@ -3962,13 +4061,12 @@ midori_view_set_uri (MidoriView*  view,
                     "<tr><td>libsoup</td><td>%s</td></tr>"
                     "<tr><td>cairo</td><td>%s (%s)</td></tr>"
                     "<tr><td>libnotify</td><td>%s</td></tr>"
-                    "<tr><td>libunique</td><td>%s</td></tr>"
-                    "<tr><td>libhildon</td><td>%s</td></tr>"
+                    "<tr><td>single instance</td><td>%s</td></tr>"
                     "<tr><td>Platform</td><td>%s %s %s</td></tr>"
                     "<tr><td>Identification</td><td>%s</td></tr>"
                     "<tr><td>Video&nbsp;Formats</td><td>%s</td></tr>"
                     "</table>"
-                    "<h2>Netscape Plugins:</h2><table>%s</table>"
+                    "%s"
                     "</body></html>",
                     _("Version numbers in brackets show the version used at runtime."),
                     command_line,
@@ -3984,8 +4082,15 @@ midori_view_set_uri (MidoriView*  view,
                     LIBSOUP_VERSION,
                     CAIRO_VERSION_STRING, cairo_version_string (),
                     LIBNOTIFY_VERSION,
-                    UNIQUE_VERSION,
-                    HAVE_HILDON ? "Yes" : "No",
+                    #ifdef HAVE_HILDON_2_2
+                    "Hildon 2.2",
+                    #elif HAVE_HILDON
+                    "Hildon",
+                    #elif HAVE_UNIQUE
+                    "libunique " UNIQUE_VERSION,
+                    #else
+                    "Sockets",
+                    #endif
                     platform, sys_name, architecture ? architecture : "", ident,
                     video_formats, netscape_plugins);
                 g_free (command_line);
@@ -4007,6 +4112,7 @@ midori_view_set_uri (MidoriView*  view,
             webkit_web_view_load_html_string (
                 WEBKIT_WEB_VIEW (view->web_view), data, view->uri);
             g_free (data);
+            katze_item_set_meta_integer (view->item, "delay", -1);
             if (g_strcmp0 (view->item->uri, view->uri))
                 katze_item_set_uri (view->item, view->uri);
             g_object_notify (G_OBJECT (view), "uri");
@@ -4743,6 +4849,8 @@ midori_view_get_proxy_tab_label (MidoriView* view)
 
         g_signal_connect (event_box, "button-press-event",
             G_CALLBACK (midori_view_tab_label_button_press_event), view);
+        g_signal_connect (view->tab_close, "button-press-event",
+            G_CALLBACK (midori_view_tab_label_button_press_event), view);
         g_signal_connect (view->tab_close, "clicked",
             G_CALLBACK (midori_view_tab_close_clicked), view);
 
@@ -4918,6 +5026,121 @@ midori_view_can_save (MidoriView* view)
         return TRUE;
 
     return FALSE;
+}
+
+static gchar*
+midori_view_get_uri_extension (const gchar* uri)
+{
+    gchar* slash;
+    gchar* period;
+    gchar* ext_end;
+
+    /* Find the last slash in the URI and search for the last period
+       *after* the last slash. This is not completely accurate
+       but should cover most (simple) URIs */
+    slash = strrchr (uri, '/');
+    /* Huh, URI without slashes? */
+    if (!slash)
+        return NULL;
+
+    ext_end = period = strrchr (slash, '.');
+    if (!period)
+       return NULL;
+
+    /* Skip the period */
+    ext_end++;
+    /* If *ext_end is 0 here, the URI ended with a period, so skip */
+    if (!*ext_end)
+       return NULL;
+
+    /* Find the end of the extension */
+    while (*ext_end && g_ascii_isalnum (*ext_end))
+        ext_end++;
+
+    *ext_end = 0;
+    return g_strdup (period);
+}
+
+static const gchar*
+midori_view_fallback_extension (MidoriView* view,
+                                const gchar* extension)
+{
+    if (!view->mime_type)
+        extension = "";
+    if (extension && *extension)
+        return extension;
+    if (strstr (view->mime_type, "css"))
+        return ".css";
+    if (strstr (view->mime_type, "javascript"))
+        return ".js";
+    if (strstr (view->mime_type, "html"))
+        return ".htm";
+    return "";
+}
+
+/**
+ * midori_view_save_source:
+ * @view: a #MidoriView
+ * @uri: an alternative destination URI, or %NULL
+ * @outfile: a destination filename, or %NULL
+ *
+ * Saves the data in the view to disk.
+ *
+ * Return value: the destination filename
+ *
+ * Since: 0.4.4
+ **/
+gchar*
+midori_view_save_source (MidoriView* view,
+                         const gchar* uri,
+                         const gchar* outfile)
+{
+    WebKitWebFrame *frame;
+    WebKitWebDataSource *data_source;
+    const GString *data;
+    gchar* unique_filename;
+    gint fd;
+    FILE* fp;
+    size_t ret;
+
+    frame = webkit_web_view_get_main_frame (WEBKIT_WEB_VIEW (view->web_view));
+    data_source = webkit_web_frame_get_data_source (frame);
+    data = webkit_web_data_source_get_data (data_source);
+
+    if (uri == NULL)
+        uri = midori_view_get_display_uri (view);
+
+    if (!outfile)
+    {
+        gchar* extension = midori_view_get_uri_extension (uri);
+        gchar* filename = g_strdup_printf ("%uXXXXXX%s",
+            g_str_hash (uri), midori_view_fallback_extension (view, extension));
+        g_free (extension);
+        fd = g_file_open_tmp (filename, &unique_filename, NULL);
+        g_free (filename);
+    }
+    else
+    {
+        unique_filename = g_strdup (outfile);
+        fd = g_open (unique_filename, O_WRONLY|O_CREAT, 0644);
+    }
+
+    if (fd != -1)
+    {
+        if ((fp = fdopen (fd, "w")))
+        {
+            ret = fwrite (data->str, 1, data->len, fp);
+            fclose (fp);
+            if ((ret - data->len) != 0)
+            {
+                g_warning ("Error writing to file %s "
+                           "in midori_browser_source_transfer_cb()", unique_filename);
+                katze_assign (unique_filename, NULL);
+            }
+        }
+        close (fd);
+    }
+    return unique_filename;
 }
 
 #define can_do(what) \
@@ -5602,7 +5825,7 @@ midori_view_speed_dial_save (MidoriView*  view,
     action = parts[0];
 
     if (g_str_equal (action, "add") || g_str_equal (action, "rename")
-    ||  g_str_equal (action, "delete"))
+    ||  g_str_equal (action, "delete") || g_str_equal (action, "swap"))
     {
         gchar* tmp = g_strdup (parts[1] + 1);
         guint slot_id = atoi (tmp);
@@ -5632,6 +5855,30 @@ midori_view_speed_dial_save (MidoriView*  view,
             gchar* title = g_strdup (msg + offset);
             g_key_file_set_string (key_file, dial_id, "title", title);
             g_free (title);
+        }
+        else if (g_str_equal (action, "swap"))
+        {
+            gchar* tmp1 = g_strdup (parts[2] + 1);
+            guint slot2_id = atoi (tmp1);
+            gchar* dial2_id = g_strdup_printf ("Dial %d", slot2_id);
+            gchar* uri, *uri2, *title, *title2;
+            g_free (tmp1);
+
+            uri = g_key_file_get_string (key_file, dial_id, "uri", NULL);
+            title = g_key_file_get_string (key_file, dial_id, "title", NULL);
+            uri2 = g_key_file_get_string (key_file, dial2_id, "uri", NULL);
+            title2 = g_key_file_get_string (key_file, dial2_id, "title", NULL);
+
+            g_key_file_set_string (key_file, dial_id, "uri", uri2);
+            g_key_file_set_string (key_file, dial2_id, "uri", uri);
+            g_key_file_set_string (key_file, dial_id, "title", title2);
+            g_key_file_set_string (key_file, dial2_id, "title", title);
+
+            g_free (uri);
+            g_free (uri2);
+            g_free (title);
+            g_free (title2);
+            g_free (dial2_id);
         }
 
         g_free (dial_id);
