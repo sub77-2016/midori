@@ -58,6 +58,20 @@ G_BEGIN_DECLS
  **/
 #define katze_strv_assign(lvalue, rvalue) lvalue = (g_strfreev (lvalue), rvalue)
 
+/**
+ * katze_str_non_null:
+ * @str: a string, or %NULL
+ *
+ * Returns "" if @str is %NULL.
+ *
+ * Since: 0.4.4
+ **/
+static inline const gchar*
+katze_str_non_null (const gchar* str)
+{
+    return str ? str : "";
+}
+
 GtkWidget*
 katze_property_proxy                (gpointer     object,
                                      const gchar* property,
@@ -100,6 +114,9 @@ katze_bookmark_populate_tree_view    (KatzeArray* array,
 
 gchar*
 katze_strip_mnemonics                (const gchar*    original);
+
+const gchar*
+katze_skip_whitespace                (const gchar*    str);
 
 gboolean
 katze_object_has_property            (gpointer     object,

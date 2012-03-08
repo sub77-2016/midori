@@ -13,6 +13,7 @@
 #include <midori/midori.h>
 
 #define SM "http://www.searchmash.com/search/"
+#define HTTP_PREFIX "midori-unit-test-expected-http-prefix"
 
 static void
 test_input (const gchar* input,
@@ -20,6 +21,7 @@ test_input (const gchar* input,
 {
     static KatzeArray* search_engines = NULL;
     gchar* uri;
+    gchar* real_expected = NULL;
 
     if (G_UNLIKELY (!search_engines))
     {
@@ -41,28 +43,29 @@ test_input (const gchar* input,
     uri = sokoke_magic_uri (input);
     if (!uri)
     {
-        gchar** parts;
-        gchar* keywords = NULL;
+        const gchar* keywords = NULL;
         const gchar* search_uri = NULL;
+        KatzeItem* item;
 
         /* Do we have a keyword and a string? */
-        parts = g_strsplit (input, " ", 2);
-        if (parts[0])
+        if ((item = katze_array_find_token (search_engines, input)))
         {
-            KatzeItem* item;
-            if ((item = katze_array_find_token (search_engines, parts[0])))
-            {
-                keywords = g_strdup (parts[1] ? parts[1] : "");
-                search_uri = katze_item_get_uri (item);
-            }
+            keywords = strchr (input, ' ');
+            if (keywords != NULL)
+                keywords++;
+            else
+                keywords = "";
+            search_uri = katze_item_get_uri (item);
         }
-        g_strfreev (parts);
 
-        uri = keywords ? midori_uri_for_search (search_uri, keywords) : NULL;
-
-        g_free (keywords);
+        uri = search_uri ? midori_uri_for_search (search_uri, keywords) : NULL;
     }
-    katze_assert_str_equal (input, uri, expected);
+
+    if (!g_strcmp0 (expected, HTTP_PREFIX))
+        real_expected = g_strconcat ("http://", input, NULL);
+
+    katze_assert_str_equal (input, uri, real_expected ? real_expected : expected);
+    g_free (real_expected);
     g_free (uri);
 }
 
@@ -96,6 +99,13 @@ magic_uri_uri (void)
     test_input ("foo:123@bar.baz", "http://foo:123@bar.baz");
     /* test_input ("foo:f1o2o3@bar.baz", "http://f1o2o3:foo@bar.baz"); */
     /* test_input ("foo:foo@bar.baz", "http://foo:foo@bar.baz"); */
+
+    test_input ("2001:0db8:85a3:0000:0000:8a2e:0370:7334", HTTP_PREFIX);
+    test_input ("fe80:0:0:0:202:b3ff:fe1e:8329", HTTP_PREFIX);
+    test_input ("fe80::202:b3ff:fe1e:8329", HTTP_PREFIX);
+    test_input ("fe80::76e5:bff:fe04:38e0/64", HTTP_PREFIX);
+    test_input ("content::browser", NULL);
+    test_input ("std::copy", NULL);
 
     uri = "http://bugs.launchpad.net/midori";
     g_assert_cmpstr ("bugs.launchpad.net", ==, midori_uri_parse_hostname (uri, NULL));

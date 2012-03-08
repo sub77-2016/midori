@@ -13,6 +13,7 @@
 #include "midori-websettings.h"
 
 #include "sokoke.h"
+#include <midori/midori-core.h> /* Vala API */
 
 #include <glib/gi18n.h>
 #include <glib/gstdio.h>
@@ -85,6 +86,7 @@ struct _MidoriWebSettings
 
     gint clear_private_data;
     gchar* clear_data;
+    gchar* site_data_rules;
     #if !WEBKIT_CHECK_VERSION (1, 3, 13)
     gboolean enable_dns_prefetching;
     #endif
@@ -145,6 +147,8 @@ enum
     PROP_OPEN_TABS_NEXT_TO_CURRENT,
     PROP_OPEN_POPUPS_IN_TABS,
     PROP_FLASH_WINDOW_ON_BG_TABS,
+    PROP_ENABLE_WEBGL,
+    PROP_ENABLE_FULLSCREEN,
 
     PROP_AUTO_LOAD_IMAGES,
     PROP_ENABLE_SCRIPTS,
@@ -173,6 +177,7 @@ enum
 
     PROP_CLEAR_PRIVATE_DATA,
     PROP_CLEAR_DATA,
+    PROP_SITE_DATA_RULES,
     PROP_ENABLE_DNS_PREFETCHING,
     PROP_STRIP_REFERER,
     PROP_ENFORCE_FONT_FAMILY,
@@ -338,6 +343,21 @@ midori_get_download_dir (void)
         return dir;
     }
     return g_get_home_dir ();
+}
+static gboolean
+midori_web_settings_low_memory_profile ()
+{
+    gchar* contents;
+    const gchar* total;
+    if (!g_file_get_contents ("/proc/meminfo", &contents, NULL, NULL))
+        return FALSE;
+    if (contents && (total = strstr (contents, "MemTotal:")) && *total)
+    {
+        const gchar* value = katze_skip_whitespace (total + 9);
+        gdouble mem_total = g_ascii_strtoll (value, NULL, 0);
+        return mem_total / 1024.0 < 352 + 1;
+    }
+    return FALSE;
 }
 
 static void
@@ -727,13 +747,8 @@ midori_web_settings_class_init (MidoriWebSettingsClass* class)
                                      "enable-plugins",
                                      _("Enable Netscape plugins"),
                                      _("Enable embedded Netscape plugin objects"),
-    #ifdef G_OS_WIN32
-                                     FALSE,
-                                     G_PARAM_READABLE));
-    #else
-                                     TRUE,
-                                     flags));
-    #endif
+                                     midori_web_settings_has_plugin_support (),
+        midori_web_settings_has_plugin_support () ? flags : G_PARAM_READABLE));
     /* Override properties to override defaults */
     g_object_class_install_property (gobject_class,
                                      PROP_ENABLE_DEVELOPER_EXTRAS,
@@ -777,7 +792,7 @@ midori_web_settings_class_init (MidoriWebSettingsClass* class)
                                      g_param_spec_boolean ("enable-page-cache",
                                                            "Enable page cache",
                                                            "Whether the page cache should be used",
-                                                           TRUE,
+        !midori_web_settings_low_memory_profile (),
                                                            flags));
     #endif
     g_object_class_install_property (gobject_class,
@@ -788,6 +803,26 @@ midori_web_settings_class_init (MidoriWebSettingsClass* class)
                                      _("Flash the browser window if a new tab was opened in the background"),
                                      FALSE,
                                      flags));
+    if (g_object_class_find_property (gobject_class, "enable-webgl"))
+    g_object_class_install_property (gobject_class,
+                                     PROP_ENABLE_WEBGL,
+                                     g_param_spec_boolean (
+                                     "enable-webgl",
+                                     _("Enable WebGL support"),
+                                     _("Allow websites to use OpenGL rendering"),
+        /* Enable by default for git builds */
+        !g_str_equal (PACKAGE_VERSION, MIDORI_VERSION),
+                                     flags));
+    if (g_object_class_find_property (gobject_class, "enable-fullscreen"))
+    g_object_class_install_property (gobject_class,
+                                     PROP_ENABLE_FULLSCREEN,
+                                     g_param_spec_boolean (
+                                     "enable-fullscreen",
+                                     "Enable Fullscreen",
+                                     "Allow experimental fullscreen API",
+                                     TRUE,
+                                     flags));
+
 
     /**
      * MidoriWebSettings:zoom-text-and-images:
@@ -1021,6 +1056,22 @@ midori_web_settings_class_init (MidoriWebSettingsClass* class)
                                      _("The data selected for deletion"),
                                      NULL,
                                      flags));
+    /**
+     * MidoriWebSettings:site-data-rules:
+     *
+     * Rules for accepting, denying and preserving cookies and other data.
+     * See midori_web_settings_get_site_data_policy() for details.
+     *
+     * Since: 0.4.4
+     */
+    g_object_class_install_property (gobject_class,
+                                     PROP_SITE_DATA_RULES,
+                                     g_param_spec_string (
+                                     "site-data-rules",
+        "Rules for accepting, denying and preserving cookies and other data",
+        "Cookies, HTML5 databases, local storage and application cache blocking",
+                                     NULL,
+                                     flags));
     #if !WEBKIT_CHECK_VERSION (1, 3, 13)
     /**
      * MidoriWebSettings:enable-dns-prefetching:
@@ -1178,6 +1229,74 @@ midori_web_settings_finalize (GObject* object)
         g_hash_table_destroy (web_settings->user_stylesheets);
 
     G_OBJECT_CLASS (midori_web_settings_parent_class)->finalize (object);
+}
+
+/**
+ * midori_web_settings_has_plugin_support:
+ *
+ * Determines if Netscape plugins are supported.
+ *
+ * Returns: %TRUE if Netscape plugins can be used
+ *
+ * Since: 0.4.4
+ **/
+gboolean
+midori_web_settings_has_plugin_support (void)
+{
+    #ifdef G_OS_WIN32
+    return FALSE;
+    #else
+    return g_getenv ("MIDORI_UNARMED") == NULL
+        && g_strcmp0 (g_getenv ("MOZ_PLUGIN_PATH"), "/");
+    #endif
+}
+
+/**
+ * midori_web_settings_get_site_data_policy:
+ *
+ * Tests if @uri may store site data.
+ *
+ * Returns: a #MidoriSiteDataPolicy
+ *
+ * Since: 0.4.4
+ **/
+MidoriSiteDataPolicy
+midori_web_settings_get_site_data_policy (MidoriWebSettings* settings,
+                                          const gchar*       uri)
+{
+    MidoriSiteDataPolicy policy = MIDORI_SITE_DATA_UNDETERMINED;
+    gchar* hostname;
+    const gchar* match;
+
+    g_return_val_if_fail (MIDORI_IS_WEB_SETTINGS (settings), policy);
+
+    if (!(settings->site_data_rules && *settings->site_data_rules))
+        return policy;
+
+    /*
+     * Values prefixed with "-" are always blocked
+     * Values prefixed with "+" are always accepted
+     * Values prefixed with "!" are not cleared in Clear Private Data
+     * FIXME: "*" is a wildcard
+     * FIXME: indicate type of storage the rule applies to
+     * FIXME: support matching of the whole URI
+     **/
+    hostname = midori_uri_parse_hostname (uri, NULL);
+    match = strstr (settings->site_data_rules, hostname ? hostname : uri);
+    if (match != NULL && match != settings->site_data_rules)
+    {
+        const gchar* prefix = match - 1;
+        if (*prefix == '-')
+            policy = MIDORI_SITE_DATA_BLOCK;
+        else if (*prefix == '+')
+            policy = MIDORI_SITE_DATA_ACCEPT;
+        else if (*prefix == '!')
+            policy = MIDORI_SITE_DATA_PRESERVE;
+        else
+            g_warning ("%s: Matched with no prefix '%s'", G_STRFUNC, match);
+    }
+    g_free (hostname);
+    return policy;
 }
 
 #if (!HAVE_OSX && defined (G_OS_UNIX)) || defined (G_OS_WIN32)
@@ -1544,6 +1663,9 @@ midori_web_settings_set_property (GObject*      object,
     case PROP_CLEAR_DATA:
         katze_assign (web_settings->clear_data, g_value_dup_string (value));
         break;
+    case PROP_SITE_DATA_RULES:
+        katze_assign (web_settings->site_data_rules, g_value_dup_string (value));
+        break;
     #if !WEBKIT_CHECK_VERSION (1, 3, 13)
     case PROP_ENABLE_DNS_PREFETCHING:
         web_settings->enable_dns_prefetching = g_value_get_boolean (value);
@@ -1573,6 +1695,14 @@ midori_web_settings_set_property (GObject*      object,
         break;
     case PROP_FLASH_WINDOW_ON_BG_TABS:
         web_settings->flash_window_on_bg_tabs = g_value_get_boolean (value);
+        break;
+    case PROP_ENABLE_WEBGL:
+        g_object_set (web_settings, "WebKitWebSettings::enable-webgl",
+                      g_value_get_boolean (value), NULL);
+        break;
+    case PROP_ENABLE_FULLSCREEN:
+        g_object_set (web_settings, "WebKitWebSettings::enable-fullscreen",
+                      g_value_get_boolean (value), NULL);
         break;
     case PROP_USER_STYLESHEET_URI:
         {
@@ -1845,6 +1975,9 @@ midori_web_settings_get_property (GObject*    object,
     case PROP_CLEAR_DATA:
         g_value_set_string (value, web_settings->clear_data);
         break;
+    case PROP_SITE_DATA_RULES:
+        g_value_set_string (value, web_settings->site_data_rules);
+        break;
     #if !WEBKIT_CHECK_VERSION (1, 3, 13)
     case PROP_ENABLE_DNS_PREFETCHING:
         g_value_set_boolean (value, web_settings->enable_dns_prefetching);
@@ -1858,6 +1991,14 @@ midori_web_settings_get_property (GObject*    object,
         break;
     case PROP_FLASH_WINDOW_ON_BG_TABS:
         g_value_set_boolean (value, web_settings->flash_window_on_bg_tabs);
+        break;
+    case PROP_ENABLE_WEBGL:
+        g_value_set_boolean (value, katze_object_get_boolean (web_settings,
+            "WebKitWebSettings::enable-webgl"));
+        break;
+    case PROP_ENABLE_FULLSCREEN:
+        g_value_set_boolean (value, katze_object_get_boolean (web_settings,
+            "WebKitWebSettings::enable-fullscreen"));
         break;
     case PROP_USER_STYLESHEET_URI:
         g_value_take_string (value, katze_object_get_string (web_settings,

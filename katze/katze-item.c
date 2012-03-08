@@ -315,6 +315,8 @@ katze_item_set_name (KatzeItem*   item,
     g_return_if_fail (KATZE_IS_ITEM (item));
 
     katze_assign (item->name, g_strdup (name));
+    if (item->parent)
+        katze_array_update ((KatzeArray*)item->parent);
     g_object_notify (G_OBJECT (item), "name");
 }
 
@@ -414,7 +416,49 @@ katze_item_set_icon (KatzeItem*   item,
     g_return_if_fail (KATZE_IS_ITEM (item));
 
     katze_item_set_meta_string (item, "icon", icon);
+    if (item->parent)
+        katze_array_update ((KatzeArray*)item->parent);
     g_object_notify (G_OBJECT (item), "icon");
+}
+
+/**
+ * katze_item_get_image:
+ * @item: a #KatzeItem
+ *
+ * Retrieves a #GtkImage fit to display @item.
+ *
+ * Return value: the icon of the item
+ *
+ * Since: 0.4.4
+ **/
+GtkWidget*
+katze_item_get_image (KatzeItem* item)
+{
+    GtkWidget* image;
+    GdkPixbuf* pixbuf;
+    const gchar* icon;
+
+    g_return_val_if_fail (KATZE_IS_ITEM (item), NULL);
+
+    if (KATZE_ITEM_IS_FOLDER (item))
+        image = gtk_image_new_from_stock (GTK_STOCK_DIRECTORY, GTK_ICON_SIZE_MENU);
+    else if ((pixbuf = g_object_get_data (G_OBJECT (item), "pixbuf")))
+        image = gtk_image_new_from_pixbuf (pixbuf);
+    else if ((icon = katze_item_get_icon (item)) && !strchr (icon, '/'))
+        image = gtk_image_new_from_icon_name (icon, GTK_ICON_SIZE_MENU);
+    else
+    {
+        if (!(icon && (pixbuf = katze_load_cached_icon (icon, NULL))))
+            pixbuf = katze_load_cached_icon (item->uri, NULL);
+        if (pixbuf)
+        {
+            image = gtk_image_new_from_pixbuf (pixbuf);
+            g_object_unref (pixbuf);
+        }
+        else
+            image = gtk_image_new_from_stock (GTK_STOCK_FILE, GTK_ICON_SIZE_MENU);
+    }
+    return image;
 }
 
 /**
@@ -527,17 +571,22 @@ katze_item_set_meta_data_value (KatzeItem*   item,
  * Return value: a string, or %NULL
  *
  * Since: 0.1.8
+ *
+ * Since 0.4.4 "" is treated like %NULL.
  **/
 const gchar*
 katze_item_get_meta_string (KatzeItem*   item,
                             const gchar* key)
 {
+    const gchar* value;
+
     g_return_val_if_fail (KATZE_IS_ITEM (item), NULL);
     g_return_val_if_fail (key != NULL, NULL);
 
     if (g_str_has_prefix (key, "midori:"))
         key = &key[7];
-    return g_hash_table_lookup (item->metadata, key);
+    value = g_hash_table_lookup (item->metadata, key);
+    return value && *value ? value : NULL;
 }
 
 /**
