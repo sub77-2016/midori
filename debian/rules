@@ -23,16 +23,16 @@ endif
 %:
 	dh $@
 
-WAF=./waf.regen
+WAF=./waf
 
-$(WAF): waf
-	# rebuild the waf script
-	sed < waf -e '1,/^#==>$$/ d' -e '/^#<==$$/ d' | tr -d '\n' | sed -e 's/.//' -e 's/#[*]/\n/g' -e 's/#%/\r/g' > waf.orig.tar.bz2
-	(sed -n < waf -e '1,/^#==>$$/ p'; echo REPLACED BY ENCODED TAR.BZ2; sed -n < waf -e '/^#<==$$/ p') > waf.hdr
-	(sed -n < waf.hdr -e '1,/^#==>$$/ p'; printf '#'; perl -pe < waf.orig.tar.bz2 's/\n/#*/g; s/\r/#%/g;'; echo; sed -n < waf.hdr  -e '/^#<==$$/ p') > waf.regen
-	chmod 755 waf.regen
-	# ensure both scripts are the same
-	cmp waf waf.regen && (rm waf.hdr waf.orig.tar.bz2)
+#$(WAF): waf
+#	# rebuild the waf script
+#	sed < waf -e '1,/^#==>$$/ d' -e '/^#<==$$/ d' | tr -d '\n' | sed -e 's/.//' -e 's/#[*]/\n/g' -e 's/#%/\r/g' > waf.orig.tar.bz2
+#	(sed -n < waf -e '1,/^#==>$$/ p'; echo REPLACED BY ENCODED TAR.BZ2; sed -n < waf -e '/^#<==$$/ p') > waf.hdr
+#	(sed -n < waf.hdr -e '1,/^#==>$$/ p'; printf '#'; perl -pe < waf.orig.tar.bz2 's/\n/#*/g; s/\r/#%/g;'; echo; sed -n < waf.hdr  -e '/^#<==$$/ p') > waf.regen
+#	chmod 755 waf.regen
+#	# ensure both scripts are the same
+#	cmp waf waf.regen && (rm waf.hdr waf.orig.tar.bz2)
 
 debian/presubj: debian/presubj.in
 	@echo "presubj parameters:"
@@ -46,14 +46,13 @@ debian/presubj: debian/presubj.in
 override_dh_install: debian/presubj
 	$(CMD) --fail-missing
 
-override_dh_auto_clean: $(WAF)
+override_dh_auto_clean:
 	$(WAF) --nocache distclean
 	rm -rf _build_
 	rm -rf .waf*
 	rm -rf .lock-wscript
-	rm -f $(WAF)
 
-override_dh_auto_configure: $(WAF)
+override_dh_auto_configure:
 	$(WAF) --nocache configure --debug-level=none --prefix /usr
 
 override_dh_auto_build:
