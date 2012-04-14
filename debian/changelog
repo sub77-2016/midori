@@ -1,4 +1,4 @@
-midori (0.4.4-1) UNRELEASED; urgency=low
+midori (0.4.4-1) unstable; urgency=low
 
   * New upstream release.
   * Apply patch from Colin Watson to improve conffile handling, using new
@@ -9,7 +9,7 @@ midori (0.4.4-1) UNRELEASED; urgency=low
     - handle the /etc/xdg/midori/extensions/libadblock.so removal there.
                                                                 closes: #660303
 
- -- Yves-Alexis Perez <corsac@debian.org>  Thu, 08 Mar 2012 23:42:54 +0100
+ -- Yves-Alexis Perez <corsac@debian.org>  Sat, 14 Apr 2012 14:47:59 +0200
 
 midori (0.4.3-1) unstable; urgency=low
 
