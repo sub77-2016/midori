@@ -39,6 +39,7 @@ static GHashTable* keys = NULL;
 static GHashTable* optslist = NULL;
 static GHashTable* urlcache = NULL;
 static GHashTable* blockcssprivate = NULL;
+static GHashTable* navigationwhitelist = NULL;
 static GString* blockcss = NULL;
 #ifdef G_ENABLE_DEBUG
 static guint debug;
@@ -127,6 +128,8 @@ adblock_destroy_db ()
     urlcache = NULL;
     g_hash_table_destroy (blockcssprivate);
     blockcssprivate = NULL;
+    g_hash_table_destroy (navigationwhitelist);
+    navigationwhitelist = NULL;
 }
 
 static void
@@ -146,6 +149,9 @@ adblock_init_db ()
                    (GDestroyNotify)g_free);
     blockcssprivate = g_hash_table_new_full (g_str_hash, g_str_equal,
                    (GDestroyNotify)g_free,
+                   (GDestroyNotify)g_free);
+    navigationwhitelist = g_hash_table_new_full (g_direct_hash, g_str_equal,
+                   NULL,
                    (GDestroyNotify)g_free);
 
     if (blockcss && blockcss->len > 0)
@@ -779,6 +785,23 @@ adblock_prepare_urihider_js (GList* uris)
     return g_string_free (js, FALSE);
 }
 
+static gboolean
+adblock_navigation_policy_decision_requested_cb (WebKitWebView*             web_view,
+                                                 WebKitWebFrame*            web_frame,
+                                                 WebKitNetworkRequest*      request,
+                                                 WebKitWebNavigationAction* action,
+                                                 WebKitWebPolicyDecision*   decision,
+                                                 MidoriView*                view)
+{
+    if (web_frame == webkit_web_view_get_main_frame (web_view))
+    {
+        const gchar* req_uri = webkit_network_request_get_uri (request);
+        g_hash_table_replace (navigationwhitelist, web_view, g_strdup (req_uri));
+    }
+    return false;
+}
+
+
 static void
 adblock_resource_request_starting_cb (WebKitWebView*         web_view,
                                       WebKitWebFrame*        web_frame,
@@ -798,6 +821,10 @@ adblock_resource_request_starting_cb (WebKitWebView*         web_view,
         return;
 
     req_uri = webkit_network_request_get_uri (request);
+
+    if (!g_strcmp0 (req_uri, g_hash_table_lookup (navigationwhitelist, web_view)))
+        return;
+
     if (!midori_uri_is_http (req_uri)
      || g_str_has_suffix (req_uri, "favicon.ico"))
         return;
@@ -805,6 +832,15 @@ adblock_resource_request_starting_cb (WebKitWebView*         web_view,
     msg = webkit_network_request_get_message (request);
     if (!(msg && !g_strcmp0 (msg->method, "GET")))
         return;
+
+    if (response != NULL) /* request is caused by redirect */
+    {
+        if (web_frame == webkit_web_view_get_main_frame (web_view))
+        {
+            g_hash_table_replace (navigationwhitelist, web_view, g_strdup (req_uri));
+            return;
+        }
+    }
 
     #ifdef G_ENABLE_DEBUG
     if (debug == 2)
@@ -877,16 +913,16 @@ adblock_custom_block_image_cb (GtkWidget*       widget,
 
     custom_list = g_build_filename (midori_extension_get_config_dir (extension),
                                     CUSTOM_LIST_NAME, NULL);
-    if (!(list = g_fopen (custom_list, "a+")))
+    katze_mkdir_with_parents (midori_extension_get_config_dir (extension), 0700);
+    if ((list = g_fopen (custom_list, "a+")))
     {
-        g_free (custom_list);
-        return;
+        g_fprintf (list, "%s\n", gtk_entry_get_text (GTK_ENTRY (entry)));
+        fclose (list);
+        adblock_reload_rules (extension, TRUE);
+        g_debug ("%s: Updated custom list\n", G_STRFUNC);
     }
-
-    g_fprintf (list, "%s\n", gtk_entry_get_text (GTK_ENTRY (entry)));
-    fclose (list);
-    adblock_reload_rules (extension, TRUE);
-
+    else
+        g_debug ("%s: Failed to open custom list %s\n", G_STRFUNC, custom_list);
     g_free (custom_list);
     gtk_widget_destroy (dialog);
 }
@@ -983,6 +1019,8 @@ adblock_add_tab_cb (MidoriBrowser*   browser,
 
     g_signal_connect_after (web_view, "populate-popup",
         G_CALLBACK (adblock_populate_popup_cb), extension);
+    g_signal_connect (web_view, "navigation-policy-decision-requested",
+        G_CALLBACK (adblock_navigation_policy_decision_requested_cb), view);
     g_signal_connect (web_view, "resource-request-starting",
         G_CALLBACK (adblock_resource_request_starting_cb), image);
     g_signal_connect (web_view, "load-finished",
@@ -990,16 +1028,17 @@ adblock_add_tab_cb (MidoriBrowser*   browser,
 }
 
 static void
-adblock_deactivate_cb (MidoriExtension* extension,
-                       MidoriBrowser*   browser);
+adblock_remove_tab_cb (MidoriBrowser*   browser,
+                       MidoriView*      view,
+                       MidoriExtension* extension)
+{
+    GtkWidget* web_view = midori_view_get_web_view (view);
+    g_hash_table_remove (navigationwhitelist, web_view);
+}
 
 static void
-adblock_add_tab_foreach_cb (MidoriView*      view,
-                            MidoriBrowser*   browser,
-                            MidoriExtension* extension)
-{
-    adblock_add_tab_cb (browser, view, extension);
-}
+adblock_deactivate_cb (MidoriExtension* extension,
+                       MidoriBrowser*   browser);
 
 static void
 adblock_app_add_browser_cb (MidoriApp*       app,
@@ -1008,6 +1047,8 @@ adblock_app_add_browser_cb (MidoriApp*       app,
 {
     GtkWidget* statusbar;
     GtkWidget* image;
+    GtkWidget* view;
+    gint i;
 
     statusbar = katze_object_get_object (browser, "statusbar");
     image = NULL;
@@ -1017,10 +1058,14 @@ adblock_app_add_browser_cb (MidoriApp*       app,
     g_object_set_data_full (G_OBJECT (browser), "status-image", image,
                             (GDestroyNotify)gtk_widget_destroy);
 
-    midori_browser_foreach (browser,
-          (GtkCallback)adblock_add_tab_foreach_cb, extension);
+    i = 0;
+    while((view = midori_browser_get_nth_tab(browser, i++)))
+        adblock_add_tab_cb (browser, MIDORI_VIEW (view), extension);
+
     g_signal_connect (browser, "add-tab",
         G_CALLBACK (adblock_add_tab_cb), extension);
+    g_signal_connect (browser, "remove-tab",
+        G_CALLBACK (adblock_remove_tab_cb), extension);
     g_signal_connect (extension, "open-preferences",
         G_CALLBACK (adblock_open_preferences_cb), extension);
     g_signal_connect (extension, "deactivate",
@@ -1284,7 +1329,7 @@ adblock_frame_add_private (const gchar* line,
             /* Ignore Firefox-specific option */
             if (!g_strcmp0 (domain, "~pregecko2"))
                 continue;
-            /* strip ~ from domain */
+            /* FIXME: ~ should negate match */
             if (domain[0] == '~')
                 domain++;
             adblock_update_css_hash (g_strstrip (domain), data[1]);
@@ -1301,6 +1346,88 @@ adblock_frame_add_private (const gchar* line,
 static gchar*
 adblock_parse_line (gchar* line)
 {
+    /*
+     * AdblockPlus rule reference based on http://adblockplus.org/en/filters
+     * Block URL:
+     *   http://example.com/ads/banner123.gif
+     *   http://example.com/ads/banner*.gif
+     *   http://example.com/ads/*
+     * Partial match for "ad":
+     *   *ad*
+     *   ad
+     * Block example.com/annoyingflash.swf but not example.com/swf/:
+     *   swf|
+     * Block bad.example/banner.gif but not good.example/analyze?http://bad.example:
+     *   |http://baddomain.example/
+     * Block http(s) example.com but not badexample.com or good.example/analyze?http://bad.example:
+     *   ||example.com/banner.gif
+     * Block example.com/ and example.com:8000/ but not example.com.ar/:
+     *   http://example.com^
+     * A ^ matches anything that isn't A-Za-z0-0_-.%
+     * Block example.com:8000/foo.bar?a=12&b=%D1%82%D0%B5:
+     *   ^example.com^
+     *   ^%D1%82%D0%B5^
+     *   ^foo.bar^
+     * TODO: ^ is partially supported by Midori
+     * Block banner123 and banner321 with a regex:
+     *   /banner\d+/
+     * Never block URIs with "advice":
+     *   @@advice
+     * No blocking at all:
+     *   @@http://example.com
+     *   @@|http://example.com
+     * TODO: @@ is currently ignored by Midori.
+     * Element hiding by class:
+     *   ##textad
+     *   ##div.textad
+     * Element hiding by id:
+     *   ##div#sponsorad
+     *   ##*#sponsorad
+     * Match example.com/ and something.example.com/ but not example.org/
+     *   example.com##*.sponsor
+     * Match multiple domains:
+     *   domain1.example,domain2.example,domain3.example##*.sponsor
+     * Match on any domain but "example.com":
+     *  ~example.com##*.sponsor
+     * Match on "example.com" except "foo.example.com":
+     *   example.com,~foo.example.com##*.sponsor
+     * By design rules only apply to full domain names:
+     *   "domain" is NOT equal to "domain.example,domain.test."
+     * In Firefox rules can apply to browser UI:
+     *   browser##menuitem#javascriptConsole will hide the Console menuitem
+     * Hide tables with width attribute 80%:
+     *   ##table[width="80%"]
+     * Hide all div with title attribute containing "adv":
+     *   ##div[title*="adv"]
+     * Hide div with title starting with "adv" and ending with "ert":
+     *   ##div[title^="adv"][title$="ert"]
+     * Match tables with width attribute 80% and bgcolor attribute white:
+     *   table[width="80%"][bgcolor="white"]
+     * TODO: [] is currently ignored by Midori
+     * Hide anything following div with class "adheader":
+     *   ##div.adheader + *
+     * Old CSS element hiding syntax, officially deprecated:
+     *   #div(id=foo)
+     * Match anything but "example.com"
+     *   ~example.com##*.sponsor
+     * TODO: ~ is currently ignored by Midori
+     * Match "example.com" domain except "foo.example.com":
+     *   example.com,~foo.example.com##*.sponsor
+     * ! Comment
+     * Supported options after a trailing $:
+     *   domain,third-party,~pregecko2
+     * Official options (not all supported by Midori):
+     *   script,image,stylesheet,object,xmlhttprequest,object-subrequest,
+     *   subdocument,document,elemhide,popup,third-party,sitekey,match-case
+     *   collapse,donottrack,pregecko2
+     * Deprecated:
+     *   background,xbl,ping,dtd
+     * Inverse options:
+     *   ~script,~image,~stylesheet,~object,~xmlhttprequest,~collapse,
+     *   ~object-subrequest,~subdocument,~document,~elemhide,~third-party,
+     *   ~pregecko2
+     **/
+
     /* Skip invalid, empty and comment lines */
     if (!(line && line[0] != ' ' && line[0] != '!' && line[0]))
         return NULL;
@@ -1377,8 +1504,6 @@ adblock_deactivate_tabs (MidoriView*      view,
     GtkWidget* image = g_object_get_data (G_OBJECT (browser), "status-image");
 
     g_signal_handlers_disconnect_by_func (
-       browser, adblock_add_tab_cb, extension);
-    g_signal_handlers_disconnect_by_func (
        web_view, adblock_window_object_cleared_cb, 0);
     g_signal_handlers_disconnect_by_func (
        web_view, adblock_populate_popup_cb, extension);
@@ -1386,12 +1511,16 @@ adblock_deactivate_tabs (MidoriView*      view,
        web_view, adblock_resource_request_starting_cb, image);
     g_signal_handlers_disconnect_by_func (
        web_view, adblock_load_finished_cb, image);
+    g_signal_handlers_disconnect_by_func (
+            web_view, adblock_navigation_policy_decision_requested_cb, view);
 }
 
 static void
 adblock_deactivate_cb (MidoriExtension* extension,
                        MidoriBrowser*   browser)
 {
+    gint i;
+    GtkWidget* view;
     MidoriApp* app = midori_extension_get_app (extension);
     MidoriWebSettings* settings = katze_object_get_object (app, "settings");
 
@@ -1403,7 +1532,12 @@ adblock_deactivate_cb (MidoriExtension* extension,
         app, adblock_app_add_browser_cb, extension);
     g_signal_handlers_disconnect_by_func (
         browser, adblock_add_tab_cb, extension);
-    midori_browser_foreach (browser, (GtkCallback)adblock_deactivate_tabs, browser);
+    g_signal_handlers_disconnect_by_func (
+        browser, adblock_remove_tab_cb, extension);
+
+    i = 0;
+    while((view = midori_browser_get_nth_tab(browser, i++)))
+        adblock_deactivate_tabs (MIDORI_VIEW (view), browser, extension);
 
     adblock_destroy_db ();
     midori_web_settings_remove_style (settings, "adblock-blockcss");

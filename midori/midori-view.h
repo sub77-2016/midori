@@ -96,6 +96,10 @@ void
 midori_view_set_uri                    (MidoriView*        view,
                                         const gchar*       uri);
 
+void
+midori_view_set_overlay_text           (MidoriView*        view,
+                                        const gchar*       text);
+
 gboolean
 midori_view_is_blank                   (MidoriView*        view);
 
@@ -179,6 +183,14 @@ midori_view_can_go_forward             (MidoriView*        view);
 void
 midori_view_go_forward                 (MidoriView*        view);
 
+
+void midori_view_go_back_or_forward    (MidoriView*        view,
+                                        gint               steps);
+
+gboolean
+midori_view_can_go_back_or_forward     (MidoriView*        view,
+                                        gint               steps);
+
 const gchar*
 midori_view_get_previous_page          (MidoriView*        view);
 
@@ -235,6 +247,9 @@ midori_view_get_snapshot               (MidoriView*        view,
 
 GtkWidget*
 midori_view_get_web_view               (MidoriView*        view);
+
+MidoriView*
+midori_view_get_for_widget             (GtkWidget*         web_view);
 
 MidoriSecurity
 midori_view_get_security               (MidoriView*        view);

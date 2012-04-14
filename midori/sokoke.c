@@ -31,6 +31,7 @@
 #include <glib/gi18n.h>
 #include <glib/gprintf.h>
 #include <glib/gstdio.h>
+#include <webkit/webkit.h>
 
 #ifdef HAVE_HILDON_FM
     #include <hildon/hildon-file-chooser-dialog.h>
@@ -286,71 +287,12 @@ sokoke_show_uri (GdkScreen*   screen,
     return hildon_uri_open (uri, action, error);
 
     #elif defined (G_OS_WIN32)
+    CoInitializeEx (NULL, COINIT_APARTMENTTHREADED);
+    SHELLEXECUTEINFO info = { sizeof (info) };
+    info.nShow = SW_SHOWNORMAL;
+    info.lpFile = uri;
 
-    const gchar* fallbacks [] = { "explorer" };
-    gsize i;
-    GAppInfo *app_info;
-    GFile *file;
-    gchar *free_uri;
-
-    g_return_val_if_fail (GDK_IS_SCREEN (screen) || !screen, FALSE);
-    g_return_val_if_fail (uri != NULL, FALSE);
-    g_return_val_if_fail (!error || !*error, FALSE);
-
-    file = g_file_new_for_uri (uri);
-    app_info = g_file_query_default_handler (file, NULL, error);
-
-    if (app_info != NULL)
-    {
-        GdkAppLaunchContext *context;
-        gboolean result;
-        GList l;
-
-        context = gdk_app_launch_context_new ();
-        gdk_app_launch_context_set_screen (context, screen);
-        gdk_app_launch_context_set_timestamp (context, timestamp);
-
-        l.data = (char *)file;
-        l.next = l.prev = NULL;
-        result = g_app_info_launch (app_info, &l, (GAppLaunchContext*)context, error);
-
-        g_object_unref (context);
-        g_object_unref (app_info);
-        g_object_unref (file);
-
-        if (result)
-            return TRUE;
-    }
-    else
-        g_object_unref (file);
-
-    free_uri = g_filename_from_uri (uri, NULL, NULL);
-    if (free_uri)
-    {
-        gchar *quoted = g_shell_quote (free_uri);
-        uri = quoted;
-        g_free (free_uri);
-        free_uri = quoted;
-    }
-
-    for (i = 0; i < G_N_ELEMENTS (fallbacks); i++)
-    {
-        gchar* command = g_strconcat (fallbacks[i], " ", uri, NULL);
-        gboolean result = g_spawn_command_line_async (command, error);
-        g_free (command);
-        if (result)
-        {
-            g_free (free_uri);
-            return TRUE;
-        }
-        if (error)
-            *error = NULL;
-    }
-
-    g_free (free_uri);
-
-    return FALSE;
-
+    return ShellExecuteEx (&info);
     #else
 
     #if !GLIB_CHECK_VERSION (2, 28, 0)
@@ -1789,5 +1731,19 @@ sokoke_entry_set_clear_button_visible (GtkEntry* entry,
         gtk_icon_entry_set_icon_from_stock (
             GTK_ICON_ENTRY (entry), GTK_ICON_ENTRY_SECONDARY, NULL);
     }
+}
+
+gchar*
+sokoke_get_download_filename (WebKitDownload* download)
+{
+    /* https://bugs.webkit.org/show_bug.cgi?id=83161 */
+    /* https://d19vezwu8eufl6.cloudfront.net/nlp/slides%2F03-01-FormalizingNB.pdf */
+    gchar* filename = g_strdup (webkit_download_get_suggested_filename (download));
+    #ifdef G_OS_WIN32
+    g_strdelimit (filename, "/\\<>:\"|?*", '_');
+    #else
+    g_strdelimit (filename, "/", '_');
+    #endif
+    return filename;
 }
 
