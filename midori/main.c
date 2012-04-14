@@ -264,8 +264,24 @@ settings_save_to_file (MidoriWebSettings* settings,
     {
         KATZE_ARRAY_FOREACH_ITEM (extension, extensions)
             if (midori_extension_is_active (extension))
-                g_key_file_set_boolean (key_file, "extensions",
-                    g_object_get_data (G_OBJECT (extension), "filename"), TRUE);
+            {
+                const gchar* filename = g_object_get_data (
+                    G_OBJECT (extension), "filename");
+
+                gchar* key;
+                gchar* term;
+
+                key = katze_object_get_string (extension, "key");
+                if (key && *key)
+                    term = g_strdup_printf ("%s/%s", filename, key);
+                else
+                    term = g_strdup (filename);
+
+                g_key_file_set_boolean (key_file, "extensions", term, TRUE);
+
+                g_free (key);
+                g_free (term);
+            }
         g_object_unref (extensions);
     }
     else if ((_extensions = g_object_get_data (G_OBJECT (app), "extensions")))
@@ -441,9 +457,12 @@ midori_history_initialize (KatzeArray*  array,
         return FALSE;
     }
 
+    if (sqlite3_exec (db,
+        "PRAGMA journal_mode = WAL; PRAGMA cache_size = 32100;",
+        NULL, NULL, errmsg) != SQLITE_OK)
+        sqlite3_exec (db, "PRAGMA journal_mode = TRUNCATE;", NULL, NULL, errmsg);
     sqlite3_exec (db,
-        /* "PRAGMA synchronous = OFF; PRAGMA temp_store = MEMORY" */
-        "PRAGMA count_changes = OFF; PRAGMA journal_mode = TRUNCATE;",
+        "PRAGMA synchronous = NORMAL; PRAGMA temp_store = MEMORY;",
         NULL, NULL, errmsg);
     if (*errmsg)
     {
@@ -964,7 +983,7 @@ midori_soup_session_settings_accept_language_cb (SoupSession*       session,
             if (stripped_uri != NULL)
             {
                 gchar* stripped_referer;
-                soup_uri_set_path (stripped_uri, NULL);
+                soup_uri_set_path (stripped_uri, "");
                 soup_uri_set_query (stripped_uri, NULL);
                 stripped_referer = soup_uri_to_string (stripped_uri, FALSE);
                 soup_uri_free (stripped_uri);
@@ -1226,6 +1245,46 @@ midori_load_soup_session_full (gpointer settings)
     return FALSE;
 }
 
+static void
+midori_load_extension (MidoriApp*       app,
+                       KatzeArray*      extensions,
+                       gchar**          active_extensions,
+                       MidoriExtension* extension,
+                       const gchar*     filename)
+{
+    /* Signal that we want the extension to load and save */
+    g_object_set_data_full (G_OBJECT (extension), "filename",
+                            g_strdup (filename), g_free);
+    if (midori_extension_is_prepared (extension))
+        midori_extension_get_config_dir (extension);
+
+    katze_array_add_item (extensions, extension);
+    if (active_extensions)
+    {
+        guint i = 0;
+        gchar* key;
+        gchar* name;
+        gchar* term;
+
+        key = katze_object_get_string (extension, "key");
+        if (key && *key)
+            term = g_strdup_printf ("%s/%s", filename, key);
+        else
+            term = g_strdup (filename);
+
+        while ((name = active_extensions[i++]))
+            if (!g_strcmp0 (term, name))
+                g_signal_emit_by_name (extension, "activate", app);
+
+        g_free (key);
+        g_free (term);
+    }
+    g_signal_connect_after (extension, "activate",
+        G_CALLBACK (extension_activate_cb), app);
+    g_signal_connect_after (extension, "deactivate",
+        G_CALLBACK (extension_activate_cb), app);
+}
+
 static gboolean
 midori_load_extensions (gpointer data)
 {
@@ -1257,9 +1316,9 @@ midori_load_extensions (gpointer data)
             {
                 gchar* fullname;
                 GModule* module;
-                typedef MidoriExtension* (*extension_init_func)(void);
+                typedef GObject* (*extension_init_func)(void);
                 extension_init_func extension_init;
-                MidoriExtension* extension = NULL;
+                GObject* extension = NULL;
 
                 /* Ignore files which don't have the correct suffix */
                 if (!g_str_has_suffix (filename, G_MODULE_SUFFIX))
@@ -1275,11 +1334,22 @@ midori_load_extensions (gpointer data)
                     extension = extension_init ();
                     if (extension != NULL)
                     {
-                        /* Signal that we want the extension to load and save */
-                        g_object_set_data_full (G_OBJECT (extension), "filename",
-                                                g_strdup (filename), g_free);
-                        if (midori_extension_is_prepared (extension))
-                            midori_extension_get_config_dir (extension);
+                        if (MIDORI_IS_EXTENSION (extension))
+                            midori_load_extension (app, extensions,
+                                    active_extensions,
+                                    MIDORI_EXTENSION (extension), filename);
+                        else if (KATZE_IS_ARRAY (extension))
+                        {
+                            MidoriExtension* extension_item;
+                            KATZE_ARRAY_FOREACH_ITEM (extension_item, KATZE_ARRAY (extension))
+                            {
+                                if (MIDORI_IS_EXTENSION (extension_item))
+                                    midori_load_extension (app, extensions,
+                                            active_extensions, extension_item,
+                                            filename);
+                            }
+                        }
+
                     }
                 }
 
@@ -1294,20 +1364,8 @@ midori_load_extensions (gpointer data)
                                               "description", g_module_error (),
                                               NULL);
                     g_warning ("%s", g_module_error ());
+                    katze_array_add_item (extensions, extension);
                 }
-                katze_array_add_item (extensions, extension);
-                if (active_extensions)
-                {
-                    guint i = 0;
-                    gchar* name;
-                    while ((name = active_extensions[i++]))
-                        if (!g_strcmp0 (filename, name))
-                            g_signal_emit_by_name (extension, "activate", app);
-                }
-                g_signal_connect_after (extension, "activate",
-                    G_CALLBACK (extension_activate_cb), app);
-                g_signal_connect_after (extension, "deactivate",
-                    G_CALLBACK (extension_activate_cb), app);
                 g_object_unref (extension);
             }
             g_dir_close (extension_dir);
@@ -1515,7 +1573,8 @@ midori_prepare_uri (const gchar *uri)
 
     if (g_str_has_prefix(uri, "javascript:"))
         return NULL;
-    else if (g_file_test (uri, G_FILE_TEST_EXISTS | G_FILE_TEST_IS_REGULAR))
+    else if (g_file_test (uri, G_FILE_TEST_EXISTS | G_FILE_TEST_IS_REGULAR)
+         && !g_path_is_absolute (uri))
     {
         gchar* current_dir = g_get_current_dir ();
         uri_ready = g_strconcat ("file://", current_dir,
@@ -1572,7 +1631,7 @@ speeddial_new_from_file (const gchar* config,
     g_string_append_len (script, json_content, json_length);
     g_string_append (script, "); "
         "var keyfile = '';"
-        "for (i in json['shortcuts']) {"
+        "for (var i in json['shortcuts']) {"
         "var tile = json['shortcuts'][i];"
         "keyfile += '[Dial ' + tile['id'].substring (1) + ']\\n'"
         "        +  'uri=' + tile['href'] + '\\n'"
@@ -1991,10 +2050,14 @@ main (int    argc,
         return 1;
     }
 
+    /* Relative config path */
     if (config && !g_path_is_absolute (config))
     {
-        g_critical (_("The specified configuration folder is invalid."));
-        return 1;
+        gchar* old_config = config;
+        gchar* current_dir = g_get_current_dir ();
+        config = g_build_filename (current_dir, old_config, NULL);
+        g_free (current_dir);
+        g_free (old_config);
     }
 
     /* Private browsing, window title, default config folder */
@@ -2238,6 +2301,7 @@ main (int    argc,
             g_object_set (settings,
                           "show-menubar", FALSE,
                           "show-navigationbar", FALSE,
+                          "always-show-tabbar", FALSE,
                           "toolbar-items", "Back,Forward,ReloadStop,Location,Homepage",
                           "show-statusbar", FALSE,
                           "enable-developer-extras", FALSE,

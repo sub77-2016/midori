@@ -26,6 +26,10 @@
 #if defined (G_OS_UNIX)
     #include <sys/utsname.h>
 #endif
+#if defined(__FreeBSD__)
+    #include <sys/types.h>
+    #include <sys/sysctl.h>
+#endif
 
 struct _MidoriWebSettings
 {
@@ -347,6 +351,21 @@ midori_get_download_dir (void)
 static gboolean
 midori_web_settings_low_memory_profile ()
 {
+#ifdef _WIN32
+    /* See http://msdn.microsoft.com/en-us/library/windows/desktop/aa366589(v=vs.85).aspx */
+    MEMORYSTATUSEX mem;
+    mem.dwLength = sizeof (mem);
+    if (GlobalMemoryStatusEx (&mem))
+        return mem.ullTotalPhys / 1024 / 1024 < 352;
+#elif defined(__FreeBSD__)
+    size_t size;
+    int mem_total;
+    size = sizeof mem_total;
+
+    sysctlbyname("hw.realmem", &mem_total, &size, NULL, 0);
+
+    return mem_total / 1048576 < 352;
+#else
     gchar* contents;
     const gchar* total;
     if (!g_file_get_contents ("/proc/meminfo", &contents, NULL, NULL))
@@ -357,6 +376,7 @@ midori_web_settings_low_memory_profile ()
         gdouble mem_total = g_ascii_strtoll (value, NULL, 0);
         return mem_total / 1024.0 < 352 + 1;
     }
+#endif
     return FALSE;
 }
 
@@ -648,8 +668,13 @@ midori_web_settings_class_init (MidoriWebSettingsClass* class)
                                      "always-show-tabbar",
                                      _("Always Show Tabbar"),
                                      _("Always show the tabbar"),
-                                     FALSE,
-                                     flags));
+                                     TRUE,
+        #ifdef HAVE_GRANITE
+                                     G_PARAM_READABLE
+        #else
+                                     flags
+        #endif
+                                     ));
 
     g_object_class_install_property (gobject_class,
                                      PROP_CLOSE_BUTTONS_ON_TABS,
@@ -1200,6 +1225,14 @@ midori_web_settings_init (MidoriWebSettings* web_settings)
     /* Shadows are very slow with WebKitGTK+ 1.2.7 */
     midori_web_settings_add_style (web_settings, "box-shadow-workaround",
         "* { -webkit-box-shadow: none !important; }");
+    #endif
+
+    #if defined (_WIN32) && WEBKIT_CHECK_VERSION (1, 7, 1)
+    /* Try to work-around black borders on native widgets and GTK+2 on Win32 */
+    midori_web_settings_add_style (web_settings, "black-widgets-workaround",
+    "input[type='checkbox'] { -webkit-appearance: checkbox !important }"
+    " input[type='radio'] { -webkit-appearance: radio !important }"
+    " * { -webkit-appearance: none !important }");
     #endif
 
     g_signal_connect (web_settings, "notify::default-encoding",

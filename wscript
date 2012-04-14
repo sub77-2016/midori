@@ -29,7 +29,7 @@ from Configure import find_program_impl
 
 major = 0
 minor = 4
-micro = 4
+micro = 5
 
 APPNAME = 'midori'
 VERSION = VERSION_FULL = str (major) + '.' + str (minor) + '.' + str (micro)
@@ -45,7 +45,7 @@ except:
     pass
 
 srcdir = '.'
-blddir = '_build_'
+blddir = '_build' # recognized by ack
 
 def option_enabled (option):
     if getattr (Options.options, 'enable_' + option):
@@ -92,9 +92,21 @@ def configure (conf):
         conf.define (defname, dirvalue)
         return dirvalue
 
+    def check_version (given_version, major, minor, micro):
+        if '.' in given_version:
+            given_major, given_minor, given_micro = given_version.split ('.')
+        else:
+            given_major, given_minor, given_micro = given_version
+        return int(given_major) >  major or \
+               int(given_major) == major and int(given_minor) >  minor or \
+               int(given_major) == major and int(given_minor) == minor and int(given_micro) >= micro
+
     conf.check_tool ('compiler_cc')
     conf.check_tool ('vala')
     conf.check_tool ('glib2')
+    if not check_version (conf.env['VALAC_VERSION'], 0, 14, 0):
+        Utils.pprint ('RED', 'Vala 0.14.0 or later is required.')
+        sys.exit (1)
 
     if option_enabled ('nls'):
         conf.check_tool ('intltool')
@@ -169,15 +181,6 @@ def configure (conf):
             atleast_version=version, mandatory=mandatory)
         return conf.env['HAVE_' + var]
 
-    def check_version (given_version, major, minor, micro):
-        if '.' in given_version:
-            given_major, given_minor, given_micro = given_version.split ('.')
-        else:
-            given_major, given_minor, given_micro = given_version
-        return int(given_major) >  major or \
-               int(given_major) == major and int(given_minor) >  minor or \
-               int(given_major) == major and int(given_minor) == minor and int(given_micro) >= micro
-
     if option_enabled ('unique'):
         if option_enabled('gtk3'): unique_pkg = 'unique-3.0'
         else: unique_pkg = 'unique-1.0'
@@ -206,6 +209,25 @@ def configure (conf):
         conf.define ('LIBNOTIFY_VERSION', 'No')
     conf.define ('HAVE_LIBNOTIFY', [0,1][libnotify == 'yes'])
 
+    if option_enabled ('granite'):
+        if not option_enabled ('gtk3'):
+            if getattr (Options.options, 'enable_granite'):
+                Utils.pprint ('RED', 'Granite requires --enable-gtk3')
+                sys.exit (1)
+            else:
+                granite = 'no (requires --enable-gtk3)'
+        else:
+            check_pkg ('granite', '0.1', False)
+            granite = ['N/A', 'yes'][conf.env['HAVE_GRANITE'] == 1]
+        if granite != 'yes':
+            option_checkfatal ('granite', 'new notebook, pop-overs')
+            conf.define ('GRANITE_VERSION', 'No')
+        else:
+            conf.define ('GRANITE_VERSION', conf.check_cfg (modversion='granite'))
+    else:
+        granite = 'no '
+        conf.define ('GRANITE_VERSION', 'No')
+
     conf.check (lib='m', mandatory=True)
     check_pkg ('gmodule-2.0', '2.8.0', False)
     check_pkg ('gthread-2.0', '2.8.0', False)
@@ -220,12 +242,6 @@ def configure (conf):
                     includes='/usr/X11R6/include', mandatory=False)
         conf.check (lib='Xss', libpath='/usr/X11R6/lib', mandatory=False)
     if option_enabled ('gtk3'):
-        if option_enabled ('addons') and not check_version (conf.env['VALAC_VERSION'], 0, 13, 2):
-            Utils.pprint ('RED', 'Vala 0.13.2 or later is required ' \
-                'to build with GTK+ 3 and extensions.\n' \
-                'Pass --disable-addons to build without extensions.\n' \
-                'Pass --disable-gtk3 to build with extensions and GTK+ 2.')
-            sys.exit (1)
         check_pkg ('gtk+-3.0', '3.0.0', var='GTK', mandatory=False)
         check_pkg ('webkitgtk-3.0', '1.1.17', var='WEBKIT', mandatory=False)
         if not conf.env['HAVE_GTK'] or not conf.env['HAVE_WEBKIT']:
@@ -242,12 +258,13 @@ def configure (conf):
             check_pkg ('javascriptcoregtk-1.0', '1.5.1', args=args)
     conf.env['HAVE_GTK3'] = option_enabled ('gtk3')
     check_pkg ('libsoup-2.4', '2.27.90')
-    conf.define ('HAVE_LIBSOUP_2_25_2', 1)
-    conf.define ('HAVE_LIBSOUP_2_27_90', 1)
-    check_pkg ('libsoup-2.4', '2.29.3', False, var='LIBSOUP_2_29_3')
-    check_pkg ('libsoup-2.4', '2.29.91', False, var='LIBSOUP_2_29_91')
-    check_pkg ('libsoup-2.4', '2.37.1', False, var='LIBSOUP_2_37_1')
     conf.define ('LIBSOUP_VERSION', conf.check_cfg (modversion='libsoup-2.4'))
+    if check_version (conf.env['LIBSOUP_VERSION'], 2, 29, 3):
+        conf.define ('LIBSOUP_2_29_3', 1)
+    if check_version (conf.env['LIBSOUP_VERSION'], 2, 29, 91):
+        conf.define ('LIBSOUP_2_29_91', 1)
+    if check_version (conf.env['LIBSOUP_VERSION'], 2, 37, 1):
+        conf.define ('LIBSOUP_2_37_1', 1)
     check_pkg ('libxml-2.0', '2.6')
     check_pkg ('sqlite3', '3.0', True, var='SQLITE')
 
@@ -394,6 +411,7 @@ def set_options (opt):
     group = opt.add_option_group ('Optional features', '')
     add_enable_option ('unique', 'single instance support', group, disable=is_win32 (os.environ))
     add_enable_option ('libnotify', 'notification support', group)
+    add_enable_option ('granite', 'new notebook, pop-overs', group)
     add_enable_option ('addons', 'building of extensions', group)
     add_enable_option ('tests', 'building of tests', group, disable=True)
     add_enable_option ('hildon', 'Maemo integration', group, disable=not is_maemo ())

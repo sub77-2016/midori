@@ -115,6 +115,10 @@ namespace Midori {
         public string version { get; set; }
         [NoAccessorMethod]
         public string authors { get; set; }
+        [NoAccessorMethod]
+        public string website { get; set; }
+        [NoAccessorMethod]
+        public string key { get; set; }
 
         public signal void activate (Midori.App app);
         public signal void deactivate ();
@@ -162,6 +166,9 @@ namespace Midori {
         public string statusbar_text { get; }
         public WebSettings settings { get; set; }
         public GLib.Object net { get; }
+
+        [HasEmitter]
+        public signal bool download_requested (WebKit.Download download);
 
     }
 
