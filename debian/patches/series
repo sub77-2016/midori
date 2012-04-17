@@ -1,1 +1,2 @@
 add-debian-searches
+fix-libsoup-detect.patch

@@ -1,4 +1,4 @@
-midori (0.4.4-1) unstable; urgency=low
+midori (0.4.5-1) UNRELEASED; urgency=low
 
   * New upstream release.
   * Apply patch from Colin Watson to improve conffile handling, using new
@@ -8,6 +8,8 @@ midori (0.4.4-1) unstable; urgency=low
   * debian/midori.maintscript:
     - handle the /etc/xdg/midori/extensions/libadblock.so removal there.
                                                                 closes: #660303
+  * debian/patches:
+    - fix-libsoup detection added.
 
  -- Yves-Alexis Perez <corsac@debian.org>  Sat, 14 Apr 2012 14:47:59 +0200
 
