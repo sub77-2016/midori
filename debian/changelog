@@ -10,6 +10,8 @@ midori (0.4.5-1) UNRELEASED; urgency=low
                                                                 closes: #660303
   * debian/patches:
     - fix-libsoup detection added.
+    - force-ssl-cert-verification added, set ssl-strict to TRUE so connections
+      are not done if the ssl certificate can't be trusted.
 
  -- Yves-Alexis Perez <corsac@debian.org>  Sat, 14 Apr 2012 14:47:59 +0200
 

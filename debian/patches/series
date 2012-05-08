@@ -1,2 +1,3 @@
 add-debian-searches
 fix-libsoup-detect.patch
+force-ssl-cert-verification.patch
