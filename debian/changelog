@@ -1,4 +1,4 @@
-midori (0.4.5-1) UNRELEASED; urgency=low
+midori (0.4.6-1) UNRELEASED; urgency=low
 
   * New upstream release.
   * Apply patch from Colin Watson to improve conffile handling, using new
@@ -9,11 +9,11 @@ midori (0.4.5-1) UNRELEASED; urgency=low
     - handle the /etc/xdg/midori/extensions/libadblock.so removal there.
                                                                 closes: #660303
   * debian/patches:
-    - fix-libsoup detection added.
     - force-ssl-cert-verification added, set ssl-strict to TRUE so connections
       are not done if the ssl certificate can't be trusted.
+  * debian/compat bumped to 9.
 
- -- Yves-Alexis Perez <corsac@debian.org>  Sat, 14 Apr 2012 14:47:59 +0200
+ -- Yves-Alexis Perez <corsac@debian.org>  Tue, 15 May 2012 23:31:12 +0200
 
 midori (0.4.3-1) unstable; urgency=low
 
