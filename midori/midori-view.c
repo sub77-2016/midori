@@ -200,6 +200,13 @@ enum {
     LAST_SIGNAL
 };
 
+enum {
+    DOWNLOAD_SAVE = 1,
+    DOWNLOAD_SAVE_AS,
+    DOWNLOAD_CANCEL,
+    DOWNLOAD_OPEN,
+};
+
 static guint signals[LAST_SIGNAL];
 
 static gchar* speeddial_markup = NULL;
@@ -795,6 +802,7 @@ free_parts:
     g_strfreev (parts);
 }
 
+#if !WEBKIT_CHECK_VERSION (1, 8, 0)
 static gboolean
 katze_net_icon_status_cb (KatzeNetRequest*  request,
                           MidoriView*       view)
@@ -862,14 +870,24 @@ katze_net_icon_transfer_cb (KatzeNetRequest*  request,
     pixbuf_scaled = gdk_pixbuf_scale_simple (pixbuf, icon_width, icon_height, GDK_INTERP_BILINEAR);
     midori_view_apply_icon (view, pixbuf_scaled, view->icon_uri);
 }
+#endif
 
 static void
 _midori_web_view_load_icon (MidoriView* view)
 {
     GdkPixbuf* pixbuf = NULL;
     gint icon_width, icon_height;
-    GdkPixbuf* pixbuf_scaled;
     GtkSettings* settings;
+
+    #if WEBKIT_CHECK_VERSION (1, 8, 0)
+    settings = gtk_widget_get_settings (view->web_view);
+    gtk_icon_size_lookup_for_settings (settings, GTK_ICON_SIZE_MENU,
+                                       &icon_width, &icon_height);
+    if ((pixbuf = webkit_web_view_try_get_favicon_pixbuf (
+        WEBKIT_WEB_VIEW (view->web_view), 16, 16)))
+        midori_view_apply_icon (view, pixbuf, view->icon_uri);
+    #else
+    GdkPixbuf* pixbuf_scaled;
 
     if (!midori_uri_is_http (view->icon_uri))
         katze_assign (view->icon_uri, NULL);
@@ -925,6 +943,7 @@ _midori_web_view_load_icon (MidoriView* view)
         pixbuf = pixbuf_scaled;
         midori_view_apply_icon (view, pixbuf, view->icon_uri);
     }
+    #endif
 }
 
 static void
@@ -1024,6 +1043,9 @@ webkit_web_view_load_committed_cb (WebKitWebView*  web_view,
 {
     const gchar* uri;
     GList* children;
+
+    if (web_frame != webkit_web_view_get_main_frame (web_view))
+        return;
 
     g_object_freeze_notify (G_OBJECT (view));
 
@@ -1372,6 +1394,7 @@ midori_view_location_response_cb (GtkWidget*                       infobar,
         webkit_geolocation_policy_allow (decision);
     else
         webkit_geolocation_policy_deny (decision);
+    g_object_unref (decision);
 }
 
 static gboolean
@@ -1384,8 +1407,9 @@ midori_view_web_view_geolocation_decision_cb (WebKitWebView*                   w
     gchar* hostname = midori_uri_parse_hostname (uri, NULL);
     gchar* message = g_strdup_printf (_("%s wants to know your location."),
                                      hostname && *hostname ? hostname : uri);
+    /* FIXME: decision should be released even if neither buttons's pressed */
     midori_view_add_info_bar (view, GTK_MESSAGE_QUESTION,
-        message, G_CALLBACK (midori_view_location_response_cb), decision,
+        message, G_CALLBACK (midori_view_location_response_cb), g_object_ref (decision),
         _("_Deny"), GTK_RESPONSE_REJECT, _("_Allow"), GTK_RESPONSE_ACCEPT,
         NULL);
     g_free (hostname);
@@ -1463,13 +1487,15 @@ webkit_web_view_load_error_cb (WebKitWebView*  web_view,
     gchar* message;
     gboolean result;
 
+    /* The unholy trinity; also ignored in Webkit's default error handler */
     switch (error->code)
     {
     case WEBKIT_PLUGIN_ERROR_WILL_HANDLE_LOAD:
         /* A plugin will take over. That's expected, it's not fatal. */
-        return FALSE;
     case WEBKIT_NETWORK_ERROR_CANCELLED:
         /* Mostly initiated by JS redirects. */
+    case WEBKIT_POLICY_ERROR_FRAME_LOAD_INTERRUPTED_BY_POLICY_CHANGE:
+        /* A frame load is cancelled because of a download. */
         return FALSE;
     }
 
@@ -1520,6 +1546,7 @@ webkit_web_view_load_finished_cb (WebKitWebView*  web_view,
     g_object_notify (G_OBJECT (view), "progress");
     midori_view_update_load_status (view, MIDORI_LOAD_FINISHED);
 
+    if (web_frame == webkit_web_view_get_main_frame (web_view))
     {
         JSContextRef js_context = webkit_web_frame_get_global_context (web_frame);
         /* Icon: URI, News Feed: $URI|title, Search: :URI|title */
@@ -1603,11 +1630,11 @@ webkit_web_view_load_finished_cb (WebKitWebView*  web_view,
         g_free (value);
         /* Ensure load-status is notified again, whether it changed or not */
         g_object_notify (G_OBJECT (view), "load-status");
-    }
 
-    #if !WEBKIT_CHECK_VERSION (1, 4, 3)
-    _midori_web_view_load_icon (view);
-    #endif
+        #if !WEBKIT_CHECK_VERSION (1, 4, 3)
+        _midori_web_view_load_icon (view);
+        #endif
+    }
 
     g_object_thaw_notify (G_OBJECT (view));
 }
@@ -2263,6 +2290,15 @@ midori_view_tab_label_menu_window_new_cb (GtkWidget* menuitem,
 }
 
 static void
+midori_web_view_open_frame_in_new_tab_cb (GtkWidget*  widget,
+                                          MidoriView* view)
+{
+    WebKitWebFrame* web_frame = webkit_web_view_get_focused_frame (WEBKIT_WEB_VIEW (view->web_view));
+    g_signal_emit (view, signals[NEW_TAB], 0,
+        webkit_web_frame_get_uri (web_frame), view->open_tabs_in_the_background);
+}
+
+static void
 midori_web_view_menu_inspect_element_activate_cb (GtkWidget*  widget,
                                                   MidoriView* view)
 {
@@ -2644,6 +2680,12 @@ midori_view_populate_popup (MidoriView* view,
         menuitem = sokoke_action_create_popup_menu_item (
             gtk_action_group_get_action (actions, "UndoTabClose"));
         gtk_menu_shell_append (menu_shell, menuitem);
+
+        if (webkit_web_view_get_focused_frame (web_view) != webkit_web_view_get_main_frame (web_view))
+            menuitem = midori_view_insert_menu_item (menu_shell, -1,
+                _("Open _Frame in New Tab"), NULL,
+                G_CALLBACK (midori_web_view_open_frame_in_new_tab_cb), widget);
+
         menuitem = gtk_image_menu_item_new_from_stock (STOCK_WINDOW_NEW, NULL);
         gtk_menu_item_set_label (GTK_MENU_ITEM (menuitem), _("Open in New _Window"));
         gtk_menu_shell_append (GTK_MENU_SHELL (menu), menuitem);
@@ -2668,6 +2710,7 @@ midori_view_populate_popup (MidoriView* view,
             static const GtkActionEntry encodings[] = {
               { "EncodingAutomatic" },
               { "EncodingChinese" },
+              { "EncodingChineseSimplified" },
               { "EncodingJapanese" },
               { "EncodingKorean" },
               { "EncodingRussian" },
@@ -2841,27 +2884,6 @@ webkit_web_view_mime_type_decision_cb (GtkWidget*               web_view,
                                        WebKitWebPolicyDecision* decision,
                                        MidoriView*              view)
 {
-    GtkWidget* dialog;
-    gchar* content_type;
-    gchar* description;
-    gchar* file_type;
-    gchar* name;
-    gchar* file_name;
-    WebKitDownload *download;
-    WebKitWebDataSource* datasource;
-    WebKitNetworkRequest* original_request;
-    const gchar* original_uri;
-    gchar* fingerprint;
-    gchar* fplabel;
-    #if GTK_CHECK_VERSION (2, 14, 0)
-    GIcon* icon;
-    GtkWidget* image;
-    #endif
-    gchar* title;
-    GdkScreen* screen;
-    GtkIconTheme* icon_theme;
-    gint response;
-
     if (webkit_web_view_can_show_mime_type (WEBKIT_WEB_VIEW (web_view), mime_type))
     {
         gboolean view_source = FALSE;
@@ -2875,16 +2897,54 @@ webkit_web_view_mime_type_decision_cb (GtkWidget*               web_view,
             view_source = TRUE;
         webkit_web_view_set_view_source_mode (WEBKIT_WEB_VIEW (web_view), view_source);
 
-        katze_assign (view->mime_type, g_strdup (mime_type));
-        midori_view_unset_icon (view);
-        g_object_notify (G_OBJECT (view), "mime-type");
+        if (web_frame == webkit_web_view_get_main_frame (WEBKIT_WEB_VIEW (web_view)))
+        {
+            katze_assign (view->mime_type, g_strdup (mime_type));
+            midori_view_unset_icon (view);
+            g_object_notify (G_OBJECT (view), "mime-type");
+        }
 
         return FALSE;
     }
+    g_object_set_data(G_OBJECT (view), "download-mime-type", (gpointer)mime_type);
+    webkit_web_policy_decision_download (decision);
+    g_object_set_data(G_OBJECT (view), "download-mime-type", NULL);
+    return TRUE;
+}
+
+static gboolean
+webkit_web_view_download_requested_cb (GtkWidget*      web_view,
+                                       WebKitDownload* download,
+                                       MidoriView*     view)
+{
+    GtkWidget* dialog;
+    gchar* content_type;
+    gchar* description;
+    gchar* file_type;
+    gchar* name;
+    gchar* file_name;
+    WebKitWebFrame* web_frame;
+    const gchar* mime_type;
+    WebKitWebDataSource* datasource;
+    WebKitNetworkRequest* request;
+    WebKitNetworkRequest* original_request;
+    const gchar* original_uri;
+    gchar* fingerprint;
+    gchar* fplabel;
+    #if GTK_CHECK_VERSION (2, 14, 0)
+    GIcon* icon;
+    GtkWidget* image;
+    #endif
+    gchar* title;
+    GdkScreen* screen;
+    GtkIconTheme* icon_theme;
+    gint response;
+    gboolean handled;
 
     dialog = gtk_message_dialog_new (
         NULL, 0, GTK_MESSAGE_WARNING, GTK_BUTTONS_NONE,
         _("Open or download file"));
+    mime_type = g_object_get_data(G_OBJECT (view), "download-mime-type");
     content_type = g_content_type_from_mime_type (mime_type);
     if (!content_type)
     #ifdef G_OS_WIN32
@@ -2908,18 +2968,24 @@ webkit_web_view_mime_type_decision_cb (GtkWidget*               web_view,
         file_type = g_strdup_printf (_("File Type: %s ('%s')"), description, mime_type);
     g_free (description);
 
-    download = webkit_download_new (request);
     name = sokoke_get_download_filename (download);
     file_name = g_strdup_printf (_("File Name: %s"), name);
     g_free (name);
-    g_object_unref (download);
 
     /* Link Fingerprint */
     /* We look at the original URI because redirection would lose the fragment */
+    web_frame = webkit_web_view_get_main_frame (WEBKIT_WEB_VIEW (web_view));
     datasource = webkit_web_frame_get_provisional_data_source (web_frame);
-    original_request = webkit_web_data_source_get_initial_request (datasource);
-    original_uri = webkit_network_request_get_uri (original_request);
-    midori_uri_get_fingerprint (original_uri, &fingerprint, &fplabel);
+    if (datasource)
+    {
+        original_request = webkit_web_data_source_get_initial_request (datasource);
+        original_uri = webkit_network_request_get_uri (original_request);
+        midori_uri_get_fingerprint (original_uri, &fingerprint, &fplabel);
+    }
+    else
+    {
+        fingerprint = fplabel = NULL;
+    }
     gtk_message_dialog_format_secondary_text (GTK_MESSAGE_DIALOG (dialog),
         "%s\n%s\n%s %s", file_name, file_type, fplabel ? fplabel : "", fingerprint ? fingerprint : "");
     g_free (fingerprint);
@@ -2929,6 +2995,7 @@ webkit_web_view_mime_type_decision_cb (GtkWidget*               web_view,
 
     gtk_window_set_skip_taskbar_hint (GTK_WINDOW (dialog), FALSE);
     /* i18n: A file open dialog title, ie. "Open http://fila.com/manual.tgz" */
+    request = webkit_download_get_network_request (download);
     title = g_strdup_printf (_("Open %s"),
         webkit_network_request_get_uri (request));
     gtk_window_set_title (GTK_WINDOW (dialog), title);
@@ -2943,59 +3010,36 @@ webkit_web_view_mime_type_decision_cb (GtkWidget*               web_view,
             gtk_window_set_icon_name (GTK_WINDOW (dialog), GTK_STOCK_OPEN);
     }
     gtk_dialog_add_buttons (GTK_DIALOG (dialog),
-        GTK_STOCK_SAVE, 1,
-        GTK_STOCK_SAVE_AS, 4,
-        GTK_STOCK_CANCEL, 2,
-        GTK_STOCK_OPEN, 3,
+        GTK_STOCK_SAVE, DOWNLOAD_SAVE,
+        GTK_STOCK_SAVE_AS, DOWNLOAD_SAVE_AS,
+        GTK_STOCK_CANCEL, DOWNLOAD_CANCEL,
+        GTK_STOCK_OPEN, DOWNLOAD_OPEN,
         NULL);
+
     response = gtk_dialog_run (GTK_DIALOG (dialog));
+
     gtk_widget_destroy (dialog);
-    g_object_set_data (G_OBJECT (view), "open-download", (gpointer)0);
     switch (response)
     {
-        case 4:
-            g_object_set_data (G_OBJECT (view), "save-as-download", (gpointer)1);
-            webkit_web_policy_decision_download (decision);
+        case DOWNLOAD_SAVE_AS:
+            g_object_set_data (G_OBJECT (download), "save-as-download", (gpointer)1);
             break;
-        case 3:
-            g_object_set_data (G_OBJECT (view), "open-download", (gpointer)1);
-        case 1:
-            webkit_web_policy_decision_download (decision);
+        case DOWNLOAD_OPEN:
+            g_object_set_data (G_OBJECT (download), "open-download", (gpointer)1);
+        case DOWNLOAD_SAVE:
             break;
-        case 2:
+        case DOWNLOAD_CANCEL:
         case GTK_RESPONSE_DELETE_EVENT:
-            webkit_web_policy_decision_ignore (decision);
+            g_object_set_data (G_OBJECT (download), "cancel-download", (gpointer)1);
             break;
         default:
             g_warn_if_reached ();
     }
 
-    /* Apparently WebKit will continue loading which ends in an error.
-       It's unclear whether it's a bug or we are doing something wrong. */
-    webkit_web_view_stop_loading (WEBKIT_WEB_VIEW (view->web_view));
-    return TRUE;
-}
-
-static gboolean
-webkit_web_view_download_requested_cb (GtkWidget*      web_view,
-                                       WebKitDownload* download,
-                                       MidoriView*     view)
-{
-    gboolean handled;
     /* Propagate original URI to make it available when the download finishes */
-    WebKitWebFrame* web_frame = webkit_web_view_get_main_frame (WEBKIT_WEB_VIEW (web_view));
-    WebKitWebDataSource* datasource = webkit_web_frame_get_provisional_data_source (web_frame);
-    WebKitNetworkRequest* original_request = webkit_web_data_source_get_initial_request (datasource);
-    const gchar* original_uri = webkit_network_request_get_uri (original_request);
-    WebKitNetworkRequest* request = webkit_download_get_network_request (download);
     g_object_set_data_full (G_OBJECT (request), "midori-original-uri",
                             g_strdup (original_uri), g_free);
-    g_object_set_data (G_OBJECT (download), "open-download",
-        g_object_get_data (G_OBJECT (view), "open-download"));
-    g_object_set_data (G_OBJECT (download), "save-as-download",
-        g_object_get_data (G_OBJECT (view), "save-as-download"));
-    g_object_set_data (G_OBJECT (view), "open-download", (gpointer)0);
-    g_object_set_data (G_OBJECT (view), "save-as-download", (gpointer)0);
+
     g_signal_emit (view, signals[DOWNLOAD_REQUESTED], 0, download, &handled);
     return handled;
 }
@@ -4193,45 +4237,19 @@ midori_view_set_uri (MidoriView*  view,
                 WebKitWebFrame* web_frame = webkit_web_view_get_main_frame (WEBKIT_WEB_VIEW (view->web_view));
                 JSContextRef js_context = webkit_web_frame_get_global_context (web_frame);
                 gchar* video_formats = list_video_formats (js_context);
-                GString* more = g_string_new ("");
-                list_netscape_plugins (more, js_context);
-                list_about_uris (more);
 
-                katze_assign (view->uri, g_strdup (uri));
-                data = g_strdup_printf (
-                    "<html><head><title>about:version</title></head>"
-                    "<body><h1>about:version</h1>"
-                    "<p>%s</p>"
-                    "<img src=\"res://logo-shade.png\" "
-                    "style=\"position: absolute; right: 15px; bottom: 15px; z-index: -9;\">"
-                    "<table>"
-                    "<tr><td>Command&nbsp;line</td><td>%s</td></tr>"
-                    "<tr><td>Midori</td><td>%s (%s)</td></tr>"
-                    "<tr><td>WebKitGTK+</td><td>%d.%d.%d (%d.%d.%d)</td></tr>"
-                    "<tr><td>GTK+</td><td>%d.%d.%d (%d.%d.%d)</td></tr>"
-                    "<tr><td>Glib</td><td>%d.%d.%d (%d.%d.%d)</td></tr>"
-                    "<tr><td>libsoup</td><td>%s</td></tr>"
-                    "<tr><td>cairo</td><td>%s (%s)</td></tr>"
-                    "<tr><td>granite</td><td>%s</td></tr>"
-                    "<tr><td>libnotify</td><td>%s</td></tr>"
-                    "<tr><td>single instance</td><td>%s</td></tr>"
-                    "<tr><td>Platform</td><td>%s %s %s</td></tr>"
-                    "<tr><td>Identification</td><td>%s</td></tr>"
-                    "<tr><td>Video&nbsp;Formats</td><td>%s</td></tr>"
-                    "</table>"
-                    "%s"
-                    "</body></html>",
-                    _("Version numbers in brackets show the version used at runtime."),
-                    command_line,
-                    PACKAGE_VERSION, midori_app_get_name (NULL),
-                    WEBKIT_MAJOR_VERSION, WEBKIT_MINOR_VERSION, WEBKIT_MICRO_VERSION,
-                    webkit_major_version (),
-                    webkit_minor_version (),
-                    webkit_micro_version (),
-                    GTK_MAJOR_VERSION, GTK_MINOR_VERSION, GTK_MICRO_VERSION,
-                    gtk_major_version, gtk_minor_version, gtk_micro_version,
-                    GLIB_MAJOR_VERSION, GLIB_MINOR_VERSION, GLIB_MICRO_VERSION,
-                    glib_major_version, glib_minor_version, glib_micro_version,
+                /* FIXME: This is for workarounding a crash deeper down the callstack on some systems. */
+                static char const * const version_format_strings[] = {
+                    " &nbsp; libsoup %s</td></tr>",
+                    "<tr><td>cairo</td><td>%s ", "(%s)</td></tr>",
+                    "<tr><td>granite</td><td>%s</td></tr>",
+                    "<tr><td>libnotify</td><td>%s</td></tr>",
+                    "<tr><td>single instance</td><td>%s</td></tr>",
+                    "<tr><td>Platform</td><td>%s ", "%s ", "%s</td></tr>",
+                    "<tr><td>Identification</td><td>%s</td></tr>",
+                    "<tr><td>Video&nbsp;Formats</td><td>%s</td></tr>",
+                };
+                char const *  version_strings[] = {
                     LIBSOUP_VERSION,
                     CAIRO_VERSION_STRING, cairo_version_string (),
                     GRANITE_VERSION,
@@ -4246,7 +4264,48 @@ midori_view_set_uri (MidoriView*  view,
                     "Sockets",
                     #endif
                     platform, sys_name, architecture ? architecture : "", ident,
-                    video_formats, (gchar*)(more->str));
+                    video_formats,
+                };
+                int i = 0;
+                GString * tmp = g_string_new("");;
+
+                GString* more = g_string_new ("");
+                list_netscape_plugins (more, js_context);
+                list_about_uris (more);
+
+                katze_assign (view->uri, g_strdup (uri));
+                g_string_append_printf (tmp,
+                    "<html><head><title>about:version</title></head>"
+                    "<body><h1>about:version</h1>"
+                    "<p>%s</p>"
+                    "<img src=\"res://logo-shade.png\" "
+                    "style=\"position: absolute; right: 15px; bottom: 15px; z-index: -9;\">"
+                    "<table>"
+                    "<tr><td>Command&nbsp;line</td><td>%s</td></tr>"
+                    "<tr><td>Midori</td><td>%s (%s)</td></tr>"
+                    "<tr><td>GTK+</td><td>%d.%d.%d (%d.%d.%d)"
+                    " &nbsp; Glib %d.%d.%d (%d.%d.%d)</td></tr>"
+                    "<tr><td>WebKitGTK+</td><td>%d.%d.%d (%d.%d.%d)",
+                    _("Version numbers in brackets show the version used at runtime."),
+                    command_line,
+                    PACKAGE_VERSION, midori_app_get_name (NULL),
+                    GTK_MAJOR_VERSION, GTK_MINOR_VERSION, GTK_MICRO_VERSION,
+                    gtk_major_version, gtk_minor_version, gtk_micro_version,
+                    GLIB_MAJOR_VERSION, GLIB_MINOR_VERSION, GLIB_MICRO_VERSION,
+                    glib_major_version, glib_minor_version, glib_micro_version,
+                    WEBKIT_MAJOR_VERSION, WEBKIT_MINOR_VERSION, WEBKIT_MICRO_VERSION,
+                    webkit_major_version (), webkit_minor_version (), webkit_micro_version ());
+
+                for (i = 0;
+                     i < sizeof (version_format_strings) / sizeof (version_format_strings[0]);
+                     ++i)
+                    g_string_append_printf (tmp, version_format_strings[i], version_strings[i]);
+
+                g_string_append_printf (
+                    tmp, "</table>%s</body></html>", (gchar*)(more->str));
+
+                data = g_string_free (tmp, FALSE);
+
                 g_free (command_line);
                 g_free (arguments);
                 g_free (ident);
@@ -5293,11 +5352,11 @@ midori_view_save_source (MidoriView* view,
     if (!outfile)
     {
         gchar* extension = midori_view_get_uri_extension (uri);
-        gchar* filename = g_strdup_printf ("%uXXXXXX%s",
+        unique_filename = g_strdup_printf ("%s/midori-%s/%uXXXXXX%s",
+            g_get_tmp_dir (), g_get_user_name (),
             g_str_hash (uri), midori_view_fallback_extension (view, extension));
         g_free (extension);
-        fd = g_file_open_tmp (filename, &unique_filename, NULL);
-        g_free (filename);
+        fd = g_mkstemp (unique_filename);
     }
     else
     {

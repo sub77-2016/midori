@@ -13,6 +13,7 @@
 #include "midori-app.h"
 #include "midori-array.h"
 #include "midori-bookmarks.h"
+#include "panels/midori-bookmarks.h"
 #include "midori-extension.h"
 #include "midori-extensions.h"
 #include "midori-history.h"
@@ -529,93 +530,6 @@ midori_history_terminate (KatzeArray* array,
 }
 
 static void
-midori_bookmarks_add_item_cb (KatzeArray* array,
-                              KatzeItem*  item,
-                              sqlite3*    db)
-{
-    midori_bookmarks_insert_item_db (db, item,
-        katze_item_get_meta_string (item, "folder"));
-}
-
-static void
-midori_bookmarks_remove_item_cb (KatzeArray* array,
-                                 KatzeItem*  item,
-                                 sqlite3*    db)
-{
-    gchar* sqlcmd;
-    char* errmsg = NULL;
-
-    if (KATZE_ITEM_IS_BOOKMARK (item))
-        sqlcmd = sqlite3_mprintf (
-            "DELETE FROM bookmarks WHERE uri = '%q' "
-            " AND folder = '%q'",
-            katze_item_get_uri (item),
-            katze_str_non_null (katze_item_get_meta_string (item, "folder")));
-
-    else
-       sqlcmd = sqlite3_mprintf (
-            "DELETE FROM bookmarks WHERE title = '%q'"
-            " AND folder = '%q'",
-            katze_item_get_name (item),
-            katze_str_non_null (katze_item_get_meta_string (item, "folder")));
-
-    if (sqlite3_exec (db, sqlcmd, NULL, NULL, &errmsg) != SQLITE_OK)
-    {
-        g_printerr (_("Failed to remove history item: %s\n"), errmsg);
-        sqlite3_free (errmsg);
-    }
-
-    sqlite3_free (sqlcmd);
-}
-
-static sqlite3*
-midori_bookmarks_initialize (KatzeArray*  array,
-                             const gchar* filename,
-                             char**       errmsg)
-{
-    sqlite3* db;
-
-    if (sqlite3_open (filename, &db) != SQLITE_OK)
-    {
-        if (errmsg)
-            *errmsg = g_strdup_printf (_("Failed to open database: %s\n"),
-                                       sqlite3_errmsg (db));
-        sqlite3_close (db);
-        return NULL;
-    }
-
-    if (sqlite3_exec (db,
-                      "CREATE TABLE IF NOT EXISTS "
-                      "bookmarks (uri text, title text, folder text, "
-                      "desc text, app integer, toolbar integer);",
-                      NULL, NULL, errmsg) != SQLITE_OK)
-        return NULL;
-    g_signal_connect (array, "add-item",
-                      G_CALLBACK (midori_bookmarks_add_item_cb), db);
-    g_signal_connect (array, "remove-item",
-                      G_CALLBACK (midori_bookmarks_remove_item_cb), db);
-    return db;
-}
-
-static void
-midori_bookmarks_import (const gchar* filename,
-                         sqlite3*     db)
-{
-    KatzeArray* bookmarks;
-    GError* error = NULL;
-
-    bookmarks = katze_array_new (KATZE_TYPE_ARRAY);
-
-    if (!midori_array_from_file (bookmarks, filename, "xbel", &error))
-    {
-        g_warning (_("The bookmarks couldn't be saved. %s"), error->message);
-        g_error_free (error);
-        return;
-    }
-    midori_bookmarks_import_array_db (db, bookmarks, "");
-}
-
-static void
 settings_notify_cb (MidoriWebSettings* settings,
                     GParamSpec*        pspec,
                     MidoriApp*         app)
@@ -1065,6 +979,13 @@ midori_load_soup_session (gpointer settings)
         "enable-file-access-from-file-uris")) /* WebKitGTK+ >= 1.1.21 */
         g_signal_connect (settings, "notify::first-party-cookies-only",
             G_CALLBACK (soup_session_settings_notify_first_party_cb), session);
+    #endif
+
+    #if WEBKIT_CHECK_VERSION (1, 8, 0)
+    gchar* cache = g_build_filename (g_get_user_data_dir (),
+                                     "webkit", "icondatabase", NULL);
+    webkit_favicon_database_set_path (webkit_get_favicon_database (), cache);
+    g_free (cache);
     #endif
 
     g_signal_connect (session, "request-queued",
@@ -1880,6 +1801,9 @@ midori_clear_page_icons_cb (void)
                               "webkit", "icondatabase", NULL);
     sokoke_remove_path (cache, TRUE);
     g_free (cache);
+    #if WEBKIT_CHECK_VERSION (1, 8, 0)
+    webkit_favicon_database_clear (webkit_get_favicon_database ());
+    #endif
 }
 
 static void
@@ -2096,11 +2020,21 @@ main (int    argc,
         MidoriBrowser* browser = midori_browser_new ();
         GtkActionGroup* action_group = midori_browser_get_action_group (browser);
         GList* actions = gtk_action_group_list_actions (action_group);
+        GList* temp = actions;
+        guint length = 1;
+        gchar* space;
+
+        for (; temp; temp = g_list_next (temp))
+        {
+            GtkAction* action = temp->data;
+            length = MAX (length, 1 + strlen (gtk_action_get_name (action)));
+        }
+
+        space = g_strnfill (length, ' ');
         for (; actions; actions = g_list_next (actions))
         {
             GtkAction* action = actions->data;
             const gchar* name = gtk_action_get_name (action);
-            const gchar* space = "                       ";
             gchar* padding = g_strndup (space, strlen (space) - strlen (name));
             gchar* label = katze_object_get_string (action, "label");
             gchar* stripped = katze_strip_mnemonics (label);
@@ -2112,6 +2046,7 @@ main (int    argc,
             g_free (label);
             g_free (stripped);
         }
+        g_free (space);
         g_list_free (actions);
         gtk_widget_destroy (GTK_WIDGET (browser));
         return 0;

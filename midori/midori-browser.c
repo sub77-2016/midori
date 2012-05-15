@@ -285,6 +285,25 @@ _midori_browser_update_actions (MidoriBrowser* browser)
 }
 
 static void
+midori_browser_update_secondary_icon (MidoriBrowser* browser,
+                                      MidoriView*    view,
+                                      GtkAction*     action)
+{
+    if (g_object_get_data (G_OBJECT (view), "news-feeds"))
+    {
+        midori_location_action_set_secondary_icon (
+            MIDORI_LOCATION_ACTION (action), STOCK_NEWS_FEED);
+        _action_set_sensitive (browser, "AddNewsFeed", TRUE);
+    }
+    else
+    {
+        midori_location_action_set_secondary_icon (
+            MIDORI_LOCATION_ACTION (action), NULL);
+        _action_set_sensitive (browser, "AddNewsFeed", FALSE);
+    }
+}
+
+static void
 _midori_browser_update_interface (MidoriBrowser* browser)
 {
     GtkWidget* widget = midori_browser_get_current_tab (browser);
@@ -350,20 +369,9 @@ _midori_browser_update_interface (MidoriBrowser* browser)
     #endif
 
     action = _action_by_name (browser, "Location");
-    if (g_object_get_data (G_OBJECT (view), "news-feeds"))
-    {
-        midori_location_action_set_secondary_icon (
-            MIDORI_LOCATION_ACTION (action), STOCK_NEWS_FEED);
-        _action_set_sensitive (browser, "AddNewsFeed", TRUE);
-    }
-    else
-    {
-        midori_location_action_set_secondary_icon (
-            MIDORI_LOCATION_ACTION (action), GTK_STOCK_JUMP_TO);
-        _action_set_sensitive (browser, "AddNewsFeed", FALSE);
-    }
     midori_location_action_set_security_hint (
         MIDORI_LOCATION_ACTION (action), midori_view_get_security (view));
+    midori_browser_update_secondary_icon (browser, MIDORI_VIEW (view), action);
 }
 
 static void
@@ -392,7 +400,6 @@ _midori_browser_set_statusbar_text (MidoriBrowser* browser,
         GtkAction* action = _action_by_name (browser, "Location");
         MidoriLocationAction* location_action = MIDORI_LOCATION_ACTION (action);
         midori_location_action_set_text (location_action, browser->statusbar_text);
-        midori_location_action_set_icon (location_action, NULL);
         midori_location_action_set_secondary_icon (location_action, NULL);
         #endif
     }
@@ -403,16 +410,9 @@ _midori_browser_set_statusbar_text (MidoriBrowser* browser,
         #else
         GtkAction* action = _action_by_name (browser, "Location");
         MidoriLocationAction* location_action = MIDORI_LOCATION_ACTION (action);
-        if (g_object_get_data (G_OBJECT (view), "news-feeds"))
-            midori_location_action_set_secondary_icon (
-                location_action, STOCK_NEWS_FEED);
-        else
-            midori_location_action_set_secondary_icon (
-                location_action, GTK_STOCK_JUMP_TO);
+        midori_browser_update_secondary_icon (browser, view, action);
         midori_location_action_set_text (location_action,
             midori_view_get_display_uri (MIDORI_VIEW (view)));
-        midori_location_action_set_icon (location_action,
-            midori_view_get_icon (MIDORI_VIEW (view)));
         #endif
     }
     else
@@ -494,14 +494,9 @@ midori_view_notify_icon_cb (MidoriView*    view,
                             GParamSpec*    pspec,
                             MidoriBrowser* browser)
 {
-    GtkAction* action;
-
     if (midori_browser_get_current_tab (browser) != (GtkWidget*)view)
         return;
 
-    action = _action_by_name (browser, "Location");
-    midori_location_action_set_icon (MIDORI_LOCATION_ACTION (action),
-                                     midori_view_get_icon (view));
     if (sokoke_is_app_or_private ())
         gtk_window_set_icon (GTK_WINDOW (browser), midori_view_get_icon (view));
 }
@@ -519,17 +514,12 @@ midori_view_notify_load_status_cb (GtkWidget*      widget,
     uri = midori_view_get_display_uri (view);
     action = _action_by_name (browser, "Location");
 
-    if (load_status == MIDORI_LOAD_COMMITTED)
-        midori_location_action_add_uri (MIDORI_LOCATION_ACTION (action), uri);
-
     if (widget == midori_browser_get_current_tab (browser))
     {
         if (load_status == MIDORI_LOAD_COMMITTED)
         {
             midori_location_action_set_text (
                 MIDORI_LOCATION_ACTION (action), uri);
-            midori_location_action_set_secondary_icon (
-                MIDORI_LOCATION_ACTION (action), GTK_STOCK_JUMP_TO);
             g_object_notify (G_OBJECT (browser), "uri");
         }
 
@@ -796,7 +786,7 @@ midori_browser_edit_bookmark_dialog_new (MidoriBrowser* browser,
     #endif
     {
         dialog = gtk_dialog_new_with_buttons (title, GTK_WINDOW (browser),
-            GTK_DIALOG_DESTROY_WITH_PARENT | GTK_DIALOG_NO_SEPARATOR, NULL);
+            GTK_DIALOG_DESTROY_WITH_PARENT | GTK_DIALOG_NO_SEPARATOR, NULL, NULL);
     }
     gtk_dialog_add_buttons (GTK_DIALOG (dialog),
         GTK_STOCK_CANCEL, GTK_RESPONSE_CANCEL,
@@ -1454,18 +1444,39 @@ midori_browser_download_prepare_destination_uri (WebKitDownload* download,
 }
 
 static gboolean
+midori_browser_remove_tab_idle (gpointer view)
+{
+    MidoriBrowser* browser;
+
+    g_return_val_if_fail (GTK_IS_WIDGET (view), FALSE);
+    browser = midori_browser_get_for_widget (GTK_WIDGET (view));
+    midori_browser_remove_tab (browser, GTK_WIDGET (view));
+    return G_SOURCE_REMOVE;
+}
+
+static gboolean
 midori_view_download_requested_cb (GtkWidget*      view,
                                    WebKitDownload* download,
                                    MidoriBrowser*  browser)
 {
-    if (g_object_get_data (G_OBJECT (download), "open-in-viewer"))
+    GtkWidget* web_view;
+    WebKitWebFrame* web_frame;
+    WebKitWebDataSource* datasource;
+    gboolean handled;
+
+    g_return_val_if_fail (MIDORI_IS_VIEW (view), FALSE);
+    handled = TRUE;
+    if (g_object_get_data (G_OBJECT (download), "cancel-download"))
+    {
+        handled = FALSE;
+    }
+    else if (g_object_get_data (G_OBJECT (download), "open-in-viewer"))
     {
         gchar* destination_uri =
             midori_browser_download_prepare_destination_uri (download, NULL);
         midori_browser_prepare_download (browser, download, destination_uri);
         g_signal_connect (download, "notify::status",
             G_CALLBACK (midori_browser_download_status_cb), GTK_WIDGET (browser));
-        webkit_download_start (download);
         g_free (destination_uri);
     }
     else if (!webkit_download_get_destination_uri (download))
@@ -1507,7 +1518,14 @@ midori_view_download_requested_cb (GtkWidget*      view,
             g_free (destination_uri);
         }
     }
-    return TRUE;
+
+    /* Close empty tabs due to download links with a target */
+    web_view = midori_view_get_web_view (MIDORI_VIEW (view));
+    web_frame = webkit_web_view_get_main_frame (WEBKIT_WEB_VIEW (web_view));
+    datasource = webkit_web_frame_get_data_source (web_frame);
+    if (midori_view_is_blank (MIDORI_VIEW (view)) && webkit_web_data_source_get_data (datasource) == NULL)
+        g_idle_add (midori_browser_remove_tab_idle, view);
+    return handled;
 }
 
 static void
@@ -3389,6 +3407,8 @@ _action_view_encoding_activate (GtkAction*     action,
             const gchar* encoding;
             if (!strcmp (name, "EncodingChinese"))
                 encoding = "BIG5";
+            else if (!strcmp (name, "EncodingChineseSimplified"))
+                encoding = "GB18030";
             else if (!strcmp (name, "EncodingJapanese"))
                 encoding = "SHIFT_JIS";
             else if (!strcmp (name, "EncodingKorean"))
@@ -3672,8 +3692,14 @@ static void
 _action_location_focus_in (GtkAction*     action,
                            MidoriBrowser* browser)
 {
-    midori_location_action_set_secondary_icon (
-        MIDORI_LOCATION_ACTION (action), GTK_STOCK_JUMP_TO);
+    GdkScreen* screen = gtk_widget_get_screen (browser->notebook);
+    GtkIconTheme* icon_theme = gtk_icon_theme_get_for_screen (screen);
+    if (gtk_icon_theme_has_icon (icon_theme, "go-jump-symbolic"))
+        midori_location_action_set_secondary_icon (
+            MIDORI_LOCATION_ACTION (action), "go-jump-symbolic");
+    else
+        midori_location_action_set_secondary_icon (
+            MIDORI_LOCATION_ACTION (action), GTK_STOCK_JUMP_TO);
 }
 
 static void
@@ -3685,12 +3711,7 @@ _action_location_focus_out (GtkAction*     action,
     if (!browser->show_navigationbar || midori_browser_is_fullscreen (browser))
         gtk_widget_hide (browser->navigationbar);
 
-    if (g_object_get_data (G_OBJECT (view), "news-feeds"))
-        midori_location_action_set_secondary_icon (
-            MIDORI_LOCATION_ACTION (action), STOCK_NEWS_FEED);
-    else
-        midori_location_action_set_secondary_icon (
-            MIDORI_LOCATION_ACTION (action), GTK_STOCK_JUMP_TO);
+    midori_browser_update_secondary_icon (browser, MIDORI_VIEW (view), action);
 }
 
 static void
@@ -3702,8 +3723,6 @@ _action_location_reset_uri (GtkAction*     action,
     {
         midori_location_action_set_text (MIDORI_LOCATION_ACTION (action),
             midori_view_get_display_uri (MIDORI_VIEW (view)));
-        midori_location_action_set_icon (MIDORI_LOCATION_ACTION (action),
-            midori_view_get_icon (MIDORI_VIEW (view)));
     }
 }
 
@@ -3891,7 +3910,10 @@ _action_search_submit (GtkAction*     action,
     search = midori_uri_for_search (url, keywords);
 
     if (new_tab)
-        midori_browser_add_uri (browser, search);
+    {
+        int n = midori_browser_add_uri (browser, search);
+        midori_browser_set_current_page_smartly (browser, n);
+    }
     else
         midori_browser_set_current_uri (browser, search);
 
@@ -5022,8 +5044,6 @@ midori_browser_notebook_switch_page_after_cb (GtkWidget*       notebook,
     midori_browser_set_title (browser, midori_view_get_display_title (view));
     action = _action_by_name (browser, "Location");
     midori_location_action_set_text (MIDORI_LOCATION_ACTION (action), uri);
-    midori_location_action_set_icon (MIDORI_LOCATION_ACTION (action),
-                                     midori_view_get_icon (view));
     if (sokoke_is_app_or_private ())
         gtk_window_set_icon (GTK_WINDOW (browser), midori_view_get_icon (view));
 
@@ -5440,7 +5460,10 @@ static const GtkRadioActionEntry encoding_entries[] =
         N_("_Automatic"), "",
         NULL, 1 },
     { "EncodingChinese", NULL,
-        N_("Chinese (BIG5)"), "",
+        N_("Chinese Traditional (BIG5)"), "",
+        NULL, 1 },
+    { "EncodingChineseSimplified", NULL,
+        N_("Chinese Simplified (GB18030)"), "",
         NULL, 1 },
     { "EncodingJapanese", NULL,
         /* i18n: A double underscore "__" is used to prevent the mnemonic */
@@ -5612,6 +5635,7 @@ static const gchar* ui_markup =
                 "<menu action='Encoding'>"
                     "<menuitem action='EncodingAutomatic'/>"
                     "<menuitem action='EncodingChinese'/>"
+                    "<menuitem action='EncodingChineseSimplified'/>"
                     "<menuitem action='EncodingJapanese'/>"
                     "<menuitem action='EncodingKorean'/>"
                     "<menuitem action='EncodingRussian'/>"
