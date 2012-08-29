@@ -32,7 +32,7 @@ Build-Conflicts: gtk-doc-tools,
  libgtksourceview2.0-dev (>= 2.0),
  libhildon-1-dev
 Standards-Version: 3.9.3
-Homepage: http://www.twotoasts.de/index.php?/pages/midori_summary.html
+Homepage: http://www.midori-browser.org
 Vcs-Git: git://git.debian.org/collab-maint/midori.git
 Vcs-Browser: http://git.debian.org/?p=collab-maint/midori.git;a=summary
 
