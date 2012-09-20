@@ -29,7 +29,7 @@ from Configure import find_program_impl
 
 major = 0
 minor = 4
-micro = 6
+micro = 7
 
 APPNAME = 'midori'
 VERSION = VERSION_FULL = str (major) + '.' + str (minor) + '.' + str (micro)
@@ -94,7 +94,9 @@ def configure (conf):
 
     def check_version (given_version, major, minor, micro):
         if '.' in given_version:
-            given_major, given_minor, given_micro = given_version.split ('.')
+            given_major, given_minor, given_micro = given_version.split ('.', 2)
+            if '.' in given_micro:
+                given_micro, given_pico = given_micro.split ('.', 1)
         else:
             given_major, given_minor, given_micro = given_version
         return int(given_major) >  major or \
@@ -181,6 +183,13 @@ def configure (conf):
             atleast_version=version, mandatory=mandatory)
         return conf.env['HAVE_' + var]
 
+    if option_enabled ('gtk3'):
+        gcr_pkg = 'gcr-3'
+    else:
+        gcr_pkg = 'gcr-3-gtk2'
+    check_pkg (gcr_pkg, '2.32', mandatory=False)
+    conf.define ('GCR_VERSION', ['No',conf.check_cfg(modversion=gcr_pkg)][conf.env['HAVE_GCR'] == 1])
+
     if option_enabled ('unique'):
         if option_enabled('gtk3'): unique_pkg = 'unique-3.0'
         else: unique_pkg = 'unique-1.0'
@@ -228,6 +237,7 @@ def configure (conf):
         granite = 'no '
         conf.define ('GRANITE_VERSION', 'No')
 
+    check_pkg ('zeitgeist-1.0', '0.3.14', mandatory=False)
     conf.check (lib='m', mandatory=True)
     check_pkg ('gmodule-2.0', '2.8.0', False)
     check_pkg ('gthread-2.0', '2.8.0', False)
@@ -235,6 +245,7 @@ def configure (conf):
     args = ''
     if Options.platform == 'win32':
         args = '--define-variable=target=win32'
+        conf.env.append_value ('VALAFLAGS', '-D HAVE_WIN32')
     elif sys.platform != 'darwin':
         check_pkg ('x11')
         # Pass /usr/X11R6/include for OpenBSD
@@ -251,11 +262,14 @@ def configure (conf):
         if check_version (conf.check_cfg (modversion='webkitgtk-3.0'), 1, 5, 1):
             check_pkg ('javascriptcoregtk-3.0', '1.5.1', args=args)
         conf.env.append_value ('VALAFLAGS', '-D HAVE_GTK3')
+        conf.env.append_value ('VALAFLAGS', '-D HAVE_OFFSCREEN')
     else:
-        check_pkg ('gtk+-2.0', '2.10.0', var='GTK')
+        check_pkg ('gtk+-2.0', '2.16.0', var='GTK')
         check_pkg ('webkit-1.0', '1.1.17', args=args)
         if check_version (conf.check_cfg (modversion='webkit-1.0'), 1, 5, 1):
             check_pkg ('javascriptcoregtk-1.0', '1.5.1', args=args)
+        if check_version (conf.check_cfg (modversion='gtk+-2.0'), 2, 20, 0):
+            conf.env.append_value ('VALAFLAGS', '-D HAVE_OFFSCREEN')
     conf.env['HAVE_GTK3'] = option_enabled ('gtk3')
     check_pkg ('libsoup-2.4', '2.27.90')
     conf.define ('LIBSOUP_VERSION', conf.check_cfg (modversion='libsoup-2.4'))
@@ -265,10 +279,12 @@ def configure (conf):
         conf.define ('HAVE_LIBSOUP_2_29_91', 1)
     if check_version (conf.env['LIBSOUP_VERSION'], 2, 33, 4):
         conf.define ('HAVE_LIBSOUP_2_33_4', 1)
+    if check_version (conf.env['LIBSOUP_VERSION'], 2, 34, 0):
+        conf.define ('HAVE_LIBSOUP_2_34_0', 1)
     if check_version (conf.env['LIBSOUP_VERSION'], 2, 37, 1):
         conf.define ('HAVE_LIBSOUP_2_37_1', 1)
     check_pkg ('libxml-2.0', '2.6')
-    check_pkg ('sqlite3', '3.0', True, var='SQLITE')
+    check_pkg ('sqlite3', '3.6.19', True, var='SQLITE')
 
     if option_enabled ('hildon'):
         if check_pkg ('hildon-1', mandatory=False, var='HILDON'):
@@ -374,6 +390,14 @@ def configure (conf):
     if unique == 'yes' and conf.check_cfg (modversion='unique-1.0') == '1.0.4':
         Utils.pprint ('RED', 'unique 1.0.4 found, this version is erroneous.')
         Utils.pprint ('RED', 'Please use an older or newer version.')
+        sys.exit (1)
+    if check_version (conf.env['LIBSOUP_VERSION'], 2, 33, 4) \
+        and check_version (conf.check_cfg (modversion='gio-2.0'), 2, 32, 1) \
+        and not check_version (conf.check_cfg (modversion='gio-2.0'), 2, 32, 3):
+        Utils.pprint ('RED', 'libsoup >= 2.33.4 found with glib >= 2.32.1 < 2.32.3:')
+        Utils.pprint ('RED', 'This combination breaks the download GUI.')
+        Utils.pprint ('RED', 'See https://bugs.launchpad.net/midori/+bug/780133/comments/14')
+        sys.exit (1)
 
 def set_options (opt):
     def is_maemo (): return os.path.exists ('/etc/osso-af-init/')
@@ -518,11 +542,8 @@ def build (bld):
         else:
             Utils.pprint ('BLUE', "logo-shade could not be rasterized.")
 
-    for res_file in ['about.css', 'error.html', 'close.png']:
+    for res_file in ['about.css', 'error.html', 'close.png', 'gtk3.css', 'speeddial-head.html']:
         bld.install_files ('${MDATADIR}/' + APPNAME + '/res', 'data/' + res_file)
-    bld.install_as ( \
-        '${MDATADIR}/' + APPNAME + '/res/speeddial-head-%s.html' % VERSION, \
-        'data/speeddial-head.html')
 
     if bld.env['addons']:
         bld.install_files ('${MDATADIR}/' + APPNAME + '/res', 'data/autosuggestcontrol.js')
@@ -608,7 +629,6 @@ def shutdown ():
         except:
             pass
         try:
-            ext = 'MIDORI_EXTENSION_PATH=' + relfolder + os.sep + 'extensions'
             nls = 'MIDORI_NLSPATH=' + relfolder + os.sep + 'po'
             lang = os.environ['LANG']
             try:
@@ -625,7 +645,7 @@ def shutdown ():
                         'LC_MESSAGES' + os.sep + APPNAME + '.mo')
             except:
                 pass
-            command = ext + ' ' + nls + ' '
+            command = nls + ' '
             if is_mingw (Build.bld.env):
                 # This works only if everything is installed to that prefix
                 os.chdir (Build.bld.env['PREFIX'] + os.sep + 'bin')

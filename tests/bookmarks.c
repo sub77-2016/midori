@@ -40,7 +40,7 @@ fixture_setup (BookmarksFixture* fixture,
     gchar *errmsg = NULL;
 
     fixture->db_bookmarks = katze_array_new (KATZE_TYPE_ARRAY);
-    db = midori_bookmarks_initialize (fixture->db_bookmarks, params->dbfile, &errmsg);
+    db = NULL; /* FIXME midori_bookmarks_initialize (fixture->db_bookmarks, params->dbfile, &errmsg); */
     if (db == NULL)
         g_error ("Bookmarks couldn't be loaded: %s\n", errmsg);
     g_assert (errmsg == NULL);
@@ -195,9 +195,8 @@ main (int    argc,
     //TestParameters default_params = {":memory:", TRUE, NULL, NULL};
     TestParameters default_params = {":memory:", FALSE, NULL, NULL};
 
-    midori_app_setup (argv);
     g_test_init (&argc, &argv, NULL);
-    gtk_init_check (&argc, &argv);
+    midori_app_setup (&argc, &argv, NULL, NULL);
 
     g_test_add ("/bookmarks/simple test",
                     BookmarksFixture, &default_params,
