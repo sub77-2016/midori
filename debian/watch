@@ -1,2 +1,3 @@
 version=3
+opts=dversionmangle=s/\+dfsg// \
 http://archive.xfce.org/src/apps/midori/([\d\.]+)/midori-([\d.]+).tar.bz2

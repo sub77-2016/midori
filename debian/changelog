@@ -1,3 +1,14 @@
+midori (0.4.3+dfsg-0.1) unstable; urgency=low
+
+  * Non-maintainer upload
+  * Repack to extract waf script (Closes: 645191)
+  * debian/waf-unpack
+    - add to describe how to extract waf script
+  * debian/rules
+    - add get-orig-source target
+
+ -- Koichi Akabe <vbkaisetsu@gmail.com>  Sat, 24 Nov 2012 17:33:35 +0900
+
 midori (0.4.3-1) unstable; urgency=low
 
   * New upstream release.

@@ -1,0 +1,47 @@
+#!/usr/bin/env python
+
+# This program extracts waf-binary
+# 
+# Please refer the following link for more details:
+# http://wiki.debian.org/UnpackWaf
+#
+
+from os import path, rename, remove, chmod
+import sys
+import shutil
+
+basedir = path.join(path.dirname(path.abspath(__file__)), "..")
+targetdir = sys.argv[1]
+
+skip = False
+
+waf = open(path.join(targetdir, "waf"), "r")
+unp = open(path.join(basedir, "debian/wafunp.py"), "w")
+
+shutil.copyfile(path.join(basedir, "debian/waf-unpack"),
+                path.join(basedir, "debian/waf-unpack.bup"))
+thisfile = open(path.join(basedir, "debian/waf-unpack"), "a")
+for l in waf:
+	if l == "#==>\n":
+		skip = True
+		thisfile.write(l)
+	elif l == "#<==\n":
+		skip = False
+		thisfile.write(l)
+	elif not skip:
+		unp.write(l)
+	else:
+		thisfile.write(l)
+
+waf.close()
+unp.close()
+thisfile.close()
+
+import wafunp
+rename(path.join(basedir, "debian/.%s-%s-%s" % (wafunp.WAF, wafunp.VERSION, wafunp.REVISION)), path.join(targetdir, "waf-modules"))
+rename(path.join(basedir, "debian/waf-unpack.bup"), path.join(basedir, "debian/waf-unpack"))
+chmod(path.join(basedir, "debian/waf-unpack"), 0744)
+remove(path.join(targetdir, "waf-modules/t.bz2"))
+remove(path.join(basedir, "debian/wafunp.pyc"))
+rename(path.join(basedir, "debian/wafunp.py"), path.join(targetdir, "waf-unpacked"))
+chmod(path.join(targetdir, "waf-unpacked"), 0744)

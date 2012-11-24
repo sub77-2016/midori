@@ -23,7 +23,22 @@ endif
 %:
 	dh $@
 
-WAF=./waf
+upstream_version ?= $(shell dpkg-parsechangelog | sed -rne 's/^Version: ([0-9.]+)(\+dfsg)?.*$$/\1/p')
+dfsg_version = $(upstream_version)+dfsg
+upstream_pkg = "midori"
+pkg = $(shell dpkg-parsechangelog | sed -ne 's/^Source: //p')
+
+get-orig-source:
+	uscan --rename --download-current-version --destdir=.
+	tar -xjf $(pkg)_$(upstream_version).orig.tar.bz2
+	rm -f $(pkg)_$(upstream_version).orig.tar.bz2
+	mv $(upstream_pkg)-$(upstream_version) $(pkg)_$(dfsg_version).orig
+	$(CURDIR)/debian/waf-unpack $(pkg)_$(dfsg_version).orig
+	rm $(pkg)_$(dfsg_version).orig/waf
+	tar -cjf $(CURDIR)/../$(pkg)_$(dfsg_version).orig.tar.bz2 $(pkg)_$(dfsg_version).orig
+	rm -r $(pkg)_$(dfsg_version).orig
+
+WAF=WAFDIR=waf-modules ./waf-unpacked
 
 debian/presubj: debian/presubj.in
 	@echo "presubj parameters:"
@@ -42,6 +57,7 @@ override_dh_auto_clean:
 	rm -rf _build_
 	rm -rf .waf*
 	rm -rf .lock-wscript
+	rm -rf `find waf-modules -name "*.pyc"`
 
 override_dh_auto_configure:
 	$(WAF) --nocache configure --debug-level=none --prefix /usr
