@@ -12,9 +12,12 @@
 #ifndef __KATZE_NET_H__
 #define __KATZE_NET_H__
 
+#ifndef HAVE_WEBKIT2
+    #include <webkit/webkit.h>
+#else
+    #include <webkit2/webkit2.h>
+#endif
 #include "katze-utils.h"
-
-#include <gtk/gtk.h>
 
 G_BEGIN_DECLS
 
@@ -68,10 +71,12 @@ katze_net_load_uri                       (KatzeNet*          net,
                                           KatzeNetTransferCb transfer_cb,
                                           gpointer           user_data);
 
+#if !WEBKIT_CHECK_VERSION (1, 3, 13)
 gchar*
 katze_net_get_cached_path                (KatzeNet*          net,
                                           const gchar*       uri,
                                           const gchar*       subfolder);
+#endif
 
 G_END_DECLS
 

@@ -97,12 +97,12 @@ katze_throbber_realize (GtkWidget* widget);
 #if GTK_CHECK_VERSION (3, 0, 0)
 static void
 katze_throbber_get_preferred_height (GtkWidget *widget,
-                               gint      *minimal_width,
-                               gint      *natural_width);
+                                     gint      *minimal_height,
+                                     gint      *natural_height);
 static void
 katze_throbber_get_preferred_width (GtkWidget *widget,
-                               gint      *minimal_width,
-                               gint      *natural_width);
+                                     gint      *minimal_width,
+                                     gint      *natural_width);
 #endif
 static void
 katze_throbber_unrealize (GtkWidget* widget);
@@ -229,7 +229,7 @@ katze_throbber_class_init (KatzeThrobberClass* class)
                                      flags));
 
     g_object_class_install_property (gobject_class,
-                                     PROP_PIXBUF,
+                                     PROP_STATIC_PIXBUF,
                                      g_param_spec_object (
                                      "static-pixbuf",
                                      "Static Pixbuf",
@@ -490,13 +490,11 @@ katze_throbber_set_animated (KatzeThrobber*  throbber,
     g_object_set (throbber, "active", animated, NULL);
     #else
     if (animated && (throbber->timer_id < 0))
-        throbber->timer_id = g_timeout_add_full (
-                         G_PRIORITY_LOW, 50,
-                         (GSourceFunc)katze_throbber_timeout,
-                         throbber,
-                         (GDestroyNotify)katze_throbber_timeout_destroy);
-    gtk_widget_queue_draw (GTK_WIDGET (throbber));
+        throbber->timer_id = midori_timeout_add (50,
+            (GSourceFunc)katze_throbber_timeout, throbber,
+            (GDestroyNotify)katze_throbber_timeout_destroy);
     #endif
+    gtk_widget_queue_draw (GTK_WIDGET (throbber));
 
     g_object_notify (G_OBJECT (throbber), "animated");
 }
@@ -857,14 +855,14 @@ katze_throbber_size_request (GtkWidget*      widget,
 #if GTK_CHECK_VERSION (3, 0, 0)
 static void
 katze_throbber_get_preferred_height (GtkWidget *widget,
-                                     gint      *minimal_width,
-                                     gint      *natural_width)
+                                     gint      *minimal_height,
+                                     gint      *natural_height)
 {
     GtkRequisition requisition;
 
     katze_throbber_size_request (widget, &requisition);
 
-    *minimal_width = *natural_width = requisition.height;
+    *minimal_height = *natural_height = requisition.height;
 }
 
 static void
@@ -902,6 +900,7 @@ katze_throbber_aligned_coords (GtkWidget* widget,
     #endif
 
     #if GTK_CHECK_VERSION (3, 0, 0)
+    allocation.x = allocation.y = 0;
     allocation.width = gtk_widget_get_allocated_width (widget);
     allocation.height = gtk_widget_get_allocated_height (widget);
     gtk_widget_get_preferred_size (widget, &requisition, NULL);

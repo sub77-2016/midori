@@ -1,5 +1,5 @@
 /*
- Copyright (C) 2008-2009 Christian Dywan <christian@twotoasts.de>
+ Copyright (C) 2008-2012 Christian Dywan <christian@twotoasts.de>
  Copyright (C) 2009 Dale Whittaker <dayul@users.sf.net>
 
  This library is free software; you can redistribute it and/or
@@ -14,17 +14,21 @@
 
 #include <katze/katze.h>
 #include "midori-platform.h"
+#include "midori-core.h"
 #include <glib/gi18n.h>
 
 G_DEFINE_TYPE (MidoriExtension, midori_extension, G_TYPE_OBJECT);
 
 struct _MidoriExtensionPrivate
 {
+    gchar* stock_id;
     gchar* name;
     gchar* description;
+    gboolean use_markup;
     gchar* version;
     gchar* authors;
     gchar* website;
+    gchar* key;
 
     MidoriApp* app;
     gint active;
@@ -123,11 +127,14 @@ enum
 {
     PROP_0,
 
+    PROP_STOCK_ID,
     PROP_NAME,
     PROP_DESCRIPTION,
+    PROP_USE_MARKUP,
     PROP_VERSION,
     PROP_AUTHORS,
-    PROP_WEBSITE
+    PROP_WEBSITE,
+    PROP_KEY
 };
 
 enum {
@@ -209,6 +216,15 @@ midori_extension_class_init (MidoriExtensionClass* class)
     flags = G_PARAM_READWRITE | G_PARAM_CONSTRUCT | G_PARAM_STATIC_STRINGS;
 
     g_object_class_install_property (gobject_class,
+                                     PROP_STOCK_ID,
+                                     g_param_spec_string (
+                                     "stock-id",
+                                     "Stock ID",
+                                     "An optional icon stock ID",
+                                     NULL,
+                                     flags));
+
+    g_object_class_install_property (gobject_class,
                                      PROP_NAME,
                                      g_param_spec_string (
                                      "name",
@@ -224,6 +240,15 @@ midori_extension_class_init (MidoriExtensionClass* class)
                                      "Description",
                                      "The description of the extension",
                                      NULL,
+                                     flags));
+
+    g_object_class_install_property (gobject_class,
+                                     PROP_USE_MARKUP,
+                                     g_param_spec_boolean (
+                                     "use-markup",
+                                     "Use Markup",
+                                     "Whether to use Pango markup",
+                                     FALSE,
                                      flags));
 
     g_object_class_install_property (gobject_class,
@@ -260,6 +285,23 @@ midori_extension_class_init (MidoriExtensionClass* class)
                                      NULL,
                                      flags));
 
+    /**
+     * MidoriExtension:key:
+     *
+     * The extension key.
+     * Needed if there is more than one extension object in a single module.
+     *
+     * Since: 0.4.5
+     */
+    g_object_class_install_property (gobject_class,
+                                     PROP_KEY,
+                                     g_param_spec_string (
+                                     "key",
+                                     "Key",
+                                     "The extension key",
+                                     NULL,
+                                     flags));
+
     g_type_class_add_private (class, sizeof (MidoriExtensionPrivate));
 }
 
@@ -290,19 +332,8 @@ midori_extension_activate_cb (MidoriExtension* extension,
             if (error->code == G_FILE_ERROR_NOENT)
             {
                 gchar* filename = g_object_get_data (G_OBJECT (extension), "filename");
-                gchar* folder;
-                if (g_str_has_prefix (filename, MIDORI_MODULE_PREFIX))
-                    filename = &filename[strlen (MIDORI_MODULE_PREFIX)];
-                if (g_str_has_suffix (filename, G_MODULE_SUFFIX))
-                    filename = g_strndup (filename,
-                        strlen (filename) - strlen ("." G_MODULE_SUFFIX));
-                else
-                    filename = g_strdup (filename);
-                folder = g_strconcat ("extensions/", filename, NULL);
-                g_free (filename);
                 katze_assign (config_file,
-                    sokoke_find_config_filename (folder, "config"));
-                g_free (folder);
+                    midori_paths_get_extension_preset_filename (filename, "config"));
                 g_key_file_load_from_file (extension->priv->key_file, config_file,
                                            G_KEY_FILE_KEEP_COMMENTS, NULL);
             }
@@ -321,29 +352,32 @@ midori_extension_activate_cb (MidoriExtension* extension,
         if (setting->type == G_TYPE_BOOLEAN)
         {
             MESettingBoolean* setting_ = (MESettingBoolean*)setting;
-            if (extension->priv->key_file)
-                setting_->value = sokoke_key_file_get_boolean_default (
-                    extension->priv->key_file,
-                    "settings", setting->name, setting_->default_value, NULL);
+            if (extension->priv->key_file
+             && g_key_file_has_key (extension->priv->key_file, "settings", setting_->name, NULL))
+                setting_->value = g_key_file_get_boolean (extension->priv->key_file,
+                    "settings", setting->name, NULL);
             else
                 setting_->value = setting_->default_value;
         }
         else if (setting->type == G_TYPE_INT)
         {
             MESettingInteger* setting_ = (MESettingInteger*)setting;
-            if (extension->priv->key_file)
-                setting_->value = sokoke_key_file_get_integer_default (
-                    extension->priv->key_file,
-                    "settings", setting->name, setting_->default_value, NULL);
+            if (extension->priv->key_file
+             && g_key_file_has_key (extension->priv->key_file, "settings", setting_->name, NULL))
+                setting_->value = g_key_file_get_integer (extension->priv->key_file,
+                    "settings", setting_->name, NULL);
             else
                 setting_->value = setting_->default_value;
         }
         else if (setting->type == G_TYPE_STRING)
         {
             if (extension->priv->key_file)
-                setting->value = sokoke_key_file_get_string_default (
-                    extension->priv->key_file,
-                    "settings", setting->name, setting->default_value, NULL);
+            {
+                setting->value = g_key_file_get_string (
+                    extension->priv->key_file, "settings", setting->name, NULL);
+                if (setting->value == NULL)
+                    setting->value = setting->default_value;
+            }
             else
                 setting->value = g_strdup (setting->default_value);
         }
@@ -352,10 +386,13 @@ midori_extension_activate_cb (MidoriExtension* extension,
             MESettingStringList* setting_ = (MESettingStringList*)setting;
             if (extension->priv->key_file)
             {
-                setting_->value = sokoke_key_file_get_string_list_default (
-                    extension->priv->key_file,
-                    "settings", setting->name, &setting_->length,
-                    setting_->default_value, &setting_->default_length, NULL);
+                setting_->value = g_key_file_get_string_list (extension->priv->key_file,
+                    "settings", setting->name, &setting_->length, NULL);
+                if (setting_->value == NULL)
+                {
+                    setting_->value = g_strdupv (setting_->default_value);
+                    setting_->length = setting_->default_length;
+                }
             }
             else
                 setting_->value = g_strdupv (setting_->default_value);
@@ -395,11 +432,13 @@ midori_extension_finalize (GObject* object)
     MidoriExtension* extension = MIDORI_EXTENSION (object);
 
     katze_object_assign (extension->priv->app, NULL);
+    katze_assign (extension->priv->stock_id, NULL);
     katze_assign (extension->priv->name, NULL);
     katze_assign (extension->priv->description, NULL);
     katze_assign (extension->priv->version, NULL);
     katze_assign (extension->priv->authors, NULL);
     katze_assign (extension->priv->website, NULL);
+    katze_assign (extension->priv->key, NULL);
 
     katze_assign (extension->priv->config_dir, NULL);
     g_list_free (extension->priv->lsettings);
@@ -418,11 +457,17 @@ midori_extension_set_property (GObject*      object,
 
     switch (prop_id)
     {
+    case PROP_STOCK_ID:
+        katze_assign (extension->priv->stock_id, g_value_dup_string (value));
+        break;
     case PROP_NAME:
         katze_assign (extension->priv->name, g_value_dup_string (value));
         break;
     case PROP_DESCRIPTION:
         katze_assign (extension->priv->description, g_value_dup_string (value));
+        break;
+    case PROP_USE_MARKUP:
+        extension->priv->use_markup = g_value_get_boolean (value);
         break;
     case PROP_VERSION:
     {
@@ -446,6 +491,9 @@ midori_extension_set_property (GObject*      object,
     case PROP_WEBSITE:
         katze_assign (extension->priv->website, g_value_dup_string (value));
         break;
+    case PROP_KEY:
+        katze_assign (extension->priv->key, g_value_dup_string (value));
+        break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
         break;
@@ -462,11 +510,17 @@ midori_extension_get_property (GObject*    object,
 
     switch (prop_id)
     {
+    case PROP_STOCK_ID:
+        g_value_set_string (value, extension->priv->stock_id);
+        break;
     case PROP_NAME:
         g_value_set_string (value, extension->priv->name);
         break;
     case PROP_DESCRIPTION:
         g_value_set_string (value, extension->priv->description);
+        break;
+    case PROP_USE_MARKUP:
+        g_value_set_boolean (value, extension->priv->use_markup);
         break;
     case PROP_VERSION:
         g_value_set_string (value, extension->priv->version);
@@ -477,9 +531,206 @@ midori_extension_get_property (GObject*    object,
     case PROP_WEBSITE:
         g_value_set_string (value, extension->priv->website);
         break;
+    case PROP_KEY:
+        g_value_set_string (value, extension->priv->key);
+        break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
         break;
+    }
+}
+
+void
+midori_extension_load_from_folder (MidoriApp* app,
+                                   gchar**    keys,
+                                   gboolean   activate)
+{
+    if (!g_module_supported ())
+        return;
+
+    gchar* extension_path = midori_paths_get_lib_path (PACKAGE_NAME);
+    if (!extension_path)
+        return;
+
+    if (activate)
+    {
+        gint i = 0;
+        const gchar* filename;
+        while (keys && (filename = keys[i++]))
+            midori_extension_activate_gracefully (app, extension_path, filename, activate);
+        /* FIXME need proper stock extension mechanism */
+        GObject* extension = midori_extension_activate_gracefully (app, extension_path, "libtransfers." G_MODULE_SUFFIX, activate);
+        g_assert (extension != NULL);
+    }
+    else
+    {
+        GDir* extension_dir = g_dir_open (extension_path, 0, NULL);
+        g_return_if_fail (extension_dir != NULL);
+        const gchar* filename;
+        while ((filename = g_dir_read_name (extension_dir)))
+            midori_extension_activate_gracefully (app, extension_path, filename, activate);
+        g_dir_close (extension_dir);
+    }
+
+    g_free (extension_path);
+}
+
+GObject*
+midori_extension_load_from_file (const gchar* extension_path,
+                                 const gchar* filename,
+                                 gboolean     activate,
+                                 gboolean     test)
+{
+    gchar* fullname;
+    GModule* module;
+    typedef GObject* (*extension_init_func)(void);
+    extension_init_func extension_init;
+    static GHashTable* modules = NULL;
+    GObject* extension;
+
+    g_return_val_if_fail (extension_path != NULL, NULL);
+    g_return_val_if_fail (filename != NULL, NULL);
+
+    if (strchr (filename, '/'))
+    {
+        gchar* clean = g_strndup (filename, strchr (filename, '/') - filename);
+        fullname = g_build_filename (extension_path, clean, NULL);
+        g_free (clean);
+    }
+    else
+        fullname = g_build_filename (extension_path, filename, NULL);
+
+    /* Ignore files which don't have the correct suffix */
+    if (!g_str_has_suffix (fullname, G_MODULE_SUFFIX))
+    {
+        g_free (fullname);
+        return NULL;
+    }
+
+    module = g_module_open (fullname, G_MODULE_BIND_LOCAL);
+    g_free (fullname);
+
+    /* GModule detects repeated loading but exposes no API to check it.
+       Skip any modules that were loaded before. */
+    if (modules == NULL)
+        modules = g_hash_table_new_full (g_direct_hash, g_direct_equal, NULL, g_object_unref);
+    if ((extension = g_hash_table_lookup (modules, module)))
+        return extension;
+
+    if (module && g_module_symbol (module, "extension_init",
+                                   (gpointer) &extension_init))
+    {
+        typedef void (*extension_test_func)(void);
+        extension_test_func extension_test;
+        if ((extension = extension_init ()))
+        {
+            if (test && g_module_symbol (module, "extension_test", (gpointer) &extension_test))
+                extension_test ();
+            g_object_set_data_full (G_OBJECT (extension), "filename", g_strdup (filename), g_free);
+            g_hash_table_insert (modules, module, extension);
+        }
+    }
+
+    return extension;
+}
+
+GObject*
+midori_extension_activate_gracefully (MidoriApp*   app,
+                                      const gchar* extension_path,
+                                      const gchar* filename,
+                                      gboolean     activate)
+{
+    GObject* extension = midori_extension_load_from_file (extension_path, filename, activate, FALSE);
+
+    midori_extension_activate (extension, filename, activate, app);
+    if (!extension && g_module_error () != NULL)
+    {
+        KatzeArray* extensions = katze_object_get_object (app, "extensions");
+        extension = g_object_new (MIDORI_TYPE_EXTENSION,
+                                  "name", filename,
+                                  "description", g_module_error (),
+                                  NULL);
+        g_warning ("%s", g_module_error ());
+        katze_array_add_item (extensions, extension);
+        g_object_unref (extensions);
+        g_object_unref (extension);
+        return NULL;
+    }
+    else
+        return extension;
+}
+
+static void
+midori_extension_add_to_list (MidoriApp*       app,
+                              MidoriExtension* extension,
+                              const gchar*     filename)
+{
+    g_return_if_fail (MIDORI_IS_APP (app));
+    g_return_if_fail (filename != NULL);
+    KatzeArray* extensions = katze_object_get_object (app, "extensions");
+    g_return_if_fail (KATZE_IS_ARRAY (extensions));
+    if (katze_array_get_item_index (extensions, extension) >= 0)
+        return;
+    /* FIXME need proper stock extension mechanism */
+    if (!strcmp (filename, "libtransfers." G_MODULE_SUFFIX))
+        return;
+
+    katze_array_add_item (extensions, extension);
+    g_object_unref (extensions);
+
+    if (midori_paths_is_readonly ())
+        return;
+
+    /* Signal that we want the extension to load and save */
+    if (midori_extension_is_prepared (extension))
+    {
+        g_warn_if_fail (extension->priv->config_dir == NULL);
+        extension->priv->config_dir = midori_paths_get_extension_config_dir (filename);
+    }
+}
+
+void
+midori_extension_activate (GObject*     extension,
+                           const gchar* filename,
+                           gboolean     activate,
+                           MidoriApp*   app)
+{
+    if (MIDORI_IS_EXTENSION (extension))
+    {
+        if (filename != NULL)
+            midori_extension_add_to_list (app, MIDORI_EXTENSION (extension), filename);
+        if (activate && !midori_extension_is_active (MIDORI_EXTENSION (extension)))
+            g_signal_emit_by_name (extension, "activate", app);
+    }
+    else if (KATZE_IS_ARRAY (extension))
+    {
+        gboolean success = FALSE;
+        MidoriExtension* extension_item;
+        KATZE_ARRAY_FOREACH_ITEM (extension_item, KATZE_ARRAY (extension))
+            if (MIDORI_IS_EXTENSION (extension_item))
+            {
+                gchar* key = extension_item->priv->key;
+                g_return_if_fail (key != NULL);
+                if (filename != NULL && strchr (filename, '/'))
+                {
+                    gchar* clean = g_strndup (filename, strchr (filename, '/') - filename);
+                    g_object_set_data_full (G_OBJECT (extension_item), "filename", clean, g_free);
+                    midori_extension_add_to_list (app, extension_item, clean);
+                }
+                else if (filename != NULL)
+                {
+                    midori_extension_add_to_list (app, extension_item, filename);
+                    g_object_set_data_full (G_OBJECT (extension_item), "filename", g_strdup (filename), g_free);
+                }
+                if (activate && !midori_extension_is_active (MIDORI_EXTENSION (extension_item))
+                 && filename && strstr (filename, key))
+                {
+                    g_signal_emit_by_name (extension_item, "activate", app);
+                    success = TRUE;
+                }
+            }
+        /* Passed a multi extension w/o key or non-existing key */
+        g_warn_if_fail (!activate || success);
     }
 }
 
@@ -540,29 +791,6 @@ midori_extension_is_active (MidoriExtension* extension)
 }
 
 /**
- * midori_extension_is_deactivating:
- * @extension: a #MidoriExtension
- *
- * Determines if @extension is currently in the process of
- * being deactivated.
- *
- * Extensions remain fully functional even while being
- * deactivated, so you can for instance still save settings
- * but you may need to cleanup during deactivation.
- *
- * Return value: %TRUE if @extension is deactivating
- *
- * Since: 0.1.7
- **/
-gboolean
-midori_extension_is_deactivating (MidoriExtension* extension)
-{
-    g_return_val_if_fail (MIDORI_IS_EXTENSION (extension), FALSE);
-
-    return extension->priv->active == 2;
-}
-
-/**
  * midori_extension_deactivate:
  * @extension: a #MidoriExtension
  *
@@ -573,7 +801,6 @@ midori_extension_deactivate (MidoriExtension* extension)
 {
     g_return_if_fail (midori_extension_is_active (extension));
 
-    extension->priv->active = 2;
     g_signal_emit (extension, signals[DEACTIVATE], 0);
     extension->priv->active = 0;
     katze_object_assign (extension->priv->app, NULL);
@@ -616,15 +843,6 @@ midori_extension_get_config_dir (MidoriExtension* extension)
 
     g_return_val_if_fail (midori_extension_is_prepared (extension), NULL);
 
-    if (!extension->priv->config_dir)
-    {
-        gchar* filename = g_object_get_data (G_OBJECT (extension), "filename");
-        if (!filename)
-            return "/";
-        extension->priv->config_dir = g_build_filename (
-            sokoke_set_config_dir (NULL), "extensions", filename, NULL);
-    }
-
     return extension->priv->config_dir;
 }
 
@@ -654,6 +872,22 @@ midori_extension_install_boolean (MidoriExtension* extension,
 
     me_setting_install (MESettingBoolean, g_strdup (name), G_TYPE_BOOLEAN,
                         default_value, FALSE);
+}
+
+static void
+midori_extension_save_settings (MidoriExtension *extension)
+{
+    GError* error = NULL;
+    gchar* config_file = g_build_filename (extension->priv->config_dir, "config", NULL);
+    katze_mkdir_with_parents (extension->priv->config_dir, 0700);
+    sokoke_key_file_save_to_file (extension->priv->key_file, config_file, &error);
+    if (error)
+    {
+        printf (_("The configuration of the extension '%s' couldn't be saved: %s\n"),
+                extension->priv->name, error->message);
+        g_error_free (error);
+    }
+    g_free (config_file);
 }
 
 /**
@@ -708,22 +942,13 @@ midori_extension_set_boolean (MidoriExtension* extension,
     setting->value = value;
     if (extension->priv->key_file)
     {
-        GError* error = NULL;
-        /* FIXME: Handle readonly folder/ file */
-        gchar* config_file = g_build_filename (extension->priv->config_dir,
-                                               "config", NULL);
-        katze_mkdir_with_parents (extension->priv->config_dir, 0700);
         g_key_file_set_boolean (extension->priv->key_file,
                                 "settings", name, value);
-        sokoke_key_file_save_to_file (extension->priv->key_file, config_file, &error);
-        if (error)
-        {
-            printf (_("The configuration of the extension '%s' couldn't be saved: %s\n"),
-                    extension->priv->name, error->message);
-            g_error_free (error);
-        }
+        midori_extension_save_settings (extension);
     }
 }
+
+
 
 /**
  * midori_extension_install_integer:
@@ -805,20 +1030,9 @@ midori_extension_set_integer (MidoriExtension* extension,
     setting->value = value;
     if (extension->priv->key_file)
     {
-        GError* error = NULL;
-        /* FIXME: Handle readonly folder/ file */
-        gchar* config_file = g_build_filename (extension->priv->config_dir,
-                                               "config", NULL);
-        katze_mkdir_with_parents (extension->priv->config_dir, 0700);
         g_key_file_set_integer (extension->priv->key_file,
                                 "settings", name, value);
-        sokoke_key_file_save_to_file (extension->priv->key_file, config_file, &error);
-        if (error)
-        {
-            printf (_("The configuration of the extension '%s' couldn't be saved: %s\n"),
-                    extension->priv->name, error->message);
-            g_error_free (error);
-        }
+        midori_extension_save_settings (extension);
     }
 }
 
@@ -902,20 +1116,9 @@ midori_extension_set_string (MidoriExtension* extension,
     katze_assign (setting->value, g_strdup (value));
     if (extension->priv->key_file)
     {
-        GError* error = NULL;
-        /* FIXME: Handle readonly folder/ file */
-        gchar* config_file = g_build_filename (extension->priv->config_dir,
-                                               "config", NULL);
-        katze_mkdir_with_parents (extension->priv->config_dir, 0700);
         g_key_file_set_string (extension->priv->key_file,
                                 "settings", name, value);
-        sokoke_key_file_save_to_file (extension->priv->key_file, config_file, &error);
-        if (error)
-        {
-            printf (_("The configuration of the extension '%s' couldn't be saved: %s\n"),
-                    extension->priv->name, error->message);
-            g_error_free (error);
-        }
+        midori_extension_save_settings (extension);
     }
 }
 
@@ -1014,19 +1217,8 @@ midori_extension_set_string_list (MidoriExtension* extension,
 
     if (extension->priv->key_file)
     {
-        GError* error = NULL;
-        /* FIXME: Handle readonly folder/ file */
-        gchar* config_file = g_build_filename (extension->priv->config_dir,
-                                               "config", NULL);
-        katze_mkdir_with_parents (extension->priv->config_dir, 0700);
         g_key_file_set_string_list (extension->priv->key_file,
                                     "settings", name, (const gchar**)value, length);
-        sokoke_key_file_save_to_file (extension->priv->key_file, config_file, &error);
-        if (error)
-        {
-            printf (_("The configuration of the extension '%s' couldn't be saved: %s\n"),
-                    extension->priv->name, error->message);
-            g_error_free (error);
-        }
+        midori_extension_save_settings (extension);
     }
 }

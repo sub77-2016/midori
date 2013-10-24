@@ -20,9 +20,7 @@
 #include "katze-item.h"
 #include "katze-array.h"
 #include "katze-arrayaction.h"
-#include "katze-separatoraction.h"
 #include "katze-net.h"
-#include "katze-scrolled.h"
 #include "katze-preferences.h"
 
 #endif /* __KATZE_H__ */

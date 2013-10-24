@@ -29,10 +29,6 @@
     #include <unistd.h>
 #endif
 
-#ifdef HAVE_HILDON_2_2
-    #include <hildon/hildon.h>
-#endif
-
 #define I_ g_intern_static_string
 
 static void
@@ -42,12 +38,7 @@ proxy_toggle_button_toggled_cb (GtkToggleButton* button,
     gboolean toggled;
     const gchar* property;
 
-    #ifdef HAVE_HILDON_2_2
-    if (HILDON_IS_CHECK_BUTTON (button))
-        toggled = hildon_check_button_get_active (HILDON_CHECK_BUTTON (button));
-    #else
     toggled = gtk_toggle_button_get_active (button);
-    #endif
     property = g_object_get_data (G_OBJECT (button), "property");
     g_object_set (object, property, toggled, NULL);
 }
@@ -79,6 +70,24 @@ proxy_uri_file_set_cb (GtkFileChooser* button,
     g_object_set (object, property, file, NULL);
 }
 
+#if GTK_CHECK_VERSION (3, 2, 0)
+static void
+proxy_font_chooser_font_activated_cb (GtkFontChooser* chooser,
+                                      const gchar*    font_name,
+                                      GObject*        object)
+{
+    gtk_font_chooser_set_font (chooser, font_name);
+}
+
+static gboolean
+proxy_font_chooser_filter_monospace_cb (PangoFontFamily* family,
+                                        PangoFontFace*   face,
+                                        gpointer         data)
+{
+    gboolean monospace = GPOINTER_TO_INT (data);
+    return monospace == pango_font_family_is_monospace (family);
+}
+#else
 static void
 proxy_combo_box_text_changed_cb (GtkComboBoxText* button,
                                  GObject*         object)
@@ -88,6 +97,7 @@ proxy_combo_box_text_changed_cb (GtkComboBoxText* button,
     g_object_set (object, property, text, NULL);
     g_free (text);
 }
+#endif
 
 static const gchar*
 katze_app_info_get_commandline (GAppInfo* info)
@@ -219,17 +229,6 @@ proxy_spin_button_changed_cb (GtkSpinButton* button,
     }
 }
 
-#ifdef HAVE_HILDON_2_2
-static void
-proxy_picker_button_changed_cb (HildonPickerButton* button,
-                                GObject*            object)
-{
-    gint value = hildon_picker_button_get_active (button);
-    const gchar* property = g_object_get_data (G_OBJECT (button), "property");
-    g_object_set (object, property, value, NULL);
-    /* FIXME: Implement custom-PROPERTY */
-}
-#else
 static void
 proxy_combo_box_changed_cb (GtkComboBox* button,
                             GObject*     object)
@@ -277,7 +276,6 @@ proxy_combo_box_changed_cb (GtkComboBox* button,
 
     if (custom_value)
     {
-        #if GTK_CHECK_VERSION (2, 12, 0)
         if (value == custom_value)
             gtk_widget_set_tooltip_text (GTK_WIDGET (button), NULL);
         else
@@ -286,10 +284,8 @@ proxy_combo_box_changed_cb (GtkComboBox* button,
             gtk_widget_set_tooltip_text (GTK_WIDGET (button), custom_text);
             g_free (custom_text);
         }
-        #endif
     }
 }
-#endif
 
 static void
 proxy_object_notify_boolean_cb (GObject*    object,
@@ -331,12 +327,19 @@ proxy_widget_string_destroy_cb (GtkWidget* proxy,
 static GList*
 katze_app_info_get_all_for_category (const gchar* category)
 {
+    #ifdef _WIN32
+    /* FIXME: Real filtering by category would be better */
+    const gchar* content_type = g_content_type_from_mime_type (category);
+    GList* all_apps = g_app_info_get_all_for_type (content_type);
+    #else
     GList* all_apps = g_app_info_get_all ();
+    #endif
     GList* apps = NULL;
-    guint i = 0;
     GAppInfo* info;
-    while ((info = g_list_nth_data (all_apps, i++)))
+    GList* app;
+    for (app = apps; app; app = g_list_next (app))
     {
+        GAppInfo* info = app->data;
         #ifdef GDK_WINDOWING_X11
         gchar* filename = g_strconcat ("applications/", g_app_info_get_id (info), NULL);
         GKeyFile* file = g_key_file_new ();
@@ -358,6 +361,92 @@ katze_app_info_get_all_for_category (const gchar* category)
     }
     g_list_free (all_apps);
     return apps;
+}
+
+static gboolean
+proxy_populate_apps (GtkWidget* widget)
+{
+    const gchar* property = g_object_get_data (G_OBJECT (widget), "property");
+    GObject* object = g_object_get_data (G_OBJECT (widget), "object");
+    gchar* string = katze_object_get_string (object, property);
+    if (!g_strcmp0 (string, ""))
+        katze_assign (string, NULL);
+    GtkSettings* settings = gtk_widget_get_settings (widget);
+    gint icon_width = 16;
+    if (settings == NULL)
+        settings = gtk_settings_get_for_screen (gdk_screen_get_default ());
+    gtk_icon_size_lookup_for_settings (settings, GTK_ICON_SIZE_MENU,
+                                       &icon_width, NULL);
+
+    GtkComboBox* combo = GTK_COMBO_BOX (widget);
+    GtkListStore* model = GTK_LIST_STORE (gtk_combo_box_get_model (combo));
+    GtkTreeIter iter_none;
+    gtk_list_store_insert_with_values (model, &iter_none, 0,
+        0, NULL, 1, NULL, 2, _("None"), 3, icon_width, -1);
+
+    const gchar* app_type = g_object_get_data (G_OBJECT (widget), "app-type");
+    GList* apps = g_app_info_get_all_for_type (app_type);
+    GAppInfo* info;
+    if (!apps)
+        apps = katze_app_info_get_all_for_category (app_type);
+    if (apps != NULL)
+    {
+        GList* app;
+        for (app = apps; app; app = g_list_next (app))
+        {
+            GAppInfo* info = app->data;
+            const gchar* name = g_app_info_get_name (info);
+            GIcon* icon = g_app_info_get_icon (info);
+            gchar* icon_name;
+            GtkTreeIter iter;
+
+            if (!g_app_info_should_show (info))
+                continue;
+
+            icon_name = icon ? g_icon_to_string (icon) : NULL;
+            gtk_list_store_insert_with_values (model, &iter, G_MAXINT,
+                0, info, 1, icon_name, 2, name, 3, icon_width, -1);
+            if (string && !strcmp (katze_app_info_get_commandline (info), string))
+                gtk_combo_box_set_active_iter (combo, &iter);
+
+            g_free (icon_name);
+        }
+        g_list_free (apps);
+    }
+
+    info = g_app_info_create_from_commandline ("",
+        "", G_APP_INFO_CREATE_NONE, NULL);
+    gtk_list_store_insert_with_values (model, NULL, G_MAXINT,
+        0, info, 1, NULL, 2, _("Custom…"), 3, icon_width, -1);
+    g_object_unref (info);
+
+    if (gtk_combo_box_get_active (combo) == -1)
+    {
+        if (string)
+        {
+            GtkWidget* entry;
+            const gchar* exe;
+
+            info = g_app_info_create_from_commandline (string,
+                NULL, G_APP_INFO_CREATE_NONE, NULL);
+            entry = gtk_entry_new ();
+            exe = g_app_info_get_executable (info);
+            if (exe && *exe && strcmp (exe, "%f"))
+                gtk_entry_set_text (GTK_ENTRY (entry), string);
+            gtk_widget_show (entry);
+            gtk_container_add (GTK_CONTAINER (combo), entry);
+            g_object_unref (info);
+            g_signal_connect (entry, "focus-out-event",
+                G_CALLBACK (proxy_entry_focus_out_event_cb), object);
+            g_object_set_data_full (G_OBJECT (entry), "property",
+                                    g_strdup (property), g_free);
+        }
+        else
+            gtk_combo_box_set_active_iter (combo, &iter_none);
+    }
+    g_signal_connect (widget, "changed",
+                      G_CALLBACK (proxy_combo_box_apps_changed_cb), object);
+    return G_SOURCE_REMOVE;
 }
 
 /**
@@ -452,23 +541,14 @@ katze_property_proxy (gpointer     object,
         gchar* notify_property;
         gboolean toggled = katze_object_get_boolean (object, property);
 
-        #ifdef HAVE_HILDON_2_2
-        if (_hint != I_("toggle"))
-        {
-            widget = hildon_check_button_new (HILDON_SIZE_FINGER_HEIGHT | HILDON_SIZE_AUTO_WIDTH);
-            gtk_button_set_label (GTK_BUTTON (widget), gettext (nick));
-            hildon_check_button_set_active (HILDON_CHECK_BUTTON (widget), toggled);
-        }
+
+        widget = gtk_check_button_new ();
+        if (_hint == I_("toggle"))
+            gtk_toggle_button_set_mode (GTK_TOGGLE_BUTTON (widget), FALSE);
         else
-        #endif
-        {
-            widget = gtk_check_button_new ();
-            if (_hint == I_("toggle"))
-                gtk_toggle_button_set_mode (GTK_TOGGLE_BUTTON (widget), FALSE);
-            else
-                gtk_button_set_label (GTK_BUTTON (widget), gettext (nick));
-            gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (widget), toggled);
-        }
+            gtk_button_set_label (GTK_BUTTON (widget), gettext (nick));
+        gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (widget), toggled);
+
         g_signal_connect (widget, "toggled",
                           G_CALLBACK (proxy_toggle_button_toggled_cb), object);
         notify_property = g_strdup_printf ("notify::%s", property);
@@ -517,42 +597,46 @@ katze_property_proxy (gpointer     object,
             string = g_strdup (G_PARAM_SPEC_STRING (pspec)->default_value);
         gtk_file_chooser_set_uri (GTK_FILE_CHOOSER (widget),
                                   string ? string : "");
-        #if GTK_CHECK_VERSION (2, 12, 0)
         g_signal_connect (widget, "file-set",
                           G_CALLBACK (proxy_uri_file_set_cb), object);
-        #else
-        if (pspec->flags & G_PARAM_WRITABLE)
-            g_signal_connect (widget, "selection-changed",
-                              G_CALLBACK (proxy_uri_file_set_cb), object);
-        #endif
     }
     else if (type == G_TYPE_PARAM_STRING && (_hint == I_("font")
         || _hint == I_("font-monospace")))
     {
-        GtkComboBox* combo;
-        gint n_families, i;
-        PangoContext* context;
-        PangoFontFamily** families;
-        gboolean monospace = _hint == I_("font-monospace");
         string = katze_object_get_string (object, property);
-
-        widget = gtk_combo_box_text_new ();
-        combo = GTK_COMBO_BOX (widget);
-        context = gtk_widget_get_pango_context (widget);
-        pango_context_list_families (context, &families, &n_families);
         if (!string)
             string = g_strdup (G_PARAM_SPEC_STRING (pspec)->default_value);
         /* 'sans' and 'sans-serif' are presumably the same */
         if (!g_strcmp0 (string, "sans-serif"))
             katze_assign (string, g_strdup ("sans"));
+        gboolean monospace = _hint == I_("font-monospace");
+
+        #if GTK_CHECK_VERSION (3, 2, 0)
+        widget = gtk_font_button_new ();
+        gtk_font_button_set_show_size (GTK_FONT_BUTTON (widget), FALSE);
+        gtk_font_chooser_set_font (GTK_FONT_CHOOSER (widget), string);
+        g_signal_connect (widget, "font-activated",
+                          G_CALLBACK (proxy_font_chooser_font_activated_cb), object);
+        gtk_font_chooser_set_filter_func (GTK_FONT_CHOOSER (widget),
+            (GtkFontFilterFunc)proxy_font_chooser_filter_monospace_cb, GINT_TO_POINTER (monospace), NULL);
+        #else
+        GtkComboBox* combo;
+        gint n_families, i;
+        PangoContext* context;
+        PangoFontFamily** families;
+
+        widget = gtk_combo_box_text_new ();
+        combo = GTK_COMBO_BOX (widget);
+        context = gtk_widget_get_pango_context (widget);
+        pango_context_list_families (context, &families, &n_families);
         if (string)
         {
             gint j = 0;
             for (i = 0; i < n_families; i++)
             {
-                const gchar* font = pango_font_family_get_name (families[i]);
                 if (monospace != pango_font_family_is_monospace (families[i]))
                     continue;
+                const gchar* font = pango_font_family_get_name (families[i]);
                 gtk_combo_box_text_append_text (GTK_COMBO_BOX_TEXT (combo), font);
                 if (!g_ascii_strcasecmp (font, string))
                     gtk_combo_box_set_active (combo, j);
@@ -564,22 +648,13 @@ katze_property_proxy (gpointer     object,
         g_signal_connect (widget, "changed",
                           G_CALLBACK (proxy_combo_box_text_changed_cb), object);
         g_free (families);
+        #endif
     }
     else if (type == G_TYPE_PARAM_STRING && hint && g_str_has_prefix (hint, "application-"))
     {
         GtkListStore* model;
         GtkCellRenderer* renderer;
-        GtkComboBox* combo;
-        GList* apps;
         const gchar* app_type = &hint[12];
-        GtkSettings* settings;
-        gint icon_width = 16;
-        GtkTreeIter iter_none;
-        GAppInfo* info;
-
-        settings = gtk_settings_get_for_screen (gdk_screen_get_default ());
-        gtk_icon_size_lookup_for_settings (settings, GTK_ICON_SIZE_MENU,
-                                           &icon_width, NULL);
 
         model = gtk_list_store_new (4, G_TYPE_APP_INFO, G_TYPE_STRING,
                                        G_TYPE_STRING, G_TYPE_INT);
@@ -591,77 +666,10 @@ katze_property_proxy (gpointer     object,
         renderer = gtk_cell_renderer_text_new ();
         gtk_cell_layout_pack_start (GTK_CELL_LAYOUT (widget), renderer, TRUE);
         gtk_cell_layout_add_attribute (GTK_CELL_LAYOUT (widget), renderer, "text", 2);
-        combo = GTK_COMBO_BOX (widget);
-        apps = g_app_info_get_all_for_type (app_type);
-        if (!apps)
-            apps = katze_app_info_get_all_for_category (app_type);
 
-        string = katze_object_get_string (object, property);
-        if (!g_strcmp0 (string, ""))
-            katze_assign (string, NULL);
-
-        gtk_list_store_insert_with_values (model, &iter_none, 0,
-            0, NULL, 1, NULL, 2, _("None"), 3, icon_width, -1);
-
-        if (apps != NULL)
-        {
-            gint i = 0;
-
-            while ((info = g_list_nth_data (apps, i++)))
-            {
-                const gchar* name = g_app_info_get_name (info);
-                GIcon* icon = g_app_info_get_icon (info);
-                gchar* icon_name;
-                GtkTreeIter iter;
-
-                if (!g_app_info_should_show (info))
-                    continue;
-
-                icon_name = icon ? g_icon_to_string (icon) : NULL;
-                gtk_list_store_insert_with_values (model, &iter, G_MAXINT,
-                    0, info, 1, icon_name, 2, name, 3, icon_width, -1);
-                if (string && !strcmp (katze_app_info_get_commandline (info), string))
-                    gtk_combo_box_set_active_iter (combo, &iter);
-
-                g_free (icon_name);
-            }
-            g_list_free (apps);
-        }
-
-        {
-            info = g_app_info_create_from_commandline ("",
-                "", G_APP_INFO_CREATE_NONE, NULL);
-            gtk_list_store_insert_with_values (model, NULL, G_MAXINT,
-                0, info, 1, NULL, 2, _("Custom..."), 3, icon_width, -1);
-            g_object_unref (info);
-
-            if (gtk_combo_box_get_active (combo) == -1)
-            {
-                if (string)
-                {
-                    GtkWidget* entry;
-                    const gchar* exe;
-
-                    info = g_app_info_create_from_commandline (string,
-                        NULL, G_APP_INFO_CREATE_NONE, NULL);
-                    entry = gtk_entry_new ();
-                    exe = g_app_info_get_executable (info);
-                    if (exe && *exe && strcmp (exe, "%f"))
-                        gtk_entry_set_text (GTK_ENTRY (entry), string);
-                    gtk_widget_show (entry);
-                    gtk_container_add (GTK_CONTAINER (combo), entry);
-                    g_object_unref (info);
-                    g_signal_connect (entry, "focus-out-event",
-                        G_CALLBACK (proxy_entry_focus_out_event_cb), object);
-                    g_object_set_data_full (G_OBJECT (entry), "property",
-                                            g_strdup (property), g_free);
-                }
-                else
-                    gtk_combo_box_set_active_iter (combo, &iter_none);
-            }
-        }
-        g_signal_connect (widget, "changed",
-                          G_CALLBACK (proxy_combo_box_apps_changed_cb), object);
+        g_object_set_data_full (G_OBJECT (widget), "app-type", g_strdup (app_type), g_free);
+        g_object_set_data_full (G_OBJECT (widget), "object", g_object_ref (object), g_object_unref);
+        g_idle_add_full (G_PRIORITY_LOW, (GSourceFunc)proxy_populate_apps, widget, NULL);
     }
     else if (type == G_TYPE_PARAM_STRING)
     {
@@ -699,7 +707,8 @@ katze_property_proxy (gpointer     object,
     }
     else if (type == G_TYPE_PARAM_FLOAT)
     {
-        gfloat value = katze_object_get_float (object, property);
+        gfloat value;
+        g_object_get (object, property, &value, NULL);
 
         widget = gtk_spin_button_new_with_range (
             G_PARAM_SPEC_FLOAT (pspec)->minimum,
@@ -742,10 +751,7 @@ katze_property_proxy (gpointer     object,
         widget = gtk_spin_button_new_with_range (
             G_PARAM_SPEC_INT (pspec)->minimum,
             G_PARAM_SPEC_INT (pspec)->maximum, 1);
-        #if HAVE_HILDON
-        hildon_gtk_entry_set_input_mode (GTK_ENTRY (widget),
-                                         HILDON_GTK_INPUT_MODE_NUMERIC);
-        #endif
+
         /* Keep it narrow, 5 digits are usually fine */
         gtk_entry_set_width_chars (GTK_ENTRY (widget), 5);
         gtk_spin_button_set_value (GTK_SPIN_BUTTON (widget), value);
@@ -763,39 +769,17 @@ katze_property_proxy (gpointer     object,
         if (hint && g_str_has_prefix (hint, "custom-"))
             custom = &hint[7];
 
-        #ifdef HAVE_HILDON_2_2
-        GtkWidget* selector;
-
-        widget = hildon_picker_button_new (
-            HILDON_SIZE_FINGER_HEIGHT | HILDON_SIZE_AUTO_WIDTH,
-            HILDON_BUTTON_ARRANGEMENT_HORIZONTAL);
-        selector = hildon_touch_selector_new_text ();
-        hildon_button_set_title (HILDON_BUTTON (widget), gettext (nick));
-        hildon_picker_button_set_selector (HILDON_PICKER_BUTTON (widget),
-                                           HILDON_TOUCH_SELECTOR (selector));
-        #else
         widget = gtk_combo_box_text_new ();
-        #endif
         for (i = 0; i < enum_class->n_values; i++)
         {
             const gchar* raw_label = gettext (enum_class->values[i].value_nick);
             gchar* label = katze_strip_mnemonics (raw_label);
-            #ifdef HAVE_HILDON_2_2
-            hildon_touch_selector_append_text (HILDON_TOUCH_SELECTOR (selector), label);
-            #else
             gtk_combo_box_text_append_text (GTK_COMBO_BOX_TEXT (widget), label);
-            #endif
             g_free (label);
         }
-        #ifdef HAVE_HILDON_2_2
-        hildon_touch_selector_set_active (HILDON_TOUCH_SELECTOR (selector), 0, value);
-        g_signal_connect (widget, "value-changed",
-                          G_CALLBACK (proxy_picker_button_changed_cb), object);
-        #else
         gtk_combo_box_set_active (GTK_COMBO_BOX (widget), value);
         g_signal_connect (widget, "changed",
                           G_CALLBACK (proxy_combo_box_changed_cb), object);
-        #endif
         if (custom)
         {
             gchar* custom_text = katze_object_get_string (object, custom);
@@ -812,11 +796,10 @@ katze_property_proxy (gpointer     object,
                     G_CALLBACK (proxy_entry_focus_out_event_cb), object);
                 g_object_set_data_full (G_OBJECT (entry), "property",
                                         g_strdup (custom), g_free);
+                gtk_widget_set_tooltip_text (widget, NULL);
             }
-            #if GTK_CHECK_VERSION (2, 12, 0)
             else
                 gtk_widget_set_tooltip_text (widget, custom_text);
-            #endif
 
             g_free (custom_text);
 
@@ -831,61 +814,10 @@ katze_property_proxy (gpointer     object,
         widget = gtk_label_new (gettext (nick));
     g_free (string);
 
-    #if GTK_CHECK_VERSION (2, 12, 0)
-    if (!gtk_widget_get_tooltip_text (widget))
-        gtk_widget_set_tooltip_text (widget, g_param_spec_get_blurb (pspec));
-    #endif
     gtk_widget_set_sensitive (widget, pspec->flags & G_PARAM_WRITABLE);
 
     g_object_set_data_full (G_OBJECT (widget), "property",
                             g_strdup (property), g_free);
-
-    return widget;
-}
-
-/**
- * katze_property_label:
- * @object: a #GObject
- * @property: the name of a property
- *
- * Create a label widget displaying the name of the specified object's property.
- *
- * Return value: a new label widget
- *
- * Since 0.2.1 the label will be empty if the property proxy for the
- *    same property would contain a label already.
- **/
-GtkWidget*
-katze_property_label (gpointer     object,
-                      const gchar* property)
-{
-    GObjectClass* class;
-    GParamSpec* pspec;
-    const gchar* nick;
-    GtkWidget* widget;
-
-    g_return_val_if_fail (G_IS_OBJECT (object), NULL);
-
-    class = G_OBJECT_GET_CLASS (object);
-    pspec = g_object_class_find_property (class, property);
-    if (!pspec)
-    {
-        g_warning (_("Property '%s' is invalid for %s"),
-                   property, G_OBJECT_CLASS_NAME (class));
-        return gtk_label_new (property);
-    }
-
-    #ifdef HAVE_HILDON_2_2
-    if (G_PARAM_SPEC_TYPE (pspec) == G_TYPE_PARAM_ENUM)
-        return gtk_label_new (NULL);
-    #endif
-
-    nick = g_param_spec_get_nick (pspec);
-    widget = gtk_label_new (nick);
-    #if GTK_CHECK_VERSION (2, 12, 0)
-    gtk_widget_set_tooltip_text (widget, g_param_spec_get_blurb (pspec));
-    #endif
-    gtk_misc_set_alignment (GTK_MISC (widget), 0.0, 0.5);
 
     return widget;
 }
@@ -910,21 +842,29 @@ katze_widget_popup_position_menu (GtkMenu*  menu,
     GtkRequisition widget_req;
     KatzePopupInfo* info = user_data;
     GtkWidget* widget = info->widget;
+    GdkWindow* window = gtk_widget_get_window (widget);
     gint widget_height;
 
-    gtk_widget_get_allocation (widget, &allocation);
+    if (!window)
+        return;
+
+    #if !GTK_CHECK_VERSION (3, 0, 0)
+    if (GTK_IS_ENTRY (widget))
+        window = gdk_window_get_parent (window);
+    #endif
 
     /* Retrieve size and position of both widget and menu */
-    if (!gtk_widget_get_has_window (widget))
-    {
-        gdk_window_get_position (gtk_widget_get_window (widget), &wx, &wy);
-        wx += allocation.x;
-        wy += allocation.y;
-    }
-    else
-        gdk_window_get_origin (gtk_widget_get_window (widget), &wx, &wy);
+    gtk_widget_get_allocation (widget, &allocation);
+    gdk_window_get_origin (window, &wx, &wy);
+    wx += allocation.x;
+    wy += allocation.y;
+    #if GTK_CHECK_VERSION (3, 0, 0)
+    gtk_widget_get_preferred_size (GTK_WIDGET (menu), &menu_req, NULL);
+    gtk_widget_get_preferred_size (widget, &widget_req, NULL);
+    #else
     gtk_widget_size_request (GTK_WIDGET (menu), &menu_req);
     gtk_widget_size_request (widget, &widget_req);
+    #endif
     menu_width = menu_req.width;
     widget_height = widget_req.height; /* Better than allocation.height */
 
@@ -1014,59 +954,6 @@ katze_image_menu_item_new_ellipsized (const gchar* label)
     gtk_container_add (GTK_CONTAINER (menuitem), label_widget);
 
     return menuitem;
-}
-
-/**
- * katze_pixbuf_new_from_buffer:
- * @buffer: Buffer with image data
- * @length: Length of the buffer
- * @mime_type: a MIME type, or %NULL
- * @error: return location for a #GError, or %NULL
- *
- * Creates a new #GdkPixbuf out of the specified buffer.
- *
- * You can specify a MIME type if looking at the buffer
- * is not enough to determine the right type.
- *
- * Return value: A newly-allocated #GdkPixbuf
- **/
-GdkPixbuf*
-katze_pixbuf_new_from_buffer (const guchar* buffer,
-                              gsize         length,
-                              const gchar*  mime_type,
-                              GError**      error)
-{
-    /* Proposed for inclusion in GdkPixbuf
-       See http://bugzilla.gnome.org/show_bug.cgi?id=74291 */
-    GdkPixbufLoader* loader;
-    GdkPixbuf* pixbuf;
-
-    g_return_val_if_fail (buffer != NULL, NULL);
-    g_return_val_if_fail (length > 0, NULL);
-
-    if (mime_type)
-    {
-        loader = gdk_pixbuf_loader_new_with_mime_type (mime_type, error);
-        if (!loader)
-            return NULL;
-    }
-    else
-        loader = gdk_pixbuf_loader_new ();
-    if (!gdk_pixbuf_loader_write (loader, buffer, length, error))
-    {
-        g_object_unref (loader);
-        return NULL;
-    }
-    if (!gdk_pixbuf_loader_close (loader, error))
-    {
-        g_object_unref (loader);
-        return NULL;
-    }
-
-    pixbuf = gdk_pixbuf_loader_get_pixbuf (loader);
-    g_object_ref (pixbuf);
-    g_object_unref (loader);
-    return pixbuf;
 }
 
 /**
@@ -1190,27 +1077,14 @@ katze_strip_mnemonics (const gchar* original)
   return result;
 }
 
-/**
- * katze_object_has_property:
- * @object: a #GObject
- * @property: the name of the property
- *
- * Determine if @object has a property with the specified name.
- *
- * Return value: a boolean
- *
- * Since: 0.1.2
- **/
-gboolean
-katze_object_has_property (gpointer     object,
-                           const gchar* property)
+const gchar*
+katze_skip_whitespace (const gchar* str)
 {
-    GObjectClass* class;
-
-    g_return_val_if_fail (G_IS_OBJECT (object), FALSE);
-
-    class = G_OBJECT_GET_CLASS (object);
-    return g_object_class_find_property (class, property) != NULL;
+    if (str == NULL)
+        return NULL;
+    while (*str == ' ' || *str == '\t' || *str == '\n')
+        str++;
+    return str;
 }
 
 /**
@@ -1251,28 +1125,6 @@ katze_object_get_int (gpointer     object,
     gint value = -1;
 
     g_return_val_if_fail (G_IS_OBJECT (object), -1);
-    /* FIXME: Check value type */
-
-    g_object_get (object, property, &value, NULL);
-    return value;
-}
-
-/**
- * katze_object_get_float:
- * @object: a #GObject
- * @property: the name of the property to get
- *
- * Retrieve the float value of the specified property.
- *
- * Return value: a float
- **/
-gfloat
-katze_object_get_float (gpointer     object,
-                        const gchar* property)
-{
-    gfloat value = -1.0f;
-
-    g_return_val_if_fail (G_IS_OBJECT (object), -1.0f);
     /* FIXME: Check value type */
 
     g_object_get (object, property, &value, NULL);
@@ -1353,165 +1205,17 @@ katze_object_get_object (gpointer     object,
  * Create a directory if it doesn't already exist. Create intermediate
  * parent directories as needed, too.
  *
- * Similar to g_mkdir_with_parents() but returning early if the
- * @pathname refers to an existing directory.
- *
  * Returns: 0 if the directory already exists, or was successfully
  * created. Returns -1 if an error occurred, with errno set.
  *
  * Since: 0.2.1
  */
-/* Creating directories recursively
-   Copyright 2000 Red Hat, Inc.
-   Originally copied from Glib 2.20, coding style adjusted
-   Modified to determine file existence early and pathname must be != NULL */
 int
 katze_mkdir_with_parents (const gchar* pathname,
                           int          mode)
 {
-  gchar* fn, *p;
-
-  /* Use g_access instead of g_file_test for better performance */
-  if (g_access (pathname, F_OK) == 0)
-      return 0;
-
-  fn = g_strdup (pathname);
-
-  if (g_path_is_absolute (fn))
-    p = (gchar *) g_path_skip_root (fn);
-  else
-    p = fn;
-
-  do
-  {
-      while (*p && !G_IS_DIR_SEPARATOR (*p))
-          p++;
-
-      if (!*p)
-          p = NULL;
-      else
-          *p = '\0';
-
-      if (g_access (fn, F_OK) != 0)
-      {
-          if (g_mkdir (fn, mode) == -1)
-          {
-              g_free (fn);
-              return -1;
-          }
-      }
-      else if (!g_file_test (fn, G_FILE_TEST_IS_DIR))
-      {
-          g_free (fn);
-          return -1;
-      }
-      if (p)
-      {
-          *p++ = G_DIR_SEPARATOR;
-          while (*p && G_IS_DIR_SEPARATOR (*p))
-              p++;
-      }
-  }
-  while (p);
-
-  g_free (fn);
-
-  return 0;
-}
-
-/**
- * katze_widget_has_touchscreen_mode:
- * @widget: a #GtkWidget, or %NULL
- *
- * Determines whether @widget should operate in touchscreen
- * mode, as determined by GtkSettings or the environment
- * variable MIDORI_TOUCHSCREEN.
- *
- * If @widget is %NULL, the default screen will be used.
- *
- * Returns: %TRUE if touchscreen mode should be used
- *
- * Since: 0.2.1
- */
-gboolean
-katze_widget_has_touchscreen_mode (GtkWidget* widget)
-{
-    const gchar* touchscreen = g_getenv ("MIDORI_TOUCHSCREEN");
-    if (touchscreen && touchscreen[0] == '1')
-        return TRUE;
-    else if (touchscreen && touchscreen[0] == '0')
-        return FALSE;
-    else
-    {
-        GdkScreen* screen = widget && gtk_widget_has_screen (widget)
-            ? gtk_widget_get_screen (widget) : gdk_screen_get_default ();
-        GtkSettings* gtk_settings = gtk_settings_get_for_screen (screen);
-        gboolean enabled;
-        g_object_get (gtk_settings, "gtk-touchscreen-mode", &enabled, NULL);
-        return enabled;
-    }
-}
-
-/**
- * katze_load_cached_icon:
- * @uri: an URI string
- * @widget: a #GtkWidget, or %NULL
- *
- * Loads a cached icon for the specified @uri. If there is no
- * icon and @widget is specified, a default will be returned.
- *
- * Returns: a #GdkPixbuf, or %NULL
- *
- * Since: 0.2.2
- */
-GdkPixbuf*
-katze_load_cached_icon (const gchar* uri,
-                        GtkWidget*   widget)
-{
-    GdkPixbuf* icon = NULL;
-
-    g_return_val_if_fail (uri != NULL, NULL);
-
-    if (midori_uri_is_http (uri))
-    {
-        guint i;
-        gchar* icon_uri;
-        gchar* checksum;
-        gchar* ext;
-        gchar* filename;
-        gchar* path;
-
-        i = 8;
-        while (uri[i] != '\0' && uri[i] != '/')
-            i++;
-        if (uri[i] == '/')
-        {
-            gchar* ticon_uri = g_strdup (uri);
-            ticon_uri[i] = '\0';
-            icon_uri = g_strdup_printf ("%s/favicon.ico", ticon_uri);
-            g_free (ticon_uri);
-        }
-        else
-            icon_uri = g_strdup_printf ("%s/favicon.ico", uri);
-
-        checksum = g_compute_checksum_for_string (G_CHECKSUM_MD5, icon_uri, -1);
-        ext = g_strrstr (icon_uri, ".");
-        filename = g_strdup_printf ("%s%s", checksum, ext ? ext : "");
-        g_free (icon_uri);
-        g_free (checksum);
-        path = g_build_filename (g_get_user_cache_dir (), PACKAGE_NAME,
-                                 "icons", filename, NULL);
-        g_free (filename);
-        if ((icon = gdk_pixbuf_new_from_file_at_size (path, 16, 16, NULL)))
-        {
-            g_free (path);
-            return icon;
-        }
-        g_free (path);
-    }
-
-    return icon || !widget ? icon : gtk_widget_render_icon (widget,
-        GTK_STOCK_FILE, GTK_ICON_SIZE_MENU, NULL);
+    midori_paths_mkdir_with_parents (pathname, mode);
+    return 0;
 }
 
 static void
@@ -1520,7 +1224,16 @@ katze_uri_entry_changed_cb (GtkWidget* entry,
 {
     const gchar* uri = gtk_entry_get_text (GTK_ENTRY (entry));
     gboolean valid = midori_uri_is_location (uri);
-    if (*uri && !valid)
+    if (!valid && g_object_get_data (G_OBJECT (entry), "allow_%s"))
+        valid = uri && g_str_has_prefix (uri, "%s");
+    if (!valid)
+        valid = midori_uri_is_ip_address (uri);
+
+    #if GTK_CHECK_VERSION (3, 2, 0)
+    g_object_set_data (G_OBJECT (entry), "invalid", GINT_TO_POINTER (uri && *uri && !valid));
+    gtk_widget_queue_draw (entry);
+    #else
+    if (uri && *uri && !valid)
     {
         GdkColor bg_color = { 0 };
         GdkColor fg_color = { 0 };
@@ -1534,10 +1247,33 @@ katze_uri_entry_changed_cb (GtkWidget* entry,
         gtk_widget_modify_base (entry, GTK_STATE_NORMAL, NULL);
         gtk_widget_modify_text (entry, GTK_STATE_NORMAL, NULL);
     }
+    #endif
 
     if (other_widget != NULL)
         gtk_widget_set_sensitive (other_widget, valid);
 }
+
+#if GTK_CHECK_VERSION (3, 2, 0)
+static gboolean
+katze_uri_entry_draw_cb (GtkWidget* entry,
+                         cairo_t*   cr,
+                         GtkWidget* other_widget)
+{
+    const GdkRGBA color = { 0.9, 0., 0., 1. };
+    double width = gtk_widget_get_allocated_width (entry);
+    double height = gtk_widget_get_allocated_height (entry);
+
+    if (!g_object_get_data (G_OBJECT (entry), "invalid"))
+        return FALSE;
+
+    /* FIXME: error-underline-color requires GtkTextView */
+    gdk_cairo_set_source_rgba (cr, &color);
+
+    pango_cairo_show_error_underline (cr, width * 0.15, height / 1.9,
+        width * 0.75, height / 1.9 / 2);
+    return TRUE;
+}
+#endif
 
 /**
  * katze_uri_entry_new:
@@ -1556,9 +1292,29 @@ GtkWidget*
 katze_uri_entry_new (GtkWidget* other_widget)
 {
     GtkWidget* entry = gtk_entry_new ();
+    #if GTK_CHECK_VERSION (3, 6, 0)
+    gtk_entry_set_input_purpose (GTK_ENTRY (entry), GTK_INPUT_PURPOSE_URL);
+    #endif
+
+    gtk_entry_set_icon_from_gicon (GTK_ENTRY (entry), GTK_ENTRY_ICON_PRIMARY,
+        g_themed_icon_new_with_default_fallbacks ("text-html-symbolic"));
     g_signal_connect (entry, "changed",
         G_CALLBACK (katze_uri_entry_changed_cb), other_widget);
+    #if GTK_CHECK_VERSION (3, 2, 0)
+    g_signal_connect_after (entry, "draw",
+        G_CALLBACK (katze_uri_entry_draw_cb), other_widget);
+    #endif
     return entry;
+}
+
+void
+katze_widget_add_class (GtkWidget*   widget,
+                        const gchar* class_name)
+{
+    #if GTK_CHECK_VERSION (3,0,0)
+    GtkStyleContext* context = gtk_widget_get_style_context (widget);
+    gtk_style_context_add_class (context, class_name);
+    #endif
 }
 
 /**
@@ -1583,5 +1339,23 @@ katze_assert_str_equal (const gchar* input,
                  expected ? expected : "NULL",
                  result ? result : "NULL");
     }
+}
+
+void
+katze_window_set_sensible_default_size (GtkWindow* window)
+{
+    GdkScreen* screen;
+    GdkRectangle monitor;
+    gint width, height;
+
+    g_return_if_fail (GTK_IS_WINDOW (window));
+
+    screen = gtk_window_get_screen (window);
+    gdk_screen_get_monitor_geometry (screen, 0, &monitor);
+    width = monitor.width / 1.7;
+    height = monitor.height / 1.7;
+    gtk_window_set_default_size (window, width, height);
+    /* 700x100 is the approximate useful minimum dimensions */
+    gtk_widget_set_size_request (GTK_WIDGET (window), 700, 100);
 }
 

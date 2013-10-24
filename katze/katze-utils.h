@@ -20,15 +20,6 @@
 G_BEGIN_DECLS
 
 /**
- * KATZE_OBJECT_NAME:
- * @object: an object
- *
- * Return the name of an object's class structure's type.
- **/
-#define KATZE_OBJECT_NAME(object) \
-    G_OBJECT_CLASS_NAME (G_OBJECT_GET_CLASS (object))
-
-/**
  * katze_assign:
  * @lvalue: a pointer
  * @rvalue: the new value
@@ -45,7 +36,7 @@ G_BEGIN_DECLS
  * Unrefs @lvalue if needed and assigns it the value of @rvalue.
  **/
 #define katze_object_assign(lvalue, rvalue) \
-    lvalue = ((lvalue ? g_object_unref (lvalue) : lvalue), rvalue)
+    lvalue = ((lvalue ? g_object_unref (lvalue) : (void)0), rvalue)
 
 /**
  * katze_strv_assign:
@@ -58,14 +49,24 @@ G_BEGIN_DECLS
  **/
 #define katze_strv_assign(lvalue, rvalue) lvalue = (g_strfreev (lvalue), rvalue)
 
+/**
+ * katze_str_non_null:
+ * @str: a string, or %NULL
+ *
+ * Returns "" if @str is %NULL.
+ *
+ * Since: 0.4.4
+ **/
+static inline const gchar*
+katze_str_non_null (const gchar* str)
+{
+    return str ? str : "";
+}
+
 GtkWidget*
 katze_property_proxy                (gpointer     object,
                                      const gchar* property,
                                      const gchar* hint);
-
-GtkWidget*
-katze_property_label                (gpointer     object,
-                                     const gchar* property);
 
 typedef enum {
     KATZE_MENU_POSITION_CURSOR = 0,
@@ -82,12 +83,6 @@ katze_widget_popup                   (GtkWidget*      widget,
 GtkWidget*
 katze_image_menu_item_new_ellipsized (const gchar*   label);
 
-GdkPixbuf*
-katze_pixbuf_new_from_buffer         (const guchar* buffer,
-                                      gsize         length,
-                                      const gchar*  mime_type,
-                                      GError**      error);
-
 gboolean
 katze_tree_view_get_selected_iter    (GtkTreeView*   treeview,
                                       GtkTreeModel** model,
@@ -101,9 +96,8 @@ katze_bookmark_populate_tree_view    (KatzeArray* array,
 gchar*
 katze_strip_mnemonics                (const gchar*    original);
 
-gboolean
-katze_object_has_property            (gpointer     object,
-                                      const gchar* property);
+const gchar*
+katze_skip_whitespace                (const gchar*    str);
 
 gint
 katze_object_get_boolean             (gpointer     object,
@@ -111,10 +105,6 @@ katze_object_get_boolean             (gpointer     object,
 
 gint
 katze_object_get_int                 (gpointer     object,
-                                      const gchar* property);
-
-gfloat
-katze_object_get_float               (gpointer     object,
                                       const gchar* property);
 
 gint
@@ -133,20 +123,20 @@ int
 katze_mkdir_with_parents             (const gchar* pathname,
                                       int          mode);
 
-gboolean
-katze_widget_has_touchscreen_mode    (GtkWidget*      widget);
-
-GdkPixbuf*
-katze_load_cached_icon               (const gchar*    uri,
-                                      GtkWidget*      widget);
-
 GtkWidget*
 katze_uri_entry_new                  (GtkWidget*      other_widget);
+
+void
+katze_widget_add_class               (GtkWidget*      widget,
+                                      const gchar*    class_name);
 
 void
 katze_assert_str_equal               (const gchar*    input,
                                       const gchar*    result,
                                       const gchar*    expected);
+
+void
+katze_window_set_sensible_default_size (GtkWindow*    window);
 
 G_END_DECLS
 

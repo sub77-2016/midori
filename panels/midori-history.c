@@ -16,7 +16,7 @@
 #include "midori-browser.h"
 #include "midori-platform.h"
 #include "midori-view.h"
-#include "midori-viewable.h"
+#include "midori-core.h"
 
 #include <glib/gi18n.h>
 #include <string.h>
@@ -28,7 +28,8 @@ void
 midori_browser_edit_bookmark_dialog_new (MidoriBrowser* browser,
                                          KatzeItem*     bookmark,
                                          gboolean       new_bookmark,
-                                         gboolean       is_folder);
+                                         gboolean       is_folder,
+                                         GtkWidget*     proxy);
 
 
 struct _MidoriHistory
@@ -116,18 +117,61 @@ midori_history_get_stock_id (MidoriViewable* viewable)
     return STOCK_HISTORY;
 }
 
+#if !GLIB_CHECK_VERSION (2, 26, 0)
+static gint
+sokoke_days_between (const time_t* day1,
+                     const time_t* day2)
+{
+    GDate* date1;
+    GDate* date2;
+    gint age;
+
+    date1 = g_date_new ();
+    date2 = g_date_new ();
+
+    g_date_set_time_t (date1, *day1);
+    g_date_set_time_t (date2, *day2);
+
+    age = g_date_days_between (date1, date2);
+
+    g_date_free (date1);
+    g_date_free (date2);
+
+    return age;
+}
+#endif
+
 static gchar*
 midori_history_format_date (KatzeItem *item)
 {
-    gint age;
-    gint64 day;
-    gchar token[50];
+    gint64 day = katze_item_get_added (item);
     gchar* sdate;
+    gint age;
+    #if GLIB_CHECK_VERSION (2, 26, 0)
+    GDateTime* now = g_date_time_new_now_local ();
+    GDateTime* then = g_date_time_new_from_unix_local (day);
+    age = g_date_time_get_day_of_year (now) - g_date_time_get_day_of_year (then);
+    if (g_date_time_get_year (now) != g_date_time_get_year (then))
+        age = 999;
+
+    if (age == 0)
+        sdate = g_strdup (_("Today"));
+    else if (age == 1)
+        sdate = g_strdup (_("Yesterday"));
+    else if (age < 7)
+        sdate = g_strdup_printf (ngettext ("%d day ago",
+            "%d days ago", (gint)age), (gint)age);
+    else if (age == 7)
+        sdate = g_strdup (_("A week ago"));
+    else
+        sdate = g_date_time_format (then, "%x");
+    g_date_time_unref (now);
+    g_date_time_unref (then);
+    #else
+    gchar token[50];
     time_t current_time;
 
     current_time = time (NULL);
-    day = katze_item_get_added (item);
-
     age = sokoke_days_between ((time_t*)&day, &current_time);
 
     /* A negative age is a date in the future, the clock is probably off */
@@ -147,6 +191,7 @@ midori_history_format_date (KatzeItem *item)
         sdate = g_strdup (_("Today"));
     else
         sdate = g_strdup (_("Yesterday"));
+    #endif
     return sdate;
 }
 
@@ -234,7 +279,6 @@ midori_history_read_from_db (MidoriHistory* history,
         result = sqlite3_prepare_v2 (db, sqlcmd, -1, &statement, NULL);
         filterstr = g_strdup_printf ("%%%s%%", filter);
         sqlite3_bind_text (statement, 1, filterstr, -1, g_free);
-        req_day = -1;
     }
     else if (req_day == 0)
     {
@@ -331,6 +375,7 @@ midori_history_bookmark_add_cb (GtkWidget*     menuitem,
     GtkTreeIter iter;
     KatzeItem* item = NULL;
 
+    GtkWidget* proxy = GTK_IS_TOOL_ITEM (menuitem) ? menuitem : NULL;
     MidoriBrowser* browser = midori_browser_get_for_widget (GTK_WIDGET (history));
     if (katze_tree_view_get_selected_iter (GTK_TREE_VIEW (history->treeview),
                                            &model, &iter))
@@ -338,11 +383,11 @@ midori_history_bookmark_add_cb (GtkWidget*     menuitem,
 
     if (KATZE_IS_ITEM (item) && katze_item_get_uri (item))
     {
-        midori_browser_edit_bookmark_dialog_new (browser, item, TRUE, FALSE);
+        midori_browser_edit_bookmark_dialog_new (browser, item, TRUE, FALSE, proxy);
         g_object_unref (item);
     }
     else
-        midori_browser_edit_bookmark_dialog_new (browser, NULL, TRUE, FALSE);
+        midori_browser_edit_bookmark_dialog_new (browser, NULL, TRUE, FALSE, proxy);
 }
 
 static GtkWidget*
@@ -412,9 +457,8 @@ midori_history_add_item_cb (KatzeArray*    array,
     GtkTreeModel* model = gtk_tree_view_get_model (treeview);
     GtkTreeIter iter;
     KatzeItem* today;
-    time_t current_time;
+    time_t current_time = time (NULL);
 
-    current_time = time (NULL);
     if (gtk_tree_model_iter_children (model, &iter, NULL))
     {
         gint64 day;
@@ -423,7 +467,18 @@ midori_history_add_item_cb (KatzeArray*    array,
         gtk_tree_model_get (model, &iter, 0, &today, -1);
 
         day = katze_item_get_added (today);
+        #if GLIB_CHECK_VERSION (2, 26, 0)
+        has_today = g_date_time_get_day_of_month (
+            g_date_time_new_from_unix_local (day))
+         == g_date_time_get_day_of_month (
+            g_date_time_new_from_unix_local (current_time))
+        && g_date_time_get_day_of_year (
+            g_date_time_new_from_unix_local (day))
+         == g_date_time_get_day_of_year (
+            g_date_time_new_from_unix_local (current_time));
+        #else
         has_today = sokoke_days_between ((time_t*)&day, &current_time) == 0;
+        #endif
         g_object_unref (today);
         if (has_today)
         {
@@ -538,21 +593,12 @@ midori_history_treeview_render_icon_cb (GtkTreeViewColumn* column,
 
     gtk_tree_model_get (model, iter, 0, &item, -1);
 
-    if (!item)
-        pixbuf = NULL;
-    else if (katze_item_get_uri (item))
-        pixbuf = katze_load_cached_icon (katze_item_get_uri (item), treeview);
-    else
-        pixbuf = gtk_widget_render_icon (treeview, GTK_STOCK_DIRECTORY,
-                                         GTK_ICON_SIZE_MENU, NULL);
-
+    pixbuf = katze_item_get_pixbuf (item, treeview);
     g_object_set (renderer, "pixbuf", pixbuf, NULL);
 
     if (pixbuf)
-    {
         g_object_unref (pixbuf);
-        g_object_unref (item);
-    }
+    g_object_unref (item);
 }
 
 static void
@@ -568,11 +614,14 @@ midori_history_treeview_render_text_cb (GtkTreeViewColumn* column,
 
     if (KATZE_ITEM_IS_BOOKMARK (item))
         g_object_set (renderer, "markup", NULL,
+                      "ellipsize", PANGO_ELLIPSIZE_END,
                       "text", katze_item_get_name (item), NULL);
     else if (KATZE_ITEM_IS_FOLDER (item))
     {
         gchar* formatted = midori_history_format_date (item);
-        g_object_set (renderer, "markup", NULL, "text", formatted, NULL);
+        g_object_set (renderer, "markup", NULL, "text", formatted,
+                      "ellipsize", PANGO_ELLIPSIZE_END,
+                      NULL);
         g_free (formatted);
     }
     else
@@ -691,11 +740,9 @@ midori_history_open_in_tab_activate_cb (GtkWidget*     menuitem,
         {
             if ((uri = katze_item_get_uri (child)) && *uri)
             {
-                MidoriBrowser* browser;
-
-                browser = midori_browser_get_for_widget (GTK_WIDGET (history));
-                n = midori_browser_add_item (browser, child);
-                midori_browser_set_current_page_smartly (browser, n);
+                MidoriBrowser* browser = midori_browser_get_for_widget (GTK_WIDGET (history));
+                GtkWidget* view = midori_browser_add_item (browser, child);
+                midori_browser_set_current_tab_smartly (browser, view);
             }
         }
     }
@@ -703,11 +750,9 @@ midori_history_open_in_tab_activate_cb (GtkWidget*     menuitem,
     {
         if ((uri = katze_item_get_uri (item)) && *uri)
         {
-            MidoriBrowser* browser;
-
-            browser = midori_browser_get_for_widget (GTK_WIDGET (history));
-            n = midori_browser_add_item (browser, item);
-            midori_browser_set_current_page_smartly (browser, n);
+            MidoriBrowser* browser = midori_browser_get_for_widget (GTK_WIDGET (history));
+            GtkWidget* view = midori_browser_add_item (browser, item);
+            midori_browser_set_current_tab_smartly (browser, view);
         }
     }
 }
@@ -792,12 +837,9 @@ midori_history_button_release_event_cb (GtkWidget*      widget,
 
             if (uri && *uri)
             {
-                MidoriBrowser* browser;
-                gint n;
-
-                browser = midori_browser_get_for_widget (widget);
-                n = midori_browser_add_uri (browser, uri);
-                midori_browser_set_current_page (browser, n);
+                MidoriBrowser* browser = midori_browser_get_for_widget (widget);
+                GtkWidget* view = midori_browser_add_uri (browser, uri);
+                midori_browser_set_current_tab (browser, view);
             }
         }
         else
@@ -906,19 +948,13 @@ midori_history_filter_entry_changed_cb (GtkEntry*      entry,
 {
     if (history->filter_timeout)
         g_source_remove (history->filter_timeout);
-    history->filter_timeout = g_timeout_add (COMPLETION_DELAY,
-        midori_history_filter_timeout_cb, history);
-    katze_assign (history->filter, g_strdup (gtk_entry_get_text (entry)));
-}
+    history->filter_timeout = midori_timeout_add (COMPLETION_DELAY,
+        midori_history_filter_timeout_cb, history, NULL);
 
-static void
-midori_history_filter_entry_clear_cb (GtkEntry*      entry,
-                                      gint           icon_pos,
-                                      gint           button,
-                                      MidoriHistory* history)
-{
-    if (icon_pos == GTK_ICON_ENTRY_SECONDARY)
-        gtk_entry_set_text (entry, "");
+    if (!g_object_get_data (G_OBJECT (entry), "sokoke_has_default"))
+        katze_assign (history->filter, g_strdup (gtk_entry_get_text (entry)));
+    else
+        katze_assign (history->filter, NULL);
 }
 
 static void
@@ -941,19 +977,8 @@ midori_history_init (MidoriHistory* history)
     GtkTreeSelection* selection;
 
     /* Create the filter entry */
-    entry = gtk_icon_entry_new ();
-    gtk_icon_entry_set_icon_from_stock (GTK_ICON_ENTRY (entry),
-                                        GTK_ICON_ENTRY_PRIMARY,
-                                        GTK_STOCK_FIND);
-    gtk_icon_entry_set_icon_from_stock (GTK_ICON_ENTRY (entry),
-                                        GTK_ICON_ENTRY_SECONDARY,
-                                        GTK_STOCK_CLEAR);
-    gtk_icon_entry_set_icon_highlight (GTK_ICON_ENTRY (entry),
-                                       GTK_ICON_ENTRY_SECONDARY,
-                                       TRUE);
-    g_signal_connect (entry, "icon-release",
-        G_CALLBACK (midori_history_filter_entry_clear_cb), history);
-    g_signal_connect (entry, "changed",
+    entry = sokoke_search_entry_new (_("Search History"));
+    g_signal_connect_after (entry, "changed",
         G_CALLBACK (midori_history_filter_entry_changed_cb), history);
     box = gtk_hbox_new (FALSE, 0);
     gtk_box_pack_start (GTK_BOX (box), entry, TRUE, TRUE, 3);
@@ -966,14 +991,14 @@ midori_history_init (MidoriHistory* history)
     gtk_tree_view_set_headers_visible (GTK_TREE_VIEW (treeview), FALSE);
     gtk_tree_view_set_tooltip_column (GTK_TREE_VIEW (treeview), 1);
     column = gtk_tree_view_column_new ();
-    gtk_tree_view_column_set_sizing (column, GTK_TREE_VIEW_COLUMN_AUTOSIZE);
+    gtk_tree_view_column_set_expand (column, TRUE);
     renderer_pixbuf = gtk_cell_renderer_pixbuf_new ();
     gtk_tree_view_column_pack_start (column, renderer_pixbuf, FALSE);
     gtk_tree_view_column_set_cell_data_func (column, renderer_pixbuf,
         (GtkTreeCellDataFunc)midori_history_treeview_render_icon_cb,
         treeview, NULL);
     renderer_text = gtk_cell_renderer_text_new ();
-    gtk_tree_view_column_pack_start (column, renderer_text, FALSE);
+    gtk_tree_view_column_pack_start (column, renderer_text, TRUE);
     gtk_tree_view_column_set_cell_data_func (column, renderer_text,
         (GtkTreeCellDataFunc)midori_history_treeview_render_text_cb,
         treeview, NULL);

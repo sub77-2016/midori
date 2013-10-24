@@ -1,0 +1,42 @@
+#! /bin/sh
+
+# Copyright (C) 2013 Christian Dywan <christian@twotoasts.de>
+#
+# This library is free software; you can redistribute it and/or
+# modify it under the terms of the GNU Lesser General Public
+# License as published by the Free Software Foundation; either
+# version 2.1 of the License, or (at your option) any later version.
+#
+# See the file COPYING for the full license text.
+
+OLDVER=$(git describe --abbrev=0)
+NEWVER=$(python -c "print('0.'+str(float('$OLDVER'[2:])+.1))")
+if [ "x$1" = "xbefore" ]; then
+    echo Bumping from $OLDVER to $NEWVER
+    sed -i "s@$OLDVER@$NEWVER@g" wscript win32/makedist/midori.nsi
+    echo; echo v$NEWVER:; git log --pretty='format: %s' $OLDVER..HEAD | grep -v l10n | grep -v makedist | grep -v tools/release | grep -v nsi | grep -v -E 'Update .+ translation'; echo
+    curl http://wiki.xfce.org/_export/xhtml/midori/faq | \
+        sed 's@This is a list of frequently asked questions@This is <a href="http://wiki.xfce.org/midori/faq">a snapshot of the online FAQ</a>@g' | \
+        sed 's@<link rel="style.*>@<link rel="stylesheet" href="faq.css" />@g' > data/faq.html
+elif [ "x$1" = "xafter" ]; then
+    echo -n git commit -m "'Bump version to $NEWVER'"
+    case $SHELL in
+    *fish*)
+        echo -n '; and ' ;;
+    *)
+        echo -n ' && ' ;;
+    esac
+    echo git tag -a $NEWVER -m "'Bump version to $NEWVER'"
+    echo Press RETURN to download tarball now; read yes
+    wget http://git.xfce.org/apps/midori/snapshot/midori-$NEWVER.tar.bz2
+    echo https://releases.xfce.org/
+    echo Press RETURN to update Launchpad bugs now; read yes
+    if [ -n $(which bugreleaser 1>/dev/null) ]; then
+        bugreleaser midori
+    else
+        echo bzr branch lp:~mgiuca/+junk/launchpad-tools
+    fi
+else
+    echo 'Usage: ['$(basename $0)']' 'before|after'
+    exit 1
+fi

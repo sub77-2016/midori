@@ -1,5 +1,5 @@
 /*
- Copyright (C) 2008-2010 Christian Dywan <christian@twotoasts.de>
+ Copyright (C) 2008-2012 Christian Dywan <christian@twotoasts.de>
 
  This library is free software; you can redistribute it and/or
  modify it under the terms of the GNU Lesser General Public
@@ -11,8 +11,6 @@
 
 #ifndef __MIDORI_WEB_SETTINGS_H__
 #define __MIDORI_WEB_SETTINGS_H__
-
-#include <webkit/webkit.h>
 
 #include <katze/katze.h>
 
@@ -34,8 +32,6 @@ G_BEGIN_DECLS
 typedef struct _MidoriWebSettings                MidoriWebSettings;
 typedef struct _MidoriWebSettingsClass           MidoriWebSettingsClass;
 
-#define MIDORI_PARAM_DELAY_SAVING (1 << 8)
-
 enum
 {
     MIDORI_CLEAR_NONE = 0,
@@ -48,20 +44,6 @@ enum
     MIDORI_CLEAR_WEB_CACHE = 64, /* deprecated */
     MIDORI_CLEAR_SESSION = 128,
 };
-
-typedef enum
-{
-    MIDORI_WINDOW_NORMAL,
-    MIDORI_WINDOW_MINIMIZED,
-    MIDORI_WINDOW_MAXIMIZED,
-    MIDORI_WINDOW_FULLSCREEN,
-} MidoriWindowState;
-
-GType
-midori_window_state_get_type (void) G_GNUC_CONST;
-
-#define MIDORI_TYPE_WINDOW_STATE \
-    (midori_window_state_get_type ())
 
 /* values >= MIDORI_STARTUP_LAST_OPEN_PAGES mean session is saved */
 typedef enum
@@ -80,7 +62,23 @@ midori_startup_get_type (void) G_GNUC_CONST;
 
 typedef enum
 {
-    MIDORI_ENCODING_CHINESE,
+    MIDORI_NEWTAB_BLANK_PAGE,
+    MIDORI_NEWTAB_HOMEPAGE,
+    MIDORI_NEWTAB_SEARCH,
+    MIDORI_NEWTAB_SPEED_DIAL,
+    MIDORI_NEWTAB_CUSTOM,
+} MidoriNewTabType;
+
+GType
+midori_newtab_get_type (void) G_GNUC_CONST;
+
+#define MIDORI_TYPE_NEWTAB \
+    (midori_newtab_get_type ())
+
+typedef enum
+{
+    MIDORI_ENCODING_CHINESE /* Traditional */,
+    MIDORI_ENCODING_CHINESE_SIMPLIFIED,
     MIDORI_ENCODING_JAPANESE,
     MIDORI_ENCODING_KOREAN,
     MIDORI_ENCODING_RUSSIAN,
@@ -141,6 +139,7 @@ typedef enum
 {
     MIDORI_IDENT_MIDORI /* Automatic */,
     MIDORI_IDENT_GENUINE /* Midori */,
+    MIDORI_IDENT_CHROME,
     MIDORI_IDENT_SAFARI,
     MIDORI_IDENT_IPHONE,
     MIDORI_IDENT_FIREFOX,
@@ -172,6 +171,33 @@ midori_web_settings_remove_style           (MidoriWebSettings* settings,
 const gchar*
 midori_web_settings_get_system_name        (gchar**            architecture,
                                             gchar**            platform);
+
+gboolean
+midori_web_settings_has_plugin_support     (void);
+
+gboolean
+midori_web_settings_skip_plugin            (const gchar* path);
+
+typedef enum
+{
+    MIDORI_SITE_DATA_UNDETERMINED,
+    MIDORI_SITE_DATA_BLOCK,
+    MIDORI_SITE_DATA_ACCEPT,
+    MIDORI_SITE_DATA_PRESERVE,
+} MidoriSiteDataPolicy;
+
+MidoriSiteDataPolicy
+midori_web_settings_get_site_data_policy   (MidoriWebSettings* settings,
+                                            const gchar*       uri);
+
+MidoriWebSettings*
+midori_settings_new_full                   (gchar***           extensions);
+
+gboolean
+midori_settings_save_to_file               (MidoriWebSettings* settings,
+                                            GObject*           app,
+                                            const gchar*       filename,
+                                            GError**           error);
 
 G_END_DECLS
 

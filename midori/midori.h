@@ -14,14 +14,16 @@
 
 #include "midori-app.h"
 #include "midori-array.h"
+#include "midori-bookmarks.h"
 #include "midori-browser.h"
 #include "midori-extension.h"
+#include "midori-frontend.h"
 #include "midori-locationaction.h"
 #include "midori-panel.h"
 #include "midori-preferences.h"
+#include "midori-privatedata.h"
 #include "midori-searchaction.h"
 #include "midori-view.h"
-#include "midori-viewable.h"
 #include "midori-websettings.h"
 #include "midori-platform.h"
 #include <midori/midori-core.h> /* Vala API */

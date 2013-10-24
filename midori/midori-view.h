@@ -1,5 +1,5 @@
 /*
- Copyright (C) 2008 Christian Dywan <christian@twotoasts.de>
+ Copyright (C) 2008-2013 Christian Dywan <christian@twotoasts.de>
 
  This library is free software; you can redistribute it and/or
  modify it under the terms of the GNU Lesser General Public
@@ -13,45 +13,34 @@
 #define __MIDORI_VIEW_H__
 
 #include "midori-websettings.h"
+#include "midori-core.h"
 
 #include <katze/katze.h>
 
-G_BEGIN_DECLS
+#ifdef HAVE_GRANITE
+    #include <granite/granite.h>
+#endif
 
-#define MIDORI_LOAD_PROVISIONAL WEBKIT_LOAD_PROVISIONAL
-#define MIDORI_LOAD_COMMITTED WEBKIT_LOAD_COMMITTED
-#define MIDORI_LOAD_FINISHED WEBKIT_LOAD_FINISHED
-#define MidoriLoadStatus WebKitLoadStatus
-#define MIDORI_TYPE_LOAD_STATUS WEBKIT_TYPE_LOAD_STATUS
+G_BEGIN_DECLS
 
 typedef enum
 {
-    MIDORI_NEW_VIEW_TAB,
-    MIDORI_NEW_VIEW_BACKGROUND,
-    MIDORI_NEW_VIEW_WINDOW
-} MidoriNewView;
-
-GType
-midori_new_view_get_type (void) G_GNUC_CONST;
-
-#define MIDORI_TYPE_NEW_VIEW \
-    (midori_new_view_get_type ())
+    MIDORI_DELAY_UNDELAYED = -1, /* The view is in a regular undelayed state */
+    MIDORI_DELAY_DELAYED = 1, /* The view is delayed but has not displayed any indication of such */
+    MIDORI_DELAY_PENDING_UNDELAY = -2 /* The view is delayed and showing a message asking to be undelayed */
+} MidoriDelay;
 
 #define MIDORI_TYPE_VIEW \
     (midori_view_get_type ())
 
 typedef enum
 {
-    MIDORI_SECURITY_NONE, /* The connection is neither encrypted nor verified. */
-    MIDORI_SECURITY_UNKNOWN, /* The security is unknown, due to lack of validation. */
-    MIDORI_SECURITY_TRUSTED /* The security is validated and trusted. */
-} MidoriSecurity;
-
-GType
-midori_security_get_type (void) G_GNUC_CONST;
-
-#define MIDORI_TYPE_SECURITY \
-    (midori_security_get_type ())
+    MIDORI_DOWNLOAD_CANCEL,
+    MIDORI_DOWNLOAD_OPEN,
+    MIDORI_DOWNLOAD_SAVE,
+    MIDORI_DOWNLOAD_SAVE_AS,
+    MIDORI_DOWNLOAD_OPEN_IN_VIEWER,
+} MidoriDownloadType;
 
 #define MIDORI_VIEW(obj) \
     (G_TYPE_CHECK_INSTANCE_CAST ((obj), MIDORI_TYPE_VIEW, MidoriView))
@@ -69,9 +58,6 @@ typedef struct _MidoriViewClass           MidoriViewClass;
 
 GType
 midori_view_get_type                   (void) G_GNUC_CONST;
-
-GtkWidget*
-midori_view_new                        (KatzeNet*          net);
 
 GtkWidget*
 midori_view_new_with_title             (const gchar*       title,
@@ -95,6 +81,16 @@ midori_view_get_load_status            (MidoriView*        view);
 void
 midori_view_set_uri                    (MidoriView*        view,
                                         const gchar*       uri);
+
+void
+midori_view_set_html                   (MidoriView*        view,
+                                        const gchar*       data,
+                                        const gchar*       uri,
+                                        void*              web_frame);
+
+void
+midori_view_set_overlay_text           (MidoriView*        view,
+                                        const gchar*       text);
 
 gboolean
 midori_view_is_blank                   (MidoriView*        view);
@@ -120,23 +116,26 @@ midori_view_has_selection              (MidoriView*        view);
 const gchar*
 midori_view_get_selected_text          (MidoriView*        view);
 
-gboolean
-midori_view_can_cut_clipboard          (MidoriView*        view);
-
-gboolean
-midori_view_can_copy_clipboard         (MidoriView*        view);
-
-gboolean
-midori_view_can_paste_clipboard        (MidoriView*        view);
-
 GtkWidget*
 midori_view_get_proxy_menu_item        (MidoriView*        view);
 
 GtkWidget*
 midori_view_get_tab_menu               (MidoriView*        view);
 
+GtkWidget*
+midori_view_duplicate                  (MidoriView*        view);
+
 PangoEllipsizeMode
 midori_view_get_label_ellipsize        (MidoriView*        view);
+
+#ifdef HAVE_GRANITE
+GraniteWidgetsTab*
+midori_view_get_tab                    (MidoriView*        view);
+
+void
+midori_view_set_tab                    (MidoriView*        view,
+                                        GraniteWidgetsTab* tab);
+#endif
 
 GtkWidget*
 midori_view_get_proxy_tab_label        (MidoriView*        view);
@@ -157,15 +156,9 @@ void
 midori_view_set_zoom_level             (MidoriView*        view,
                                         gfloat             zoom_level);
 
-gboolean
-midori_view_can_reload                 (MidoriView*        view);
-
 void
 midori_view_reload                     (MidoriView*        view,
                                         gboolean           from_cache);
-
-void
-midori_view_stop_loading               (MidoriView*        view);
 
 gboolean
 midori_view_can_go_back                (MidoriView*        view);
@@ -179,14 +172,19 @@ midori_view_can_go_forward             (MidoriView*        view);
 void
 midori_view_go_forward                 (MidoriView*        view);
 
+
+void midori_view_go_back_or_forward    (MidoriView*        view,
+                                        gint               steps);
+
+gboolean
+midori_view_can_go_back_or_forward     (MidoriView*        view,
+                                        gint               steps);
+
 const gchar*
 midori_view_get_previous_page          (MidoriView*        view);
 
 const gchar*
 midori_view_get_next_page              (MidoriView*        view);
-
-gboolean
-midori_view_can_print                  (MidoriView*        view);
 
 void
 midori_view_print                      (MidoriView*        view);
@@ -194,29 +192,16 @@ midori_view_print                      (MidoriView*        view);
 gboolean
 midori_view_can_view_source            (MidoriView*        view);
 
-gboolean
-midori_view_can_save                   (MidoriView*        view);
-
-gboolean
-midori_view_can_find                   (MidoriView*        view);
-
-void
-midori_view_unmark_text_matches        (MidoriView*        view);
+gchar*
+midori_view_save_source                (MidoriView*        view,
+                                        const gchar*       uri,
+                                        const gchar*       outfile);
 
 void
 midori_view_search_text                (MidoriView*        view,
                                         const gchar*       text,
                                         gboolean           case_sensitive,
                                         gboolean           forward);
-
-void
-midori_view_mark_text_matches          (MidoriView*        view,
-                                        const gchar*       text,
-                                        gboolean           case_sensitive);
-
-void
-midori_view_set_highlight_text_matches (MidoriView*        view,
-                                        gboolean           highlight);
 
 gboolean
 midori_view_execute_script             (MidoriView*        view,
@@ -231,8 +216,8 @@ midori_view_get_snapshot               (MidoriView*        view,
 GtkWidget*
 midori_view_get_web_view               (MidoriView*        view);
 
-MidoriSecurity
-midori_view_get_security               (MidoriView*        view);
+MidoriView*
+midori_view_get_for_widget             (GtkWidget*         web_view);
 
 void
 midori_view_populate_popup             (MidoriView*        view,
@@ -248,9 +233,33 @@ midori_view_add_info_bar               (MidoriView*        view,
                                         const gchar*       first_button_text,
                                         ...);
 
+const gchar*
+midori_view_fallback_extension         (MidoriView*        view,
+                                        const gchar*       extension);
+
+GList*
+midori_view_get_resources              (MidoriView*        view);
+
 void
-midori_view_save_speed_dial_config     (MidoriView*        view,
-                                        GKeyFile*          key_file);
+midori_view_list_versions              (GString*           markup,
+                                        gboolean           html);
+
+void
+midori_view_list_plugins               (MidoriView*        view,
+                                        GString*           markup,
+                                        gboolean           html);
+
+void
+midori_view_set_colors                 (MidoriView*        view,
+                                        GdkColor*          fg_color,
+                                        GdkColor*          bg_color);
+
+gboolean
+midori_view_get_tls_info               (MidoriView*        view,
+                                        void*              request,
+                                        GTlsCertificate**     tls_cert,
+                                        GTlsCertificateFlags* tls_flags,
+                                        gchar**               hostname);
 
 G_END_DECLS
 

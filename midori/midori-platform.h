@@ -25,23 +25,17 @@
 
 #ifdef GDK_WINDOWING_QUARTZ
     #define MIDORI_EVENT_CONTEXT_MENU(evt) \
-        ((evt->button == 3) \
-        || (evt->button == 1 && (evt->state & GDK_CONTROL_MASK)))
+        ((evt && evt->button == 3) \
+        || (evt && evt->button == 1 && (evt->state & GDK_CONTROL_MASK)))
 #else
     #define MIDORI_EVENT_CONTEXT_MENU(evt) \
-        (evt->button == 3)
+        (evt && evt->button == 3)
 #endif
 
 #define MIDORI_EVENT_NEW_TAB(evt) \
-    ((((GdkEventButton*)evt)->button == 1 \
-     && MIDORI_MOD_NEW_TAB(((GdkEventButton*)evt)->state)) \
-    || (((GdkEventButton*)evt)->button == 2))
-
-#ifndef G_OS_WIN32
-    #define MIDORI_MODULE_PREFIX "lib"
-#else
-    #define MIDORI_MODULE_PREFIX ""
-#endif
-
+    (evt != NULL \
+     && ((((GdkEventButton*)evt)->button == 1 \
+       && MIDORI_MOD_NEW_TAB(((GdkEventButton*)evt)->state)) \
+     || (((GdkEventButton*)evt)->button == 2)))
 
 #endif /* !__MIDORI_PLATFORM_H__ */

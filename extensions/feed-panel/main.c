@@ -16,7 +16,6 @@
 #include <midori/midori.h>
 
 #define EXTENSION_NAME "Feed Panel"
-#define UPDATE_FREQ 10
 
 #define feed_get_flags(feed) \
     GPOINTER_TO_INT (g_object_get_data (G_OBJECT ((feed)), "flags"))
@@ -102,24 +101,10 @@ feed_deactivate_cb (MidoriExtension* extension,
     }
 }
 
-static void
-feed_dialog_response_cb (GtkWidget* dialog,
-                         gint       response,
-                         gpointer   data)
-{
-    gtk_widget_destroy (dialog);
-}
-
 static KatzeArray*
 feed_add_item (KatzeArray*  feeds,
                const gchar* uri)
 {
-    KatzeArray* feed;
-
-    feed = NULL;
-
-    if (uri)
-    {
         if (katze_array_find_token (feeds, uri))
         {
             GtkWidget* dialog;
@@ -131,24 +116,23 @@ feed_add_item (KatzeArray*  feeds,
                 _("Feed '%s' already exists"), uri);
             gtk_window_set_title (GTK_WINDOW (dialog), EXTENSION_NAME);
             gtk_widget_show (dialog);
-            g_signal_connect (dialog, "response",
-                    G_CALLBACK (feed_dialog_response_cb), NULL);
-
+            g_signal_connect_swapped (dialog, "response",
+                G_CALLBACK (gtk_widget_destroy), dialog);
+            return NULL;
         }
         else
         {
             KatzeArray* child;
 
-            feed = katze_array_new (KATZE_TYPE_ARRAY);
+            KatzeArray* feed = katze_array_new (KATZE_TYPE_ARRAY);
             child = katze_array_new (KATZE_TYPE_ITEM);
             katze_item_set_uri (KATZE_ITEM (feed), uri);
             katze_item_set_token (KATZE_ITEM (feed), uri);
             katze_item_set_uri (KATZE_ITEM (child), uri);
             katze_array_add_item (feeds, feed);
             katze_array_add_item (feed, child);
+            return feed;
         }
-    }
-    return feed;
 }
 
 static void
@@ -464,8 +448,7 @@ feed_app_add_browser_cb (MidoriApp*       app,
     priv->parsers = g_slist_prepend (priv->parsers, rss_init_parser ());
 
     sfeeds = midori_extension_get_string_list (extension, "feeds", &n);
-    g_assert (n == 0 || sfeeds);
-
+    if (sfeeds != NULL)
     for (i = 0; i < n; i++)
     {
         if (sfeeds[i])
@@ -475,7 +458,6 @@ feed_app_add_browser_cb (MidoriApp*       app,
                 update_feed (priv, KATZE_ITEM (feed));
         }
     }
-    g_strdupv (sfeeds);
     action_group = midori_browser_get_action_group (browser);
     action = gtk_action_group_get_action (action_group, "Location");
 
@@ -488,8 +470,8 @@ feed_app_add_browser_cb (MidoriApp*       app,
     g_signal_connect (extension, "deactivate",
         G_CALLBACK (feed_deactivate_cb), priv);
 
-    priv->source_id = g_timeout_add_seconds (UPDATE_FREQ * 60,
-                            (GSourceFunc) update_feeds, priv);
+    priv->source_id = midori_timeout_add_seconds (
+        600, (GSourceFunc) update_feeds, priv, NULL);
 }
 
 static void
@@ -512,7 +494,6 @@ MidoriExtension*
 extension_init (void)
 {
     MidoriExtension* extension;
-    gchar* sfeed[2];
 
     extension = g_object_new (MIDORI_TYPE_EXTENSION,
         "name", _("Feed Panel"),
@@ -521,8 +502,7 @@ extension_init (void)
         "authors", "Dale Whittaker <dayul@users.sf.net>",
         NULL);
 
-    sfeed[0] = NULL;
-    midori_extension_install_string_list (extension, "feeds", sfeed, 1);
+    midori_extension_install_string_list (extension, "feeds", NULL, 0);
 
     g_signal_connect (extension, "activate",
         G_CALLBACK (feed_activate_cb), NULL);

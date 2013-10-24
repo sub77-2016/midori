@@ -27,12 +27,8 @@ from TaskGen import extension, feature, taskgen
 import misc
 from Configure import find_program_impl
 
-major = 0
-minor = 4
-micro = 3
-
 APPNAME = 'midori'
-VERSION = VERSION_FULL = str (major) + '.' + str (minor) + '.' + str (micro)
+VERSION = VERSION_FULL = '0.5.2'
 VERSION_SUFFIX = ' (%s)' % VERSION
 
 try:
@@ -40,12 +36,21 @@ try:
         git = Utils.cmd_output (['git', 'describe'], silent=True)
         if git:
             VERSION_FULL = git.strip ()
-            VERSION_SUFFIX = VERSION_FULL.replace (VERSION, '')
+    elif os.path.isdir ('.bzr'):
+        bzr = Utils.cmd_output (['bzr', 'revno'], silent=True)
+        if bzr:
+            VERSION_FULL = '%s~r%s' % (VERSION, bzr.strip ())
+    else:
+        folder = os.getcwd ()
+        if VERSION in folder:
+            VERSION_FULL = os.path.basename (folder)
+    if VERSION in VERSION_FULL:
+        VERSION_SUFFIX = VERSION_FULL.replace (VERSION, '')
 except:
     pass
 
 srcdir = '.'
-blddir = '_build_'
+blddir = '_build' # recognized by ack
 
 def option_enabled (option):
     if getattr (Options.options, 'enable_' + option):
@@ -61,6 +66,9 @@ def is_mingw (env):
             cc = ''.join (cc)
         return cc.find ('mingw') != -1# or cc.find ('wine') != -1
     return False
+
+def is_win32 (env):
+    return is_mingw (env) or Options.platform == 'win32'
 
 # Compile Win32 res files to (resource) object files
 def rc_file(self, node):
@@ -89,27 +97,40 @@ def configure (conf):
         conf.define (defname, dirvalue)
         return dirvalue
 
+    def check_version (given_version, major, minor, micro):
+        if '.' in given_version:
+            given_major, given_minor, given_micro = given_version.split ('.', 2)
+            if '.' in given_micro:
+                given_micro, given_pico = given_micro.split ('.', 1)
+        else:
+            given_major, given_minor, given_micro = given_version
+        return int(given_major) >  major or \
+               int(given_major) == major and int(given_minor) >  minor or \
+               int(given_major) == major and int(given_minor) == minor and int(given_micro) >= micro
+
+    conf.check_message_custom ('release version', '', VERSION_FULL)
+
     conf.check_tool ('compiler_cc')
     conf.check_tool ('vala')
     conf.check_tool ('glib2')
+    if not check_version (conf.env['VALAC_VERSION'], 0, 14, 0):
+        Utils.pprint ('RED', 'Vala 0.14.0 or later is required.')
+        sys.exit (1)
 
     if option_enabled ('nls'):
         conf.check_tool ('intltool')
-        if conf.env['INTLTOOL'] and conf.env['POCOM']:
-            nls = 'yes'
-        else:
+        if not conf.env['INTLTOOL'] and conf.env['POCOM']:
             option_checkfatal ('nls', 'localization')
-            nls = 'N/A'
+            conf.define ('ENABLE_NLS', 0)
+        else:
+            conf.define ('ENABLE_NLS', 1)
     else:
-        nls = 'no '
-    conf.define ('ENABLE_NLS', [0,1][nls == 'yes'])
+        conf.define ('ENABLE_NLS', 0)
+        conf.check_message_custom ('nls', '', 'disabled')
 
-    if conf.find_program ('rsvg-convert', var='RSVG_CONVERT'):
-        icons = 'yes'
-    else:
-        icons = 'no '
+    conf.find_program ('rsvg-convert', var='RSVG_CONVERT')
 
-    if is_mingw (conf.env) or Options.platform == 'win32':
+    if is_win32 (conf.env):
         conf.find_program ('windres', var='WINRC')
         conf.env['platform'] = 'win32'
 
@@ -152,113 +173,137 @@ def configure (conf):
         conf.find_program ('gtkdoc-mkhtml', var='GTKDOC_MKHTML')
         if conf.env['GTKDOC_SCAN'] and conf.env['GTKDOC_MKTMPL'] \
             and conf.env['GTKDOC_MKDB'] and conf.env['GTKDOC_MKHTML']:
-            api_docs = 'yes'
+            pass
         else:
             option_checkfatal ('apidocs', 'API documentation')
-            api_docs = 'N/A'
     else:
-        api_docs = 'no '
+        conf.check_message_custom ('gtk-doc', '', 'disabled')
 
     def check_pkg (name, version='', mandatory=True, var=None, args=''):
         if not var:
             var = name.split ('-')[0].upper ()
-        conf.check_cfg (package=name, uselib_store=var, args='--cflags --libs ' + args,
+        ver_str = ['',' >= ' + version][version != '']
+        def okmsg_ver (kw):
+            return conf.check_cfg (modversion=name, uselibstore=var)
+        conf.check_cfg (msg='Checking for ' + name + ver_str, okmsg=okmsg_ver,
+            package=name, uselib_store=var, args='--cflags --libs ' + args,
             atleast_version=version, mandatory=mandatory)
-        return conf.env['HAVE_' + var]
-
-    def check_version (given_version, major, minor, micro):
-        if '.' in given_version:
-            given_major, given_minor, given_micro = given_version.split ('.')
-        else:
-            given_major, given_minor, given_micro = given_version
-        return int(given_major) >  major or \
-               int(given_major) == major and int(given_minor) >  minor or \
-               int(given_major) == major and int(given_minor) == minor and int(given_micro) >= micro
-
-    if option_enabled ('unique'):
-        if option_enabled('gtk3'): unique_pkg = 'unique-3.0'
-        else: unique_pkg = 'unique-1.0'
-        check_pkg (unique_pkg, '0.9', False)
-        unique = ['N/A', 'yes'][conf.env['HAVE_UNIQUE'] == 1]
-        if unique != 'yes':
-            option_checkfatal ('unique', 'single instance')
-            conf.define ('UNIQUE_VERSION', 'No')
-        else:
-            conf.define ('UNIQUE_VERSION', conf.check_cfg (modversion=unique_pkg))
-    else:
-        unique = 'no '
-        conf.define ('UNIQUE_VERSION', 'No')
-    conf.define ('HAVE_UNIQUE', [0,1][unique == 'yes'])
+        have = conf.env['HAVE_' + var] == 1
+        conf.define (var + '_VERSION', ['No', conf.check_cfg (modversion=name,
+            uselib_store=var, errmsg=name + ver_str + ' not found')][have])
+        return have
 
     if option_enabled ('libnotify'):
-        check_pkg ('libnotify', mandatory=False)
-        libnotify = ['N/A','yes'][conf.env['HAVE_LIBNOTIFY'] == 1]
-        if libnotify != 'yes':
+        if not check_pkg ('libnotify', mandatory=False):
             option_checkfatal ('libnotify', 'notifications')
-            conf.define ('LIBNOTIFY_VERSION', 'No')
-        else:
-            conf.define ('LIBNOTIFY_VERSION', conf.check_cfg (modversion='libnotify'))
     else:
-        libnotify = 'no '
         conf.define ('LIBNOTIFY_VERSION', 'No')
-    conf.define ('HAVE_LIBNOTIFY', [0,1][libnotify == 'yes'])
+        conf.check_message_custom ('libnotify', '', 'disabled')
+    conf.define ('HAVE_LIBNOTIFY', [0,1][conf.env['LIBNOTIFY_VERSION'] != 'No'])
 
-    conf.check (lib='m', mandatory=True)
-    check_pkg ('gmodule-2.0', '2.8.0', False)
-    check_pkg ('gthread-2.0', '2.8.0', False)
+    if option_enabled ('granite'):
+        check_pkg ('granite', '0.2', mandatory=False)
+        granite = ['N/A', 'yes'][conf.env['HAVE_GRANITE'] == 1]
+        if granite != 'yes':
+            option_checkfatal ('granite', 'new notebook, pop-overs')
+            conf.define ('GRANITE_VERSION', 'No')
+        else:
+            conf.env.append_value ('VALAFLAGS', '-D HAVE_GRANITE')
+    else:
+        conf.define ('GRANITE_VERSION', 'No')
+        conf.check_message_custom ('granite', '', 'disabled')
+
+    if option_enabled ('zeitgeist'):
+        check_pkg ('zeitgeist-1.0', '0.3.14')
+    else:
+        conf.check_message_custom ('zeitgeist', '', 'disabled')
+
+    conf.check (lib='m')
+    check_pkg ('gmodule-2.0')
     check_pkg ('gio-2.0', '2.22.0')
+    if check_version (conf.env['GIO_VERSION'], 2, 30, 0) \
+        and check_version (conf.env['VALAC_VERSION'], 0, 16, 0):
+        # Older Vala doesn't have GLib 2.30 bindings
+        conf.env.append_value ('VALAFLAGS', '-D HAVE_GLIB_2_30')
+
     args = ''
     if Options.platform == 'win32':
         args = '--define-variable=target=win32'
+        conf.env.append_value ('VALAFLAGS', '-D HAVE_WIN32')
     elif sys.platform != 'darwin':
+        if sys.platform.startswith ('freebsd'):
+            conf.env.append_value ('VALAFLAGS', '-D HAVE_FREEBSD')
+
         check_pkg ('x11')
         # Pass /usr/X11R6/include for OpenBSD
         conf.check (header_name='X11/extensions/scrnsaver.h',
                     includes='/usr/X11R6/include', mandatory=False)
         conf.check (lib='Xss', libpath='/usr/X11R6/lib', mandatory=False)
-    if option_enabled ('gtk3'):
-        if option_enabled ('addons') and not check_version (conf.env['VALAC_VERSION'], 0, 13, 2):
-            Utils.pprint ('RED', 'Vala 0.13.2 or later is required ' \
-                'to build with GTK+ 3 and extensions.\n' \
-                'Pass --disable-addons to build without extensions.\n' \
-                'Pass --disable-gtk3 to build with extensions and GTK+ 2.')
-            sys.exit (1)
+
+    have_gtk3 = option_enabled ('gtk3') or option_enabled ('webkit2') or option_enabled ('granite')
+    if have_gtk3:
         check_pkg ('gtk+-3.0', '3.0.0', var='GTK', mandatory=False)
-        check_pkg ('webkitgtk-3.0', '1.1.17', var='WEBKIT', mandatory=False)
+        check_pkg ('gcr-3', '2.32', mandatory=False)
+        if option_enabled ('webkit2'):
+            # 2.0.0 matches 1.11.91 API; 1.11.92 > 2.0.0
+            check_pkg ('webkit2gtk-3.0', '1.11.91', var='WEBKIT', mandatory=False)
+            if not conf.env['HAVE_WEBKIT']:
+                Utils.pprint ('RED', 'WebKit2/ GTK+3 was not found.\n' \
+                    'Pass --disable-webkit2 to build without WebKit2.')
+                sys.exit (1)
+            conf.define ('HAVE_WEBKIT2', 1)
+            conf.env.append_value ('VALAFLAGS', '-D HAVE_WEBKIT2')
+        else:
+            check_pkg ('webkitgtk-3.0', '1.1.17', var='WEBKIT', mandatory=False)
         if not conf.env['HAVE_GTK'] or not conf.env['HAVE_WEBKIT']:
             Utils.pprint ('RED', 'GTK+3 was not found.\n' \
                 'Pass --disable-gtk3 to build without GTK+3.')
             sys.exit (1)
-        if check_version (conf.check_cfg (modversion='webkitgtk-3.0'), 1, 5, 1):
+        if check_version (conf.env['WEBKIT_VERSION'], 1, 5, 1):
             check_pkg ('javascriptcoregtk-3.0', '1.5.1', args=args)
         conf.env.append_value ('VALAFLAGS', '-D HAVE_GTK3')
+        conf.env.append_value ('VALAFLAGS', '-D HAVE_OFFSCREEN')
+        conf.env.append_value ('VALAFLAGS', '-D HAVE_DOM')
     else:
-        check_pkg ('gtk+-2.0', '2.10.0', var='GTK')
+        check_pkg ('gtk+-2.0', '2.16.0', var='GTK')
         check_pkg ('webkit-1.0', '1.1.17', args=args)
-        if check_version (conf.check_cfg (modversion='webkit-1.0'), 1, 5, 1):
+        check_pkg ('gcr-3-gtk2', '2.32', mandatory=False)
+        if check_version (conf.env['WEBKIT_VERSION'], 1, 5, 1):
             check_pkg ('javascriptcoregtk-1.0', '1.5.1', args=args)
-    conf.env['HAVE_GTK3'] = option_enabled ('gtk3')
-    check_pkg ('libsoup-2.4', '2.27.90')
-    conf.define ('HAVE_LIBSOUP_2_25_2', 1)
-    conf.define ('HAVE_LIBSOUP_2_27_90', 1)
-    check_pkg ('libsoup-2.4', '2.29.3', False, var='LIBSOUP_2_29_3')
-    check_pkg ('libsoup-2.4', '2.29.91', False, var='LIBSOUP_2_29_91')
-    check_pkg ('libsoup-2.4', '2.37.1', False, var='LIBSOUP_2_37_1')
-    conf.define ('LIBSOUP_VERSION', conf.check_cfg (modversion='libsoup-2.4'))
-    check_pkg ('libxml-2.0', '2.6')
-    check_pkg ('sqlite3', '3.0', True, var='SQLITE')
+        if check_version (conf.env['GTK_VERSION'], 2, 20, 0):
+            conf.env.append_value ('VALAFLAGS', '-D HAVE_OFFSCREEN')
+    conf.env['HAVE_GTK3'] = have_gtk3
+    conf.env['HAVE_WEBKIT2'] = option_enabled ('webkit2')
 
-    if option_enabled ('hildon'):
-        if check_pkg ('hildon-1', mandatory=False, var='HILDON'):
-            check_pkg ('libosso', var='HILDON')
-            check_pkg ('hildon-1', '2.2', var='HILDON_2_2')
-            check_pkg ('hildon-fm-2', var='HILDON_FM')
-        hildon = ['N/A','yes'][conf.env['HAVE_HILDON'] == 1]
-        if hildon != 'yes':
-            option_checkfatal ('hildon', 'Maemo integration')
+    if option_enabled ('unique'):
+        if have_gtk3: unique_pkg = 'unique-3.0'
+        else: unique_pkg = 'unique-1.0'
+        if not check_pkg (unique_pkg, '0.9', mandatory=False):
+            option_checkfatal ('unique', 'single instance')
     else:
-        hildon = 'no '
-    conf.define ('HAVE_HILDON', [0,1][hildon == 'yes'])
+        conf.define ('UNIQUE_VERSION', 'No')
+        conf.check_message_custom ('unique', '', 'disabled')
+    conf.define ('HAVE_UNIQUE', [0,1][conf.env['UNIQUE_VERSION'] != 'No'])
+
+    check_pkg ('libsoup-2.4', '2.27.90', var='LIBSOUP')
+    if check_version (conf.env['LIBSOUP_VERSION'], 2, 29, 91):
+        conf.define ('HAVE_LIBSOUP_2_29_91', 1)
+    if check_version (conf.env['LIBSOUP_VERSION'], 2, 34, 0):
+        conf.define ('HAVE_LIBSOUP_2_34_0', 1)
+        conf.env.append_value ('VALAFLAGS', '-D HAVE_LIBSOUP_2_34_0')
+    if check_version (conf.env['LIBSOUP_VERSION'], 2, 37, 1):
+        conf.define ('HAVE_LIBSOUP_2_37_1', 1)
+
+    if check_version (conf.env['WEBKIT_VERSION'], 1, 3, 8):
+        conf.env.append_value ('VALAFLAGS', '-D HAVE_WEBKIT_1_3_8')
+    if check_version (conf.env['WEBKIT_VERSION'], 1, 3, 13):
+        conf.env.append_value ('VALAFLAGS', '-D HAVE_WEBKIT_1_3_13')
+    if check_version (conf.env['WEBKIT_VERSION'], 1, 8, 0):
+        conf.env.append_value ('VALAFLAGS', '-D HAVE_WEBKIT_1_8_0')
+
+    check_pkg ('libxml-2.0', '2.6')
+    conf.undefine ('LIBXML_VERSION') # Defined in xmlversion.h
+    check_pkg ('sqlite3', '3.6.19', var='SQLITE')
 
     # Store options in env, since 'Options' is not persistent
     if 'CC' in os.environ: conf.env['CC'] = os.environ['CC'].split()
@@ -267,12 +312,14 @@ def configure (conf):
     conf.env['docs'] = option_enabled ('docs')
     if 'LINGUAS' in os.environ: conf.env['LINGUAS'] = os.environ['LINGUAS']
 
+    if not check_version (conf.env['GIO_VERSION'], 2, 26, 0):
+        conf.env['addons'] = False
+        Utils.pprint ('YELLOW', 'Glib < 2.26.0, disabling addons')
+
     conf.check (header_name='unistd.h')
     if not conf.env['HAVE_UNIQUE']:
         if Options.platform == 'win32':
             conf.check (lib='ws2_32')
-        check_pkg ('openssl', mandatory=False)
-        conf.define ('USE_SSL', [0,1][conf.env['HAVE_OPENSSL'] == 1])
         conf.define ('HAVE_NETDB_H', [0,1][conf.check (header_name='netdb.h')])
         conf.check (header_name='sys/wait.h')
         conf.check (header_name='sys/select.h')
@@ -290,18 +337,14 @@ def configure (conf):
     conf.define ('GETTEXT_PACKAGE', APPNAME)
 
     conf.define ('MIDORI_VERSION', VERSION)
-    conf.define ('MIDORI_MAJOR_VERSION', major)
-    conf.define ('MIDORI_MINOR_VERSION', minor)
-    conf.define ('MIDORI_MICRO_VERSION', micro)
+    major, minor, micro = VERSION.split ('.', 2)
+    conf.define ('MIDORI_MAJOR_VERSION', int (major))
+    conf.define ('MIDORI_MINOR_VERSION', int (minor))
+    conf.define ('MIDORI_MICRO_VERSION', int (micro))
 
     conf.env.append_value ('CCFLAGS', '-DHAVE_CONFIG_H -include config.h'.split ())
     debug_level = Options.options.debug_level
     compiler = conf.env['CC_NAME']
-    if debug_level != '' and compiler != 'gcc':
-        Utils.pprint ('RED', 'No debugging level support for ' + compiler)
-        sys.exit (1)
-    elif debug_level == '':
-        debug_level = 'debug'
 
     if debug_level == 'full':
         conf.define ('PACKAGE_VERSION', '%s (debug)' % VERSION_FULL)
@@ -311,53 +354,37 @@ def configure (conf):
         conf.env.append_value ('CCFLAGS', '-DMIDORI_VERSION_SUFFIX="%s"' % VERSION_SUFFIX)
     conf.write_config_header ('config.h')
 
-    if compiler == 'gcc':
-        if debug_level == 'none':
-            if 'CCFLAGS' in os.environ:
-                conf.env.append_value ('CCFLAGS', os.environ['CCFLAGS'].split ())
-            else:
-                conf.env.append_value ('CCFLAGS', '-DG_DISABLE_CHECKS -DG_DISABLE_CAST_CHECKS -DG_DISABLE_ASSERT'.split ())
-        elif debug_level == 'debug':
-            conf.env.append_value ('CCFLAGS', '-Wall -O0 -g'.split ())
-        elif debug_level == 'full':
-            # -Wdeclaration-after-statement
-            # -Wmissing-declarations -Wmissing-prototypes
-            # -Wwrite-strings -Wunsafe-loop-optimizations -Wmissing-include-dirs
+    if debug_level == 'debug':
+        conf.env.append_value ('VALAFLAGS', '--debug --enable-deprecated'.split ())
+        if compiler == 'gcc':
+            conf.env.append_value ('CCFLAGS', '-O2 -g -Wall -Wno-deprecated-declarations'.split ())
+    elif debug_level == 'full':
+        conf.env.append_value ('VALAFLAGS', '--debug --enable-checking'.split ())
+        if compiler == 'gcc':
             conf.env.append_value ('CCFLAGS',
-                '-Wall -Wextra -O1 -g '
+                '-O2 -g -Wall -Wextra -DG_ENABLE_DEBUG '
                 '-Waggregate-return -Wno-unused-parameter '
                 '-Wno-missing-field-initializers '
                 '-Wredundant-decls -Wmissing-noreturn '
                 '-Wshadow -Wpointer-arith -Wcast-align '
                 '-Winline -Wformat-security -fno-common '
                 '-Winit-self -Wundef -Wdeclaration-after-statement '
-                '-Wmissing-format-attribute -Wnested-externs '
-            # -DGSEAL_ENABLE
-                '-DG_ENABLE_DEBUG -DG_DISABLE_DEPRECATED '
-                '-DGDK_PIXBUF_DISABLE_DEPRECATED -DGDK_DISABLE_DEPRECATED '
-                '-DGTK_DISABLE_DEPRECATED -DPANGO_DISABLE_DEPRECATED '
-                '-DGDK_MULTIHEAD_SAFE -DGTK_MULTIHEAD_SAFE'.split ())
-    if debug_level == 'full':
-        conf.env.append_value ('VALAFLAGS', '--debug --enable-checking'.split ())
-    elif debug_level == 'debug':
-        conf.env.append_value ('VALAFLAGS', '--debug'.split ())
-    elif debug_level == 'none':
-        conf.env.append_value ('VALAFLAGS', '--disable-assert')
-    conf.env.append_value ('VALAFLAGS', '--enable-deprecated')
-    print ('''
-        Localization:        %(nls)s (intltool)
-        Icon optimizations:  %(icons)s (rsvg-convert)
-        Notifications:       %(libnotify)s (libnotify)
+                '-Wmissing-format-attribute -Wnested-externs'.split ())
+    conf.env.append_value ('CCFLAGS', '-Wno-unused-variable -Wno-comment'.split ())
 
-        API documentation:   %(api_docs)s (gtk-doc)
-        ''' % locals ())
-    if unique == 'yes' and conf.check_cfg (modversion='unique-1.0') == '1.0.4':
+    if conf.env['UNIQUE_VERSION'] == '1.0.4':
         Utils.pprint ('RED', 'unique 1.0.4 found, this version is erroneous.')
         Utils.pprint ('RED', 'Please use an older or newer version.')
+        sys.exit (1)
+    if check_version (conf.env['LIBSOUP_VERSION'], 2, 33, 4) \
+        and check_version (conf.env['GIO_VERSION'], 2, 32, 1) \
+        and not check_version (conf.env['GIO_VERSION'], 2, 32, 3):
+        Utils.pprint ('RED', 'libsoup >= 2.33.4 found with glib >= 2.32.1 < 2.32.3:')
+        Utils.pprint ('RED', 'This combination breaks the download GUI.')
+        Utils.pprint ('RED', 'See https://bugs.launchpad.net/midori/+bug/780133/comments/14')
+        sys.exit (1)
 
 def set_options (opt):
-    def is_maemo (): return os.path.exists ('/etc/osso-af-init/')
-
     def add_enable_option (option, desc, group=None, disable=False):
         if group == None:
             group = opt
@@ -370,9 +397,9 @@ def set_options (opt):
 
     opt.tool_options ('compiler_cc')
     opt.get_option_group ('--check-c-compiler').add_option('-d', '--debug-level',
-        action = 'store', default = '',
+        action = 'store', default = 'debug',
         help = 'Specify the debugging level. [\'none\', \'debug\', \'full\']',
-        choices = ['', 'none', 'debug', 'full'], dest = 'debug_level')
+        choices = ['none', 'debug', 'full'], dest = 'debug_level')
     opt.tool_options ('gnu_dirs')
     opt.parser.remove_option ('--oldincludedir')
     opt.parser.remove_option ('--htmldir')
@@ -391,12 +418,14 @@ def set_options (opt):
     add_enable_option ('apidocs', 'API documentation', group, disable=True)
 
     group = opt.add_option_group ('Optional features', '')
-    add_enable_option ('unique', 'single instance support', group)
+    add_enable_option ('unique', 'single instance support', group, disable=is_win32 (os.environ))
     add_enable_option ('libnotify', 'notification support', group)
+    add_enable_option ('granite', 'new notebook, pop-overs', group, disable=True)
     add_enable_option ('addons', 'building of extensions', group)
-    add_enable_option ('tests', 'building of tests', group, disable=True)
-    add_enable_option ('hildon', 'Maemo integration', group, disable=not is_maemo ())
+    add_enable_option ('tests', 'install tests', group, disable=True)
     add_enable_option ('gtk3', 'GTK+3 and WebKitGTK+3 support', group, disable=True)
+    add_enable_option ('webkit2', 'WebKit2 support', group, disable=True)
+    add_enable_option ('zeitgeist', 'Zeitgeist history integration', group, disable=is_win32 (os.environ))
 
     # Provided for compatibility
     opt.add_option ('--build', help='Ignored')
@@ -452,14 +481,9 @@ def build (bld):
         bld.install_files ('${DOCDIR}/api/', blddir + '/docs/api/*')
 
     for desktop in [APPNAME + '.desktop', APPNAME + '-private.desktop']:
-        if is_mingw (bld.env) or Options.platform == 'win32':
+        if is_win32 (bld.env):
             break
-        if bld.env['HAVE_HILDON']:
-            appdir = '${MDATADIR}/applications/hildon'
-            bld.install_files ('${MDATADIR}/dbus-1/services',
-                               'data/com.nokia.' + APPNAME + '.service')
-        else:
-            appdir = '${MDATADIR}/applications'
+        appdir = '${MDATADIR}/applications'
         if bld.env['INTLTOOL']:
             obj = bld.new_task_gen ('intltool_in')
             obj.source = 'data/' + desktop + '.in'
@@ -497,11 +521,8 @@ def build (bld):
         else:
             Utils.pprint ('BLUE', "logo-shade could not be rasterized.")
 
-    for res_file in ['error.html', 'close.png']:
+    for res_file in ['about.css', 'error.html', 'close.png', 'gtk3.css', 'speeddial-head.html']:
         bld.install_files ('${MDATADIR}/' + APPNAME + '/res', 'data/' + res_file)
-    bld.install_as ( \
-        '${MDATADIR}/' + APPNAME + '/res/speeddial-head-%s.html' % VERSION, \
-        'data/speeddial-head.html')
 
     if bld.env['addons']:
         bld.install_files ('${MDATADIR}/' + APPNAME + '/res', 'data/autosuggestcontrol.js')
@@ -550,12 +571,126 @@ def shutdown ():
             Utils.pprint ('YELLOW', "gtk-update-icon-cache -q -f -t %s" % dir)
 
     elif Options.commands['check']:
+        def reset_xdg_dirs ():
+            import tempfile, shutil
+            base = os.path.join (tempfile.gettempdir (), 'midori-test', '%s')
+            if os.path.exists (base % ''):
+                shutil.rmtree (base % '')
+            for x in ['XDG_CONFIG_HOME', 'XDG_CACHE_HOME', 'XDG_DATA_HOME', 'XDG_RUNTIME_DIR', 'TMPDIR']:
+                os.environ[x] = (base % x).lower ()
+                Utils.check_dir (os.environ[x])
+
+        def subprocess_popen_timeout (args, stdout=None, stderr=None):
+            import threading, signal
+            def t_kill ():
+                Utils.pprint ('RED', 'timed out')
+                os.kill (pp.pid, signal.SIGABRT)
+            t = threading.Timer (int(os.environ.get ('MIDORI_TIMEOUT', '42')), t_kill)
+            t.start ()
+            if is_mingw (Build.bld.env):
+                args.insert (0, 'wine')
+            cwd = Build.bld.env['PREFIX'] + os.sep + 'bin'
+            pp = subprocess.Popen (args, cwd=cwd, stdout=stdout, stderr=stderr)
+            if stdout is None:
+                (out, err) = pp.communicate ()
+                t.cancel ()
+            return pp
+
+        # Avoid i18n-related false failures
+        os.environ['LC_ALL'] = 'C'
+        os.environ['UNIQUE_BACKEND'] = 'bacon'
+        if is_mingw (Build.bld.env):
+            os.environ['MIDORI_EXEC_PATH'] = Build.bld.env['PREFIX']
         test = UnitTest.unit_test ()
-        test.change_to_testfile_dir = True
-        test.want_to_see_test_output = True
-        test.want_to_see_test_error = True
-        test.run ()
-        test.print_results ()
+
+        reset_xdg_dirs ()
+        if True:
+            test.unit_test_results = {}
+            for obj in Build.bld.all_task_gen:
+                if getattr (obj, 'unit_test', '') and 'cprogram' in obj.features:
+                    if 'MIDORI_UNITS' in os.environ and not obj.target.split('-')[1] in os.environ['MIDORI_UNITS']:
+                        continue
+                    output = obj.path
+                    filename = os.path.join (output.abspath (obj.env), obj.target)
+                    srcdir = output.abspath ()
+                    label = os.path.join (output.bldpath (obj.env), obj.target)
+                    test.unit_tests[label] = (filename, srcdir)
+
+            Utils.pprint ('GREEN', 'Running the unit tests')
+            for label in test.unit_tests.allkeys:
+                filename = test.unit_tests[label][0]
+                test.unit_test_results[label] = 0
+                try:
+                    if is_mingw (Build.bld.env):
+                        filename += '.exe'
+                    args = [filename]
+                    pp = subprocess_popen_timeout (args)
+                    test.unit_test_results[label] = int (pp.returncode == 0)
+                    if not test.unit_test_results[label]:
+                        test.num_tests_failed += 1
+                except OSError:
+                    msg = sys.exc_info()[1] # Python 2/3 compatibility
+                    Utils.pprint ('RED', '%s: %s' % (args, msg))
+                    test.num_tests_err += 1
+                except KeyboardInterrupt:
+                    pass
+        else:
+            test.want_to_see_test_output = True
+            test.want_to_see_test_error = True
+            test.run ()
+
+        reset_xdg_dirs ()
+        for label in test.unit_tests.allkeys:
+            if not test.unit_test_results[label]:
+                Utils.pprint ('YELLOW', label + '...FAILED')
+                filename = test.unit_tests[label][0]
+                try:
+                    if is_mingw (Build.bld.env):
+                        filename += '.exe'
+                    args = ['gdb', '--batch', '-ex', 'set print thread-events off', '-ex', 'run', '-ex', 'bt', filename]
+                    pp = subprocess_popen_timeout (args)
+                except OSError:
+                    Utils.pprint ('RED', 'Install gdb to see backtraces')
+                except KeyboardInterrupt:
+                    pass
+            else:
+                Utils.pprint ('GREEN', label + '.......OK')
+                filename = test.unit_tests[label][0]
+                if is_mingw (Build.bld.env):
+                    filename += '.exe'
+                if os.environ.get ('MIDORI_TEST') == 'valgrind':
+                    args = ['valgrind', '-q', '--leak-check=no', '--num-callers=4', '--show-possibly-lost=no', '--undef-value-errors=yes', '--track-origins=yes', filename]
+                elif os.environ.get ('MIDORI_TEST') == 'callgrind':
+                    args = ['valgrind', '--tool=callgrind', '--callgrind-out-file=%s.callgrind' % filename, filename]
+                else:
+                    continue
+                try:
+                    pp = subprocess_popen_timeout (args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                    skip = False
+                    for line in iter(pp.stdout.readline, ''):
+                        if line[:2] != '==':
+                            continue
+                        if line == '':
+                            skip = False
+                        elif 'Conditional jump or move' in line:
+                            skip = True
+                        elif 'Uninitialised value was created by a stack allocation' in line:
+                            skip = True
+                        elif not skip:
+                            sys.stdout.write (line[9:])
+                except OSError:
+                    Utils.pprint ('YELLOW', 'Install valgrind to perform memory checks')
+                except KeyboardInterrupt:
+                    pass
+
+        if not 'MIDORI_UNITS' in os.environ:
+            Utils.pprint ('BLUE', 'Set MIDORI_UNITS to select a subset of test cases')
+        if not 'MIDORI_TEST' in os.environ:
+            Utils.pprint ('BLUE', 'Set MIDORI_TEST to "valgrind" or "callgrind" to perform memory checks')
+        if not 'MIDORI_TIMEOUT' in os.environ:
+            Utils.pprint ('BLUE', 'Set MIDORI_TIMEOUT to set the maximum test runtime (default: 42)')
+        # if test.num_tests_failed > 0 or test.num_tests_err > 0:
+        #     sys.exit (1)
 
     elif Options.options.update_po:
         os.chdir('./po')
@@ -587,7 +722,6 @@ def shutdown ():
         except:
             pass
         try:
-            ext = 'MIDORI_EXTENSION_PATH=' + relfolder + os.sep + 'extensions'
             nls = 'MIDORI_NLSPATH=' + relfolder + os.sep + 'po'
             lang = os.environ['LANG']
             try:
@@ -604,7 +738,7 @@ def shutdown ():
                         'LC_MESSAGES' + os.sep + APPNAME + '.mo')
             except:
                 pass
-            command = ext + ' ' + nls + ' '
+            command = nls + ' '
             if is_mingw (Build.bld.env):
                 # This works only if everything is installed to that prefix
                 os.chdir (Build.bld.env['PREFIX'] + os.sep + 'bin')
