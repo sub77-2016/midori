@@ -62,8 +62,10 @@ override_dh_install: debian/presubj
 	$(CMD) --fail-missing
 
 override_dh_auto_clean:
+	! which quilt >/dev/null || ! test -d .pc || quilt pop -a
+	rm -fr .pc
 	$(WAF) --nocache distclean
-	rm -rf _build_
+	rm -rf _build_ _build
 	rm -rf .waf*
 	rm -rf .lock-wscript
 	rm -rf `find waf-modules -name "*.pyc"`

@@ -20,8 +20,10 @@ midori (0.5.2+dfsg-1) UNRELEASED; urgency=low
     to the NMU by Koichi Akabe
     - refreshed patches
     - add new Build-Dep on libzeitgeist-dev
+  * Improve dh_auto_clean target in d/rules to handle some leftover
+    files from quilt and waf
 
- -- Ryan Niebur <ryan@debian.org>  Wed, 23 Oct 2013 20:46:22 -0700
+ -- Ryan Niebur <ryan@debian.org>  Wed, 23 Oct 2013 21:04:40 -0700
 
 midori (0.4.3+dfsg-0.1) unstable; urgency=low
 
