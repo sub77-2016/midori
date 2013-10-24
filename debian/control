@@ -9,6 +9,7 @@ Build-Depends: debhelper (>= 8.1.0~),
  libglib2.0-dev,
  libwebkitgtk-dev (>= 1.4.3),
  libxml2-dev (>= 2.6),
+ libzeitgeist-dev,
 # For waf:
  python,
 # Optional dependencies:
