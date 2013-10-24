@@ -1,4 +1,4 @@
-midori (0.5.2-1) UNRELEASED; urgency=low
+midori (0.5.2+dfsg-1) UNRELEASED; urgency=low
 
   * New upstream release.
   * Apply patch from Colin Watson to improve conffile handling, using new
