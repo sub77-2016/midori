@@ -1,5 +1,6 @@
 midori (0.5.2+dfsg-1) UNRELEASED; urgency=low
 
+  [ Yves-Alexis Perez ]
   * New upstream release.
   * Apply patch from Colin Watson to improve conffile handling, using new
     debhelper features.                                         closes: #659773
@@ -14,7 +15,11 @@ midori (0.5.2+dfsg-1) UNRELEASED; urgency=low
       are not done if the ssl certificate can't be trusted.
   * debian/compat bumped to 9.
 
- -- Yves-Alexis Perez <corsac@debian.org>  Tue, 15 May 2012 23:31:12 +0200
+  [ Ryan Niebur ]
+  * new upstream version, including the waf unpack changes made thanks
+    to the NMU by Koichi Akabe
+
+ -- Ryan Niebur <ryan@debian.org>  Wed, 23 Oct 2013 20:46:22 -0700
 
 midori (0.4.3+dfsg-0.1) unstable; urgency=low
 
