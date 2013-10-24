@@ -1,6 +1,6 @@
 /*
- Copyright (C) 2009-2012 Christian Dywan <christian@twotoasts.de>
- Copyright (C) 2009-2012 Alexander Butenko <a.butenka@gmail.com>
+ Copyright (C) 2009-2010 Christian Dywan <christian@twotoasts.de>
+ Copyright (C) 2009 Alexander Butenko <a.butenka@gmail.com>
 
  This library is free software; you can redistribute it and/or
  modify it under the terms of the GNU Lesser General Public
@@ -9,8 +9,8 @@
 
  See the file COPYING for the full license text.
 */
+
 #include <midori/midori.h>
-#include "midori-core.h"
 #include <glib/gstdio.h>
 
 #include "config.h"
@@ -30,110 +30,66 @@
     (__filter[4] != '-' && __filter[5] != '-')
 #ifdef G_ENABLE_DEBUG
     #define adblock_debug(dmsg, darg1, darg2) \
-        do { if (midori_debug ("adblock:match")) g_debug (dmsg, darg1, darg2); } while (0)
+        do { if (debug == 1) g_debug (dmsg, darg1, darg2); } while (0)
 #else
     #define adblock_debug(dmsg, darg1, darg2) /* nothing */
 #endif
 
-static GHashTable* pattern = NULL;
-static GHashTable* keys = NULL;
-static GHashTable* optslist = NULL;
-static GHashTable* urlcache = NULL;
-static GHashTable* blockcssprivate = NULL;
-static GHashTable* navigationwhitelist = NULL;
-static GString* blockcss = NULL;
-static GList* update_list = NULL;
-static gboolean update_done = FALSE;
-
-static void
-adblock_parse_file (gchar* path);
+static GHashTable* pattern;
+static GHashTable* keys;
+static GHashTable* optslist;
+static GHashTable* urlcache;
+static GString* blockcss;
+static GString* blockcssprivate;
+static gchar* blockscript = NULL;
+#ifdef G_ENABLE_DEBUG
+static guint debug;
+#endif
 
 static gboolean
-adblock_file_is_up_to_date (gchar* path);
+adblock_parse_file (gchar* path);
 
 static void
 adblock_reload_rules (MidoriExtension* extension,
                       gboolean         custom_only);
 
 static gchar*
-adblock_build_js (const gchar* uri)
+adblock_build_js (const gchar* private)
 {
-    gchar* domain;
-    const gchar* style;
-    GString* subdomain;
-    GString* code;
-    int cnt = 0, blockscnt = 0;
-    gchar** subdomains;
-
-    domain = midori_uri_parse_hostname (uri, NULL);
-    subdomains = g_strsplit (domain, ".", -1);
-    g_free (domain);
-    if (!subdomains)
-        return NULL;
-
-    code = g_string_new (
+    return g_strdup_printf (
         "window.addEventListener ('DOMContentLoaded',"
         "function () {"
         "   if (document.getElementById('madblock'))"
         "       return;"
-        "   public = '");
-
-    cnt = g_strv_length (subdomains) - 1;
-    subdomain = g_string_new (subdomains [cnt]);
-    g_string_prepend_c (subdomain, '.');
-    cnt--;
-    while (cnt >= 0)
-    {
-        g_string_prepend (subdomain, subdomains[cnt]);
-        if ((style = g_hash_table_lookup (blockcssprivate, subdomain->str)))
-        {
-            g_string_append (code, style);
-            g_string_append_c (code, ',');
-            blockscnt++;
-        }
-        g_string_prepend_c (subdomain, '.');
-        cnt--;
-    }
-    g_string_free (subdomain, TRUE);
-    g_strfreev (subdomains);
-
-    if (blockscnt == 0)
-        return g_string_free (code, TRUE);
-
-    g_string_append (code,
-        "   zz-non-existent {display: none !important}';"
+            // Get just domain name from URL
+        "   var URL = location.href.match(/:\\/\\/(.[^/]+)/)[1];"
+        "   var sites = new Array(); %s;"
+        "   var public = '.madblockplaceholder ';"
+            // Split domain into subdomain parts
+        "   var subdomains = URL.split ('.');"
+        "   var hostname = subdomains [subdomains.length - 1];"
+        "   var i = subdomains.length - 2;"
+            // Check if any of subdomains do have blocking rules
+        "   while (i >= 0) {"
+        "       hostname = subdomains [i] + '.' + hostname;"
+        "       if (sites [hostname])"
+        "           public += ', ' + sites [hostname];"
+        "       i--;"
+        "   }"
+        "   public += ' {display: none !important}';"
         "   var mystyle = document.createElement('style');"
         "   mystyle.setAttribute('type', 'text/css');"
         "   mystyle.setAttribute('id', 'madblock');"
         "   mystyle.appendChild(document.createTextNode(public));"
         "   var head = document.getElementsByTagName('head')[0];"
         "   if (head) head.appendChild(mystyle);"
-        "}, true);");
-    return g_string_free (code, FALSE);
+        "}, true);",
+        private);
 }
 
 static GString*
 adblock_fixup_regexp (const gchar* prefix,
                       gchar*       src);
-
-static void
-adblock_destroy_db ()
-{
-    if (blockcss)
-        g_string_free (blockcss, TRUE);
-    blockcss = NULL;
-
-    g_hash_table_destroy (pattern);
-    pattern = NULL;
-    g_hash_table_destroy (optslist);
-    optslist = NULL;
-    g_hash_table_destroy (urlcache);
-    urlcache = NULL;
-    g_hash_table_destroy (blockcssprivate);
-    blockcssprivate = NULL;
-    g_hash_table_destroy (navigationwhitelist);
-    navigationwhitelist = NULL;
-}
 
 static void
 adblock_init_db ()
@@ -150,16 +106,12 @@ adblock_init_db ()
     urlcache = g_hash_table_new_full (g_str_hash, g_str_equal,
                    (GDestroyNotify)g_free,
                    (GDestroyNotify)g_free);
-    blockcssprivate = g_hash_table_new_full (g_str_hash, g_str_equal,
-                   (GDestroyNotify)g_free,
-                   (GDestroyNotify)g_free);
-    navigationwhitelist = g_hash_table_new_full (g_direct_hash, g_str_equal,
-                   NULL,
-                   (GDestroyNotify)g_free);
-
     if (blockcss && blockcss->len > 0)
         g_string_free (blockcss, TRUE);
+    if (blockcssprivate && blockcssprivate->len > 0)
+        g_string_free (blockcssprivate, TRUE);
     blockcss = g_string_new ("z-non-exist");
+    blockcssprivate = g_string_new ("");
 }
 
 static void
@@ -167,26 +119,23 @@ adblock_download_notify_status_cb (WebKitDownload*  download,
                                    GParamSpec*      pspec,
                                    MidoriExtension* extension)
 {
-    if (update_done)
+    gchar* path;
+    MidoriApp* app;
+    MidoriWebSettings* settings;
+
+    if (webkit_download_get_status (download) != WEBKIT_DOWNLOAD_STATUS_FINISHED)
         return;
 
-    if (webkit_download_get_status (download) == WEBKIT_DOWNLOAD_STATUS_FINISHED)
-    {
-        GList* li = NULL;
-        for (li = update_list; li != NULL; li = g_list_next (li))
-        {
-            gchar* uri = g_strdup (webkit_download_get_destination_uri (download) + 7);
-            if (g_strcmp0 (li->data, uri))
-                update_list = g_list_remove (update_list, li->data);
-            g_free (uri);
-        }
-    }
+    path = g_filename_from_uri (webkit_download_get_destination_uri (download), NULL, NULL);
+    adblock_parse_file (path);
+    g_free (path);
 
-    if (g_list_length (update_list) == 0)
-    {
-        adblock_reload_rules (extension, FALSE);
-        update_done = TRUE;
-    }
+    app = midori_extension_get_app (extension);
+    settings = katze_object_get_object (app, "settings");
+    g_string_append (blockcss, " {display: none !important}\n");
+    midori_web_settings_add_style (settings, "adblock-blockcss", blockcss->str);
+    katze_assign (blockscript, adblock_build_js (blockcssprivate->str));
+    g_object_unref (settings);
 }
 
 static gchar*
@@ -202,7 +151,8 @@ adblock_get_filename_for_uri (const gchar* uri)
     if (!strncmp (uri, "file", 4))
         return g_strndup (uri + 7, strlen (uri) - 7);
 
-    folder = g_build_filename (midori_paths_get_cache_dir (), "adblock", NULL);
+    folder = g_build_filename (g_get_user_cache_dir (), PACKAGE_NAME,
+                               "adblock", NULL);
     katze_mkdir_with_parents (folder, 0700);
 
     filename = g_compute_checksum_for_string (G_CHECKSUM_MD5, uri, -1);
@@ -224,8 +174,6 @@ adblock_reload_rules (MidoriExtension* extension,
     MidoriApp* app = midori_extension_get_app (extension);
     MidoriWebSettings* settings = katze_object_get_object (app, "settings");
 
-    if (pattern)
-        adblock_destroy_db ();
     adblock_init_db ();
 
     custom_list = g_build_filename (midori_extension_get_config_dir (extension),
@@ -245,7 +193,7 @@ adblock_reload_rules (MidoriExtension* extension,
                 continue;
             }
 
-            if (!adblock_file_is_up_to_date (path))
+            if (!adblock_parse_file (path))
             {
                 WebKitNetworkRequest* request;
                 WebKitDownload* download;
@@ -255,14 +203,11 @@ adblock_reload_rules (MidoriExtension* extension,
                 download = webkit_download_new (request);
                 g_object_unref (request);
                 webkit_download_set_destination_uri (download, destination);
-                update_list = g_list_prepend (update_list, path);
                 g_free (destination);
                 g_signal_connect (download, "notify::status",
                     G_CALLBACK (adblock_download_notify_status_cb), extension);
                 webkit_download_start (download);
             }
-            else
-                adblock_parse_file (path);
             g_free (path);
             i++;
         }
@@ -270,6 +215,7 @@ adblock_reload_rules (MidoriExtension* extension,
     g_strfreev (filters);
     g_string_append (blockcss, " {display: none !important}\n");
 
+    katze_assign (blockscript, adblock_build_js (blockcssprivate->str));
     midori_web_settings_add_style (settings, "adblock-blockcss", blockcss->str);
     g_object_unref (settings);
 }
@@ -502,8 +448,6 @@ adblock_get_preferences_dialog (MidoriExtension* extension)
         GTK_STOCK_CLOSE, GTK_RESPONSE_CLOSE,
         #endif
         NULL);
-    katze_widget_add_class (gtk_dialog_get_widget_for_response (
-        GTK_DIALOG (dialog), GTK_RESPONSE_HELP), "help_button");
     content_area = gtk_dialog_get_content_area (GTK_DIALOG (dialog));
     g_signal_connect (dialog, "destroy",
                       G_CALLBACK (gtk_widget_destroyed), &dialog);
@@ -529,10 +473,8 @@ adblock_get_preferences_dialog (MidoriExtension* extension)
         "and click \"Add\" to add it to the list. "
         "You can find more lists at %s."),
         #if GTK_CHECK_VERSION (2, 18, 0)
-        "<a href=\"http://adblockplus.org/en/subscriptions\">adblockplus.org/en/subscriptions</a> "
         "<a href=\"http://easylist.adblockplus.org/\">easylist.adblockplus.org</a>");
         #else
-        "<u>http://adblockplus.org/en/subscriptions</u> "
         "<u>http://easylist.adblockplus.org/</u>");
         #endif
     #if GTK_CHECK_VERSION (2, 18, 0)
@@ -597,7 +539,6 @@ adblock_get_preferences_dialog (MidoriExtension* extension)
     vbox = gtk_vbox_new (FALSE, 4);
     gtk_box_pack_start (GTK_BOX (hbox), vbox, FALSE, FALSE, 4);
     button = gtk_button_new_from_stock (GTK_STOCK_ADD);
-    g_object_set_data (G_OBJECT (dialog), "entry", entry);
     g_object_set_data (G_OBJECT (button), "entry", entry);
     g_signal_connect (button, "clicked",
         G_CALLBACK (adblock_preferences_add_clicked_cb), liststore);
@@ -646,9 +587,8 @@ adblock_get_preferences_dialog (MidoriExtension* extension)
     return dialog;
 }
 
-static GtkWidget*
-adblock_show_preferences_dialog (MidoriExtension* extension,
-                                 const gchar*     uri)
+static void
+adblock_open_preferences_cb (MidoriExtension* extension)
 {
     static GtkWidget* dialog = NULL;
 
@@ -661,19 +601,6 @@ adblock_show_preferences_dialog (MidoriExtension* extension,
     }
     else
         gtk_window_present (GTK_WINDOW (dialog));
-
-    if (uri != NULL)
-    {
-        GtkWidget* entry = g_object_get_data (G_OBJECT (dialog), "entry");
-        gtk_entry_set_text (GTK_ENTRY (entry), uri);
-    }
-    return dialog;
-}
-
-static void
-adblock_open_preferences_cb (MidoriExtension* extension)
-{
-    adblock_show_preferences_dialog (extension, NULL);
 }
 
 static inline gint
@@ -695,9 +622,7 @@ adblock_check_rule (GRegex*      regex,
             return FALSE;
     }
     /* TODO: Domain opt check */
-    #ifdef G_ENABLE_DEBUG
     adblock_debug ("blocked by pattern regexp=%s -- %s", g_regex_get_pattern (regex), req_uri);
-    #endif
     return TRUE;
 }
 
@@ -826,51 +751,13 @@ adblock_prepare_urihider_js (GList* uris)
     return g_string_free (js, FALSE);
 }
 
-static gboolean
-adblock_navigation_policy_decision_requested_cb (WebKitWebView*             web_view,
-                                                 WebKitWebFrame*            web_frame,
-                                                 WebKitNetworkRequest*      request,
-                                                 WebKitWebNavigationAction* action,
-                                                 WebKitWebPolicyDecision*   decision,
-                                                 MidoriExtension*           extension)
-{
-    const gchar* uri = webkit_network_request_get_uri (request);
-    if (g_str_has_prefix (uri, "abp:"))
-    {
-        gchar** parts;
-        gchar* filter;
-        if (g_str_has_prefix (uri, "abp:subscribe?location="))
-            uri = &uri[23];
-        else if (g_str_has_prefix (uri, "abp://subscribe?location="))
-            uri = &uri[25];
-        else
-            return FALSE;
-
-        parts = g_strsplit (uri, "&", 2);
-        filter = soup_uri_decode (parts[0]);
-        webkit_web_policy_decision_ignore (decision);
-        adblock_show_preferences_dialog (extension, filter);
-        g_free (filter);
-        g_strfreev (parts);
-        return TRUE;
-    }
-
-    if (web_frame == webkit_web_view_get_main_frame (web_view))
-    {
-        const gchar* req_uri = webkit_network_request_get_uri (request);
-        g_hash_table_replace (navigationwhitelist, web_view, g_strdup (req_uri));
-    }
-    return false;
-}
-
-
 static void
 adblock_resource_request_starting_cb (WebKitWebView*         web_view,
                                       WebKitWebFrame*        web_frame,
                                       WebKitWebResource*     web_resource,
                                       WebKitNetworkRequest*  request,
                                       WebKitNetworkResponse* response,
-                                      MidoriView*            view)
+                                      GtkWidget*             image)
 {
     SoupMessage* msg;
     GList* blocked_uris;
@@ -882,11 +769,12 @@ adblock_resource_request_starting_cb (WebKitWebView*         web_view,
     if (midori_uri_is_blank (page_uri))
         return;
 
-    req_uri = webkit_network_request_get_uri (request);
-
-    if (!g_strcmp0 (req_uri, g_hash_table_lookup (navigationwhitelist, web_view)))
+    /* Never filter the main page itself */
+    if (web_frame == webkit_web_view_get_main_frame (web_view)
+     && webkit_web_frame_get_load_status (web_frame) == WEBKIT_LOAD_PROVISIONAL)
         return;
 
+    req_uri = webkit_network_request_get_uri (request);
     if (!midori_uri_is_http (req_uri)
      || g_str_has_suffix (req_uri, "favicon.ico"))
         return;
@@ -895,17 +783,8 @@ adblock_resource_request_starting_cb (WebKitWebView*         web_view,
     if (!(msg && !g_strcmp0 (msg->method, "GET")))
         return;
 
-    if (response != NULL) /* request is caused by redirect */
-    {
-        if (web_frame == webkit_web_view_get_main_frame (web_view))
-        {
-            g_hash_table_replace (navigationwhitelist, web_view, g_strdup (req_uri));
-            return;
-        }
-    }
-
     #ifdef G_ENABLE_DEBUG
-    if (midori_debug ("adblock:time"))
+    if (debug == 2)
         g_test_timer_start ();
     #endif
     if (adblock_is_matched (req_uri, page_uri))
@@ -916,7 +795,7 @@ adblock_resource_request_starting_cb (WebKitWebView*         web_view,
         g_object_set_data (G_OBJECT (web_view), "blocked-uris", blocked_uris);
     }
     #ifdef G_ENABLE_DEBUG
-    if (midori_debug ("adblock:time"))
+    if (debug == 2)
         g_debug ("match: %f%s", g_test_timer_elapsed (), "seconds");
     #endif
 
@@ -975,16 +854,16 @@ adblock_custom_block_image_cb (GtkWidget*       widget,
 
     custom_list = g_build_filename (midori_extension_get_config_dir (extension),
                                     CUSTOM_LIST_NAME, NULL);
-    katze_mkdir_with_parents (midori_extension_get_config_dir (extension), 0700);
-    if ((list = g_fopen (custom_list, "a+")))
+    if (!(list = g_fopen (custom_list, "a+")))
     {
-        g_fprintf (list, "%s\n", gtk_entry_get_text (GTK_ENTRY (entry)));
-        fclose (list);
-        adblock_reload_rules (extension, TRUE);
-        g_debug ("%s: Updated custom list\n", G_STRFUNC);
+        g_free (custom_list);
+        return;
     }
-    else
-        g_debug ("%s: Failed to open custom list %s\n", G_STRFUNC, custom_list);
+
+    g_fprintf (list, "%s\n", gtk_entry_get_text (GTK_ENTRY (entry)));
+    fclose (list);
+    adblock_reload_rules (extension, TRUE);
+
     g_free (custom_list);
     gtk_widget_destroy (dialog);
 }
@@ -1053,19 +932,13 @@ adblock_window_object_cleared_cb (WebKitWebView*  web_view,
                                   JSObjectRef     js_window)
 {
     const char *page_uri;
-    gchar* script;
 
     page_uri = webkit_web_frame_get_uri (web_frame);
     /* Don't add adblock css into speeddial and about: pages */
     if (!midori_uri_is_http (page_uri))
         return;
 
-    script = adblock_build_js (page_uri);
-    if (!script)
-        return;
-
-    g_free (sokoke_js_script_eval (js_context, script, NULL));
-    g_free (script);
+    g_free (sokoke_js_script_eval (js_context, blockscript, NULL));
 }
 
 static void
@@ -1074,32 +947,30 @@ adblock_add_tab_cb (MidoriBrowser*   browser,
                     MidoriExtension* extension)
 {
     GtkWidget* web_view = midori_view_get_web_view (view);
+    GtkWidget* image = g_object_get_data (G_OBJECT (browser), "status-image");
 
     g_signal_connect (web_view, "window-object-cleared",
         G_CALLBACK (adblock_window_object_cleared_cb), 0);
 
     g_signal_connect_after (web_view, "populate-popup",
         G_CALLBACK (adblock_populate_popup_cb), extension);
-    g_signal_connect (web_view, "navigation-policy-decision-requested",
-        G_CALLBACK (adblock_navigation_policy_decision_requested_cb), extension);
     g_signal_connect (web_view, "resource-request-starting",
-        G_CALLBACK (adblock_resource_request_starting_cb), view);
+        G_CALLBACK (adblock_resource_request_starting_cb), image);
     g_signal_connect (web_view, "load-finished",
-        G_CALLBACK (adblock_load_finished_cb), view);
-}
-
-static void
-adblock_remove_tab_cb (MidoriBrowser*   browser,
-                       MidoriView*      view,
-                       MidoriExtension* extension)
-{
-    GtkWidget* web_view = midori_view_get_web_view (view);
-    g_hash_table_remove (navigationwhitelist, web_view);
+        G_CALLBACK (adblock_load_finished_cb), image);
 }
 
 static void
 adblock_deactivate_cb (MidoriExtension* extension,
                        MidoriBrowser*   browser);
+
+static void
+adblock_add_tab_foreach_cb (MidoriView*      view,
+                            MidoriBrowser*   browser,
+                            MidoriExtension* extension)
+{
+    adblock_add_tab_cb (browser, view, extension);
+}
 
 static void
 adblock_app_add_browser_cb (MidoriApp*       app,
@@ -1108,8 +979,6 @@ adblock_app_add_browser_cb (MidoriApp*       app,
 {
     GtkWidget* statusbar;
     GtkWidget* image;
-    GtkWidget* view;
-    gint i;
 
     statusbar = katze_object_get_object (browser, "statusbar");
     image = NULL;
@@ -1119,14 +988,10 @@ adblock_app_add_browser_cb (MidoriApp*       app,
     g_object_set_data_full (G_OBJECT (browser), "status-image", image,
                             (GDestroyNotify)gtk_widget_destroy);
 
-    i = 0;
-    while((view = midori_browser_get_nth_tab(browser, i++)))
-        adblock_add_tab_cb (browser, MIDORI_VIEW (view), extension);
-
+    midori_browser_foreach (browser,
+          (GtkCallback)adblock_add_tab_foreach_cb, extension);
     g_signal_connect (browser, "add-tab",
         G_CALLBACK (adblock_add_tab_cb), extension);
-    g_signal_connect (browser, "remove-tab",
-        G_CALLBACK (adblock_remove_tab_cb), extension);
     g_signal_connect (extension, "open-preferences",
         G_CALLBACK (adblock_open_preferences_cb), extension);
     g_signal_connect (extension, "deactivate",
@@ -1224,9 +1089,7 @@ adblock_compile_regexp (GString* gpatt,
             if (!g_regex_match_simple ("[\\*]", sig, G_REGEX_UNGREEDY, G_REGEX_MATCH_NOTEMPTY) &&
                 !g_hash_table_lookup (keys, sig))
             {
-                #ifdef G_ENABLE_DEBUG
                 adblock_debug ("sig: %s %s", sig, patt);
-                #endif
                 g_hash_table_insert (keys, sig, regex);
                 g_hash_table_insert (optslist, sig, g_strdup (opts));
                 signature_count++;
@@ -1236,9 +1099,7 @@ adblock_compile_regexp (GString* gpatt,
                 if (g_regex_match_simple ("^\\*", sig, G_REGEX_UNGREEDY, G_REGEX_MATCH_NOTEMPTY) &&
                     !g_hash_table_lookup (pattern, patt))
                 {
-                    #ifdef G_ENABLE_DEBUG
                     adblock_debug ("patt2: %s %s", sig, patt);
-                    #endif
                     g_hash_table_insert (pattern, patt, regex);
                     g_hash_table_insert (optslist, patt, g_strdup (opts));
                 }
@@ -1254,9 +1115,7 @@ adblock_compile_regexp (GString* gpatt,
     }
     else
     {
-        #ifdef G_ENABLE_DEBUG
         adblock_debug ("patt: %s%s", patt, "");
-        #endif
         /* Pattern is a regexp chars */
         g_hash_table_insert (pattern, patt, regex);
         g_hash_table_insert (optslist, patt, g_strdup (opts));
@@ -1311,9 +1170,7 @@ adblock_add_url_pattern (gchar* prefix,
 
     format_patt = adblock_fixup_regexp (prefix, patt);
 
-    #ifdef G_ENABLE_DEBUG
     adblock_debug ("got: %s opts %s", format_patt->str, opts);
-    #endif
     should_free = adblock_compile_regexp (format_patt, opts);
 
     if (data[1] && data[2])
@@ -1341,22 +1198,6 @@ adblock_frame_add (gchar* line)
     }
     g_string_append (blockcss, separator);
     g_string_append (blockcss, line);
-}
-
-static void
-adblock_update_css_hash (gchar* domain,
-                         gchar* value)
-{
-    const gchar* olddata;
-    gchar* newdata;
-
-    if ((olddata = g_hash_table_lookup (blockcssprivate, domain)))
-    {
-        newdata = g_strconcat (olddata, " , ", value, NULL);
-        g_hash_table_replace (blockcssprivate, g_strdup (domain), newdata);
-    }
-    else
-        g_hash_table_insert (blockcssprivate, g_strdup (domain), g_strdup (value));
 }
 
 static inline void
@@ -1390,16 +1231,18 @@ adblock_frame_add_private (const gchar* line,
             /* Ignore Firefox-specific option */
             if (!g_strcmp0 (domain, "~pregecko2"))
                 continue;
-            /* FIXME: ~ should negate match */
+            /* strip ~ from domain */
             if (domain[0] == '~')
                 domain++;
-            adblock_update_css_hash (g_strstrip (domain), data[1]);
+            g_string_append_printf (blockcssprivate, ";sites['%s']+=',%s'",
+                g_strstrip (domain), data[1]);
         }
         g_strfreev (domains);
     }
     else
     {
-        adblock_update_css_hash (data[0], data[1]);
+        g_string_append_printf (blockcssprivate, ";sites['%s']+=',%s'",
+            data[0], data[1]);
     }
     g_strfreev (data);
 }
@@ -1407,92 +1250,12 @@ adblock_frame_add_private (const gchar* line,
 static gchar*
 adblock_parse_line (gchar* line)
 {
-    /*
-     * AdblockPlus rule reference based on http://adblockplus.org/en/filters
-     * Block URL:
-     *   http://example.com/ads/banner123.gif
-     *   http://example.com/ads/banner*.gif
-     *   http://example.com/ads/*
-     * Partial match for "ad":
-     *   *ad*
-     *   ad
-     * Block example.com/annoyingflash.swf but not example.com/swf/:
-     *   swf|
-     * Block bad.example/banner.gif but not good.example/analyze?http://bad.example:
-     *   |http://baddomain.example/
-     * Block http(s) example.com but not badexample.com or good.example/analyze?http://bad.example:
-     *   ||example.com/banner.gif
-     * Block example.com/ and example.com:8000/ but not example.com.ar/:
-     *   http://example.com^
-     * A ^ matches anything that isn't A-Za-z0-0_-.%
-     * Block example.com:8000/foo.bar?a=12&b=%D1%82%D0%B5:
-     *   ^example.com^
-     *   ^%D1%82%D0%B5^
-     *   ^foo.bar^
-     * TODO: ^ is partially supported by Midori
-     * Block banner123 and banner321 with a regex:
-     *   /banner\d+/
-     * Never block URIs with "advice":
-     *   @@advice
-     * No blocking at all:
-     *   @@http://example.com
-     *   @@|http://example.com
-     * TODO: @@ is currently ignored by Midori.
-     * Element hiding by class:
-     *   ##textad
-     *   ##div.textad
-     * Element hiding by id:
-     *   ##div#sponsorad
-     *   ##*#sponsorad
-     * Match example.com/ and something.example.com/ but not example.org/
-     *   example.com##*.sponsor
-     * Match multiple domains:
-     *   domain1.example,domain2.example,domain3.example##*.sponsor
-     * Match on any domain but "example.com":
-     *  ~example.com##*.sponsor
-     * Match on "example.com" except "foo.example.com":
-     *   example.com,~foo.example.com##*.sponsor
-     * By design rules only apply to full domain names:
-     *   "domain" is NOT equal to "domain.example,domain.test."
-     * In Firefox rules can apply to browser UI:
-     *   browser##menuitem#javascriptConsole will hide the Console menuitem
-     * Hide tables with width attribute 80%:
-     *   ##table[width="80%"]
-     * Hide all div with title attribute containing "adv":
-     *   ##div[title*="adv"]
-     * Hide div with title starting with "adv" and ending with "ert":
-     *   ##div[title^="adv"][title$="ert"]
-     * Match tables with width attribute 80% and bgcolor attribute white:
-     *   table[width="80%"][bgcolor="white"]
-     * TODO: [] is currently ignored by Midori
-     * Hide anything following div with class "adheader":
-     *   ##div.adheader + *
-     * Old CSS element hiding syntax, officially deprecated:
-     *   #div(id=foo)
-     * Match anything but "example.com"
-     *   ~example.com##*.sponsor
-     * TODO: ~ is currently ignored by Midori
-     * Match "example.com" domain except "foo.example.com":
-     *   example.com,~foo.example.com##*.sponsor
-     * ! Comment
-     * Supported options after a trailing $:
-     *   domain,third-party,~pregecko2
-     * Official options (not all supported by Midori):
-     *   script,image,stylesheet,object,xmlhttprequest,object-subrequest,
-     *   subdocument,document,elemhide,popup,third-party,sitekey,match-case
-     *   collapse,donottrack,pregecko2
-     * Deprecated:
-     *   background,xbl,ping,dtd
-     * Inverse options:
-     *   ~script,~image,~stylesheet,~object,~xmlhttprequest,~collapse,
-     *   ~object-subrequest,~subdocument,~document,~elemhide,~third-party,
-     *   ~pregecko2
-     **/
-
-    /* Skip invalid, empty and comment lines */
-    if (!(line && line[0] != ' ' && line[0] != '!' && line[0]))
+    if (!line)
         return NULL;
-
+    g_strchomp (line);
+    /* Ignore comments and new lines */
+    if (line[0] == '!')
+        return NULL;
     /* FIXME: No support for whitelisting */
     if (line[0] == '@' && line[1] == '@')
         return NULL;
@@ -1500,7 +1263,9 @@ adblock_parse_line (gchar* line)
     if (line[0] == '[')
         return NULL;
 
-    g_strchomp (line);
+    /* Skip garbage */
+    if (line[0] == ' ' || !line[0])
+        return NULL;
 
     /* Got CSS block hider */
     if (line[0] == '#' && line[1] == '#' )
@@ -1518,13 +1283,13 @@ adblock_parse_line (gchar* line)
         adblock_frame_add_private (line, "##");
         return NULL;
     }
+
     /* Got per domain CSS hider rule. Workaround */
     if (strchr (line, '#'))
     {
         adblock_frame_add_private (line, "#");
         return NULL;
     }
-
     /* Got URL blocker rule */
     if (line[0] == '|' && line[1] == '|' )
     {
@@ -1540,156 +1305,7 @@ adblock_parse_line (gchar* line)
     return adblock_add_url_pattern ("", "uri", line);
 }
 
-static GDateMonth
-str_month_name_to_gdate (const gchar* month)
-{
-    guint i;
-    const gchar* months[] = {
-        "", "January", "February", "March", "April", "May", "June",
-        "July", "August", "September", "October", "November", "December"
-    };
-
-    for (i = 0; i < G_N_ELEMENTS (months); i++)
-    {
-        if (strncmp (month, months[i], 3) == 0)
-            return i;
-    }
-    return 0;
-}
-
 static gboolean
-adblock_file_is_up_to_date (gchar* path)
-{
-    FILE* file;
-    gchar line[2000];
-
-    /* Check a chunk of header for update info */
-    if ((file = g_fopen (path, "r")))
-    {
-        gint days_to_expire = 0;
-        gchar* timestamp = NULL;
-        guint i;
-        gboolean found_meta = FALSE;
-        gint fs_days_elapsed, days_elapsed = 0, least_days;
-
-        for (i = 0; i <= 15; i++)
-        {
-            fgets (line, 2000, file);
-            if (strncmp ("! Expires", line, 9) == 0)
-            {
-                gchar** parts = g_strsplit (line, " ", 4);
-                days_to_expire = atoi (parts[2]);
-                g_strfreev (parts);
-                found_meta = TRUE;
-            }
-            if (strncmp ("! This list expires after", line, 25) == 0)
-            {
-                gchar** parts = g_strsplit (line, " ", 7);
-
-                if (strncmp (parts[6], "days", 4) == 0)
-                    days_to_expire = atoi (parts[5]);
-                if (strncmp (parts[6], "hours", 5) == 0)
-                    days_to_expire = (atoi (parts[5])) / 24;
-
-                g_strfreev (parts);
-                found_meta = TRUE;
-            }
-
-            if (strncmp ("! Last modified", line, 15) == 0
-            ||  strncmp ("! Updated", line, 9) == 0)
-            {
-                gchar** parts = g_strsplit (line, ":", 2);
-                timestamp = g_strdup (parts[1] + 1);
-                g_strchomp (timestamp);
-                g_strfreev (parts);
-                found_meta = TRUE;
-            }
-        }
-
-        if (!found_meta)
-        {
-            g_print ("Adblock: no metadata found in %s (broken download?)\n", path);
-            return FALSE;
-        }
-
-        /* query filesystem about file change, maybe there is no update yet
-         * or there is no "modified" metadata to check, otherwise we will repeatedly
-         * download files that have no new updates */
-        {
-            GDate* current = g_date_new ();
-            GDate* fs_mod_date = g_date_new ();
-            GTimeVal mod_time;
-            GFile* filter_file = g_file_new_for_path (path);
-            GFileInfo* info = g_file_query_info (filter_file, "time:modified", 0, NULL, NULL);
-
-            g_file_info_get_modification_time (info, &mod_time);
-            g_date_set_time_t (current, time (NULL));
-            g_date_set_time_val (fs_mod_date, &mod_time);
-
-            fs_days_elapsed = g_date_days_between (fs_mod_date, current);
-
-            g_date_free (current);
-            g_date_free (fs_mod_date);
-        }
-
-        /* If there is no update metadata but file is valid, assume one week */
-        if ((!days_to_expire && !timestamp) && fs_days_elapsed < 7)
-            return TRUE;
-
-        if (days_to_expire && timestamp != NULL)
-        {
-            GDate* current = g_date_new ();
-            GDate* mod_date = g_date_new ();
-            gchar** parts;
-            gboolean use_dots = FALSE;
-
-            /* Common dates are 20 Mar 2012, 20.08.2012 */
-            if (g_strrstr (timestamp, "."))
-            {
-                use_dots = TRUE;
-                parts = g_strsplit (timestamp, ".", 4);
-            }
-            else
-                parts = g_strsplit (timestamp, " ", 4);
-
-            g_date_set_day (mod_date, atoi (parts[0]));
-
-            if (use_dots)
-                g_date_set_month (mod_date, atoi (parts[1]));
-            else
-                g_date_set_month (mod_date, str_month_name_to_gdate (parts[1]));
-
-            g_date_set_year (mod_date, atoi (parts[2]));
-            g_strfreev (parts);
-
-            g_date_set_time_t (current, time (NULL));
-            days_elapsed = g_date_days_between (mod_date, current);
-
-            g_date_free (current);
-            g_date_free (mod_date);
-            g_free (timestamp);
-        }
-
-        /* File from the future? Assume up to date */
-        if (days_elapsed < 0)
-        {
-            g_print ("Adblock: file %s appears to be from the future,"
-                     "check your system clock!\n", path);
-            return TRUE;
-        }
-
-        least_days = days_elapsed < fs_days_elapsed ? days_elapsed : fs_days_elapsed;
-        if (least_days < days_to_expire)
-            return TRUE;
-        else
-            return FALSE;
-
-        return TRUE;
-    }
-    return FALSE;
-}
-
-static void
 adblock_parse_file (gchar* path)
 {
     FILE* file;
@@ -1700,7 +1316,9 @@ adblock_parse_file (gchar* path)
         while (fgets (line, 2000, file))
             adblock_parse_line (line);
         fclose (file);
+        return TRUE;
     }
+    return FALSE;
 }
 
 static void
@@ -1709,25 +1327,24 @@ adblock_deactivate_tabs (MidoriView*      view,
                          MidoriExtension* extension)
 {
     GtkWidget* web_view = midori_view_get_web_view (view);
+    GtkWidget* image = g_object_get_data (G_OBJECT (browser), "status-image");
 
+    g_signal_handlers_disconnect_by_func (
+       browser, adblock_add_tab_cb, extension);
     g_signal_handlers_disconnect_by_func (
        web_view, adblock_window_object_cleared_cb, 0);
     g_signal_handlers_disconnect_by_func (
        web_view, adblock_populate_popup_cb, extension);
     g_signal_handlers_disconnect_by_func (
-       web_view, adblock_resource_request_starting_cb, view);
+       web_view, adblock_resource_request_starting_cb, image);
     g_signal_handlers_disconnect_by_func (
-       web_view, adblock_load_finished_cb, view);
-    g_signal_handlers_disconnect_by_func (
-       web_view, adblock_navigation_policy_decision_requested_cb, extension);
+       web_view, adblock_load_finished_cb, image);
 }
 
 static void
 adblock_deactivate_cb (MidoriExtension* extension,
                        MidoriBrowser*   browser)
 {
-    gint i;
-    GtkWidget* view;
     MidoriApp* app = midori_extension_get_app (extension);
     MidoriWebSettings* settings = katze_object_get_object (app, "settings");
 
@@ -1739,15 +1356,18 @@ adblock_deactivate_cb (MidoriExtension* extension,
         app, adblock_app_add_browser_cb, extension);
     g_signal_handlers_disconnect_by_func (
         browser, adblock_add_tab_cb, extension);
-    g_signal_handlers_disconnect_by_func (
-        browser, adblock_remove_tab_cb, extension);
+    midori_browser_foreach (browser, (GtkCallback)adblock_deactivate_tabs, browser);
 
-    i = 0;
-    while((view = midori_browser_get_nth_tab(browser, i++)))
-        adblock_deactivate_tabs (MIDORI_VIEW (view), browser, extension);
+    if (blockcss)
+        g_string_free (blockcss, TRUE);
+    if (blockcssprivate)
+        g_string_free (blockcssprivate, TRUE);
 
-    adblock_destroy_db ();
     midori_web_settings_remove_style (settings, "adblock-blockcss");
+    blockcssprivate = blockcss = NULL;
+    g_hash_table_destroy (pattern);
+    g_hash_table_destroy (optslist);
+    g_hash_table_destroy (urlcache);
     g_object_unref (settings);
 }
 
@@ -1755,8 +1375,24 @@ static void
 adblock_activate_cb (MidoriExtension* extension,
                      MidoriApp*       app)
 {
+    #ifdef G_ENABLE_DEBUG
+    const gchar* debug_mode;
+    #endif
     KatzeArray* browsers;
     MidoriBrowser* browser;
+
+    #ifdef G_ENABLE_DEBUG
+    debug_mode = g_getenv ("MIDORI_ADBLOCK");
+    if (debug_mode)
+    {
+        if (*debug_mode == '1')
+            debug = 1;
+        else if (*debug_mode == '2')
+            debug = 2;
+        else
+            debug = 0;
+    }
+    #endif
 
     adblock_reload_rules (extension, FALSE);
 
@@ -1788,57 +1424,6 @@ test_adblock_parse (void)
 
     g_assert_cmpstr (adblock_parse_line (".*foo/bar"), ==, "..*foo/bar");
     g_assert_cmpstr (adblock_parse_line ("http://bla.blub/*"), ==, "http://bla.blub/");
-}
-
-static void
-test_subscription_update (void)
-{
-    gint temp;
-    gchar* filename;
-
-    temp = g_file_open_tmp ("midori_adblock_update_test_XXXXXX", &filename, NULL);
-    close (temp);
-
-    g_file_set_contents (filename, "", -1, NULL);
-    g_assert (!adblock_file_is_up_to_date (filename));
-
-    g_file_set_contents (filename,
-        "[Adblock Plus 1.1]\n"
-        "! Checksum: 48f6Qdo4PsNogsurLvQ71w\n"
-        "! Title: EasyList\n"
-        "! Last modified: 05 Sep 2010 11:00 UTC\n"
-        "! This list expires after 48 hours\n",
-            -1, NULL);
-    g_assert (!adblock_file_is_up_to_date (filename));
-
-    g_file_set_contents (filename,
-        "[Adblock Plus 1.1]\n"
-        "! Checksum: 48f6Qdo4PsNogsurLvQ71w\n"
-        "! Title: EasyList\n"
-        "! Last modified: 05.09.2010 11:00 UTC\n"
-        "! Expires: 2 days (update frequency)\n",
-            -1, NULL);
-    g_assert (!adblock_file_is_up_to_date (filename));
-
-    g_file_set_contents (filename,
-        "[Adblock Plus 1.1]\n"
-        "! Checksum: 48f6Qdo4PsNogsurLvQ71w\n"
-        "! Title: EasyList\n"
-        "! Updated: 05 Nov 2014 11:00 UTC\n"
-        "! Expires: 5 days (update frequency)\n",
-            -1, NULL);
-    g_assert (adblock_file_is_up_to_date (filename));
-
-    g_file_set_contents (filename,
-        "[Adblock]\n"
-        "! dutchblock v3\n"
-        "! This list expires after 14 days\n"
-        "|http://b*.mookie1.com/\n",
-        -1, NULL);
-    g_assert (adblock_file_is_up_to_date (filename));
-
-    g_unlink (filename);
-    g_free (filename);
 }
 
 static void
@@ -1904,7 +1489,6 @@ extension_test (void)
 {
     g_test_add_func ("/extensions/adblock/parse", test_adblock_parse);
     g_test_add_func ("/extensions/adblock/pattern", test_adblock_pattern);
-    g_test_add_func ("/extensions/adblock/update", test_subscription_update);
 }
 #endif
 
@@ -1914,7 +1498,7 @@ extension_init (void)
     MidoriExtension* extension = g_object_new (MIDORI_TYPE_EXTENSION,
         "name", _("Advertisement blocker"),
         "description", _("Block advertisements according to a filter list"),
-        "version", "0.6" MIDORI_VERSION_SUFFIX,
+        "version", "0.5" MIDORI_VERSION_SUFFIX,
         "authors", "Christian Dywan <christian@twotoasts.de>",
         NULL);
     midori_extension_install_string_list (extension, "filters", NULL, G_MAXSIZE);

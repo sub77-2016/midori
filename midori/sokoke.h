@@ -14,7 +14,6 @@
 #define __SOKOKE_H__ 1
 
 #include <JavaScriptCore/JavaScript.h>
-#include <webkit/webkit.h>
 #include <midori/midori-websettings.h>
 #include <katze/gtk3-compat.h>
 
@@ -42,17 +41,9 @@ sokoke_show_uri                         (GdkScreen*      screen,
                                          guint32         timestamp,
                                          GError**        error);
 
-gchar*
-sokoke_prepare_command                  (const gchar*    command,
-                                         gboolean        quote_command,
-                                         const gchar*    argument,
-                                         gboolean        quote_argument);
-
 gboolean
 sokoke_spawn_program                    (const gchar* command,
-                                         gboolean        quote_command,
-                                         const gchar*    argument,
-                                         gboolean        quote_argument);
+                                         const gchar* argument);
 
 void
 sokoke_spawn_app                        (const gchar*    uri,
@@ -72,6 +63,47 @@ GtkWidget*
 sokoke_xfce_header_new                  (const gchar*    icon,
                                          const gchar*    title);
 
+void
+sokoke_entry_set_default_text           (GtkEntry*       entry,
+                                         const gchar*    default_text);
+
+gchar*
+sokoke_key_file_get_string_default      (GKeyFile*       key_file,
+                                         const gchar*    group,
+                                         const gchar*    key,
+                                         const gchar*    default_value,
+                                         GError**        error);
+
+gint
+sokoke_key_file_get_integer_default     (GKeyFile*       key_file,
+                                         const gchar*    group,
+                                         const gchar*    key,
+                                         const gint      default_value,
+                                         GError**        error);
+
+gdouble
+sokoke_key_file_get_double_default      (GKeyFile*       key_file,
+                                         const gchar*    group,
+                                         const gchar*    key,
+                                         gdouble         default_value,
+                                         GError**        error);
+
+gboolean
+sokoke_key_file_get_boolean_default     (GKeyFile*       key_file,
+                                         const gchar*    group,
+                                         const gchar*    key,
+                                         gboolean        default_value,
+                                         GError**        error);
+
+gchar**
+sokoke_key_file_get_string_list_default (GKeyFile*       key_file,
+                                         const gchar*    group,
+                                         const gchar*    key,
+                                         gsize*          length,
+                                         gchar**         default_value,
+                                         gsize*          default_length,
+                                         GError*         error);
+
 gboolean
 sokoke_key_file_save_to_file            (GKeyFile*       key_file,
                                          const gchar*    filename,
@@ -89,9 +121,33 @@ sokoke_action_create_popup_menu_item    (GtkAction*      action);
 gint64
 sokoke_time_t_to_julian                 (const time_t*   timestamp);
 
+gint
+sokoke_days_between                     (const time_t*   day1,
+                                         const time_t*   day2);
+
+const gchar*
+sokoke_set_config_dir                   (const gchar*    new_config_dir);
+
+gboolean
+sokoke_is_app_or_private                (void);
+
 gboolean
 sokoke_remove_path                      (const gchar*    path,
                                          gboolean        ignore_errors);
+
+gchar*
+sokoke_find_config_filename             (const gchar*    folder,
+                                         const gchar*    filename);
+
+gchar*
+sokoke_find_lib_path                    (const gchar*    folder);
+
+gchar*
+sokoke_find_data_filename               (const gchar*    filename,
+                                         gboolean        res);
+
+gchar**
+sokoke_get_argv                         (gchar**         argument_vector);
 
 gchar*
 sokoke_replace_variables                (const gchar* template,
@@ -117,6 +173,9 @@ sokoke_prefetch_uri                     (MidoriWebSettings*  settings,
 gboolean
 sokoke_resolve_hostname                 (const gchar*        hostname);
 
+gchar *
+sokoke_accept_languages                 (const gchar* const * lang_names);
+
 gboolean
 sokoke_recursive_fork_protection        (const gchar*         uri,
                                          gboolean             set_uri);
@@ -134,12 +193,13 @@ sokoke_register_privacy_item (const gchar* name,
                               GCallback    clear);
 
 void
-sokoke_widget_copy_clipboard (GtkWidget*          widget,
-                              const gchar*        text,
-                              GtkClipboardGetFunc get_cb,
-                              gpointer            owner);
+sokoke_widget_copy_clipboard (GtkWidget*   widget,
+                              const gchar* text);
 
-GtkWidget*
-sokoke_search_entry_new               (const gchar*        placeholder_text);
+gchar*
+sokoke_build_thumbnail_path (const gchar* name);
+
+gchar*
+midori_download_prepare_tooltip_text (WebKitDownload* download);
 
 #endif /* !__SOKOKE_H__ */

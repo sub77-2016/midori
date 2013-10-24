@@ -21,11 +21,9 @@
 
 #include "midori-app.h"
 #include "midori-platform.h"
-#include "midori-core.h"
 
 #include <string.h>
 #include <gtk/gtk.h>
-#include <glib/gstdio.h>
 #include <glib/gi18n.h>
 
 #if ENABLE_NLS
@@ -70,6 +68,10 @@ struct _MidoriApp
 {
     GObject parent_instance;
 
+    MidoriBrowser* browser;
+    GtkAccelGroup* accel_group;
+
+    gchar* name;
     MidoriWebSettings* settings;
     KatzeArray* bookmarks;
     KatzeArray* trash;
@@ -79,15 +81,12 @@ struct _MidoriApp
     KatzeArray* extensions;
     KatzeArray* browsers;
 
-    MidoriBrowser* browser;
     MidoriAppInstance instance;
 
     #if !HAVE_HILDON || !HAVE_LIBNOTIFY
     gchar* program_notify_send;
     #endif
 };
-
-static gchar* app_name = NULL;
 
 struct _MidoriAppClass
 {
@@ -217,6 +216,7 @@ _midori_app_add_browser (MidoriApp*     app,
     g_return_if_fail (MIDORI_IS_APP (app));
     g_return_if_fail (MIDORI_IS_BROWSER (browser));
 
+    gtk_window_add_accel_group (GTK_WINDOW (browser), app->accel_group);
     g_object_connect (browser,
         "signal::focus-in-event", midori_browser_focus_in_event_cb, app,
         "signal::new-window", midori_browser_new_window_cb, app,
@@ -228,32 +228,6 @@ _midori_app_add_browser (MidoriApp*     app,
         G_CALLBACK (midori_app_send_notification), app);
 
     katze_array_add_item (app->browsers, browser);
-
-    #if GTK_CHECK_VERSION (3, 0, 0)
-    if (app->browser == NULL)
-    {
-        gchar* filename;
-        if ((filename = midori_paths_get_res_filename ("gtk3.css")))
-        {
-            GtkCssProvider* css_provider = gtk_css_provider_new ();
-            GError* error = NULL;
-            gtk_css_provider_load_from_path (css_provider, filename, &error);
-            if (error == NULL)
-            {
-                gtk_style_context_add_provider_for_screen (
-                    gtk_widget_get_screen (GTK_WIDGET (browser)),
-                    GTK_STYLE_PROVIDER (css_provider),
-                    GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
-            }
-            else
-            {
-                g_warning ("Failed to load \"%s\": %s", filename, error->message);
-                g_error_free (error);
-            }
-            g_free (filename);
-        }
-    }
-    #endif
 
     app->browser = browser;
     #if HAVE_UNIQUE
@@ -746,35 +720,25 @@ midori_app_create_instance (MidoriApp* app)
     GIOChannel* channel;
     #endif
 
+    if (!app->name)
+    {
+        const gchar* config = sokoke_set_config_dir (NULL);
+        gchar* name_hash;
+        name_hash = g_compute_checksum_for_string (G_CHECKSUM_MD5, config, -1);
+        app->name = g_strconcat ("midori", "_", name_hash, NULL);
+        g_free (name_hash);
+        g_object_notify (G_OBJECT (app), "name");
+    }
+
     if (!(display = gdk_display_get_default ()))
         return MidoriAppInstanceNull;
 
-    {
-        #if HAVE_UNIQUE
-        const gchar* config = midori_paths_get_config_dir ();
-        gchar* name_hash;
-        name_hash = g_compute_checksum_for_string (G_CHECKSUM_MD5, config, -1);
-        katze_assign (app_name, g_strconcat ("midori", "_", name_hash, NULL));
-        g_free (name_hash);
-        g_object_notify (G_OBJECT (app), "name");
-        #else
-        katze_assign (app_name, g_strdup (PACKAGE_NAME));
-        #endif
-    }
-
-    #ifdef GDK_WINDOWING_X11
-    /* On X11: :0 or :0.0 which is equivalent */
-    display_name = g_strndup (gdk_display_get_name (display), 2);
-    #else
     display_name = g_strdup (gdk_display_get_name (display));
-    #endif
     n = strlen (display_name);
     for (i = 0; i < n; i++)
         if (strchr (":.\\/", display_name[i]))
             display_name[i] = '_';
-    instance_name = g_strdup_printf ("de.twotoasts.%s_%s", app_name, display_name);
-    g_free (display_name);
-    katze_assign (app_name, instance_name);
+    instance_name = g_strdup_printf ("de.twotoasts.%s_%s", app->name, display_name);
 
     #if HAVE_UNIQUE
     instance = unique_app_new (instance_name, NULL);
@@ -782,7 +746,7 @@ midori_app_create_instance (MidoriApp* app)
     g_signal_connect (instance, "message-received",
                       G_CALLBACK (midori_browser_message_received_cb), app);
     #else
-    instance = socket_init (instance_name, midori_paths_get_config_dir (), &exists);
+    instance = socket_init (instance_name, sokoke_set_config_dir (NULL), &exists);
     g_object_set_data (G_OBJECT (app), "sock-exists",
         exists ? (gpointer)0xdeadbeef : NULL);
     if (instance != MidoriAppInstanceNull)
@@ -792,19 +756,19 @@ midori_app_create_instance (MidoriApp* app)
             (GIOFunc)midori_app_io_channel_watch_cb, app);
     }
     #endif
+
+    g_free (instance_name);
+    g_free (display_name);
+
     #endif
     return instance;
-}
-
-const gchar*
-midori_app_get_name (MidoriApp* app)
-{
-    return app_name;
 }
 
 static void
 midori_app_init (MidoriApp* app)
 {
+    app->accel_group = gtk_accel_group_new ();
+
     app->settings = NULL;
     app->bookmarks = NULL;
     app->trash = NULL;
@@ -829,7 +793,9 @@ midori_app_finalize (GObject* object)
 {
     MidoriApp* app = MIDORI_APP (object);
 
-    katze_assign (app_name, NULL);
+    g_object_unref (app->accel_group);
+
+    katze_assign (app->name, NULL);
     katze_object_assign (app->settings, NULL);
     katze_object_assign (app->bookmarks, NULL);
     katze_object_assign (app->trash, NULL);
@@ -869,7 +835,7 @@ midori_app_set_property (GObject*      object,
     switch (prop_id)
     {
     case PROP_NAME:
-        katze_assign (app_name, g_value_dup_string (value));
+        katze_assign (app->name, g_value_dup_string (value));
         break;
     case PROP_SETTINGS:
         katze_object_assign (app->settings, g_value_dup_object (value));
@@ -909,7 +875,7 @@ midori_app_get_property (GObject*    object,
     switch (prop_id)
     {
     case PROP_NAME:
-        g_value_set_string (value, app_name);
+        g_value_set_string (value, app->name);
         break;
     case PROP_SETTINGS:
         g_value_set_object (value, app->settings);
@@ -1145,19 +1111,7 @@ midori_app_send_command (MidoriApp* app,
     /* g_return_val_if_fail (MIDORI_IS_APP (app), FALSE); */
     g_return_val_if_fail (command != NULL, FALSE);
 
-    if (midori_app_instance_is_running (app))
-    {
-        MidoriBrowser* browser = midori_browser_new ();
-        int i;
-        for (i=0; command && command[i]; i++)
-        {
-            gboolean action_known = (gtk_action_group_get_action (midori_browser_get_action_group (browser), command[i]) != NULL);
-            if (!action_known)
-                g_warning (_("Unexpected action '%s'."), command[i]);
-        }
-        gtk_widget_destroy (GTK_WIDGET (browser));
-    }
-    else
+    if (!midori_app_instance_is_running (app))
         return midori_app_command_received (app, "command", command, NULL);
 
     #if HAVE_HILDON
@@ -1350,38 +1304,143 @@ midori_app_send_notification (MidoriApp*   app,
  *
  * Since: 0.4.2
  **/
-gboolean
-midori_app_setup (gint               *argc,
-                  gchar**            *argument_vector,
-                  const GOptionEntry *entries,
-                  GError*            *error)
+void
+midori_app_setup (gchar** argument_vector)
 {
     GtkIconSource* icon_source;
     GtkIconSet* icon_set;
     GtkIconFactory* factory;
     gsize i;
-    gboolean success;
 
-    static GtkStockItem items[] =
+    typedef struct
     {
-        { STOCK_IMAGE },
-        { STOCK_WEB_BROWSER },
-        { STOCK_NEWS_FEED },
-        { STOCK_STYLE },
+        const gchar* stock_id;
+        const gchar* label;
+        GdkModifierType modifier;
+        guint keyval;
+        const gchar* fallback;
+    } FatStockItem;
+    static FatStockItem items[] =
+    {
+        { STOCK_EXTENSION, NULL, 0, 0, GTK_STOCK_CONVERT },
+        { STOCK_IMAGE, NULL, 0, 0, GTK_STOCK_ORIENTATION_PORTRAIT },
+        { STOCK_WEB_BROWSER, NULL, 0, 0, "gnome-web-browser" },
+        { STOCK_NEWS_FEED, NULL, 0, 0, GTK_STOCK_INDEX },
+        { STOCK_SCRIPT, NULL, 0, 0, GTK_STOCK_EXECUTE },
+        { STOCK_STYLE, NULL, 0, 0, GTK_STOCK_SELECT_COLOR },
+        { STOCK_TRANSFER, NULL, 0, 0, GTK_STOCK_SAVE },
 
-        { STOCK_BOOKMARKS,    N_("_Bookmarks"), GDK_CONTROL_MASK | GDK_SHIFT_MASK, GDK_KEY_B },
-        { STOCK_BOOKMARK_ADD, N_("Add Boo_kmark") },
-        { STOCK_EXTENSION,    N_("_Extensions") },
-        { STOCK_HISTORY,      N_("_History"), GDK_CONTROL_MASK | GDK_SHIFT_MASK, GDK_KEY_H },
-        { STOCK_SCRIPT,       N_("_Userscripts") },
-        { STOCK_STYLE,        N_("User_styles") },
-        { STOCK_TAB_NEW,      N_("New _Tab") },
-        { STOCK_TRANSFER,     N_("_Transfers"), GDK_CONTROL_MASK | GDK_SHIFT_MASK, GDK_KEY_J },
-        { STOCK_PLUGINS,      N_("Netscape p_lugins") },
-        { STOCK_USER_TRASH,   N_("_Closed Tabs") },
-        { STOCK_WINDOW_NEW,   N_("New _Window") },
-        { STOCK_FOLDER_NEW,   N_("New _Folder") },
+        { STOCK_BOOKMARK,       N_("_Bookmark"), 0, 0, GTK_STOCK_FILE },
+        { STOCK_BOOKMARKS,      N_("_Bookmarks"), GDK_CONTROL_MASK | GDK_SHIFT_MASK, GDK_KEY_B, GTK_STOCK_DIRECTORY },
+        { STOCK_BOOKMARK_ADD,   N_("Add Boo_kmark"), 0, 0, "stock_add-bookmark" },
+        { STOCK_CONSOLE,        N_("_Console"), 0, 0, GTK_STOCK_DIALOG_WARNING },
+        { STOCK_EXTENSIONS,     N_("_Extensions"), 0, 0, GTK_STOCK_CONVERT },
+        { STOCK_HISTORY,        N_("_History"), GDK_CONTROL_MASK | GDK_SHIFT_MASK, GDK_KEY_H, GTK_STOCK_SORT_ASCENDING },
+        { STOCK_HOMEPAGE,       N_("_Homepage"), 0, 0, GTK_STOCK_HOME },
+        { STOCK_SCRIPTS,        N_("_Userscripts"), 0, 0, GTK_STOCK_EXECUTE },
+        { STOCK_TAB_NEW,        N_("New _Tab"), 0, 0, GTK_STOCK_ADD },
+        { STOCK_TRANSFERS,      N_("_Transfers"), GDK_CONTROL_MASK | GDK_SHIFT_MASK, GDK_KEY_J, GTK_STOCK_SAVE },
+        { STOCK_PLUGINS,        N_("Netscape p_lugins"), 0, 0, GTK_STOCK_CONVERT },
+        { STOCK_USER_TRASH,     N_("_Closed Tabs"), 0, 0, "gtk-undo-ltr" },
+        { STOCK_WINDOW_NEW,     N_("New _Window"), 0, 0, GTK_STOCK_ADD },
+        { GTK_STOCK_DIRECTORY,  N_("New _Folder"), 0, 0, NULL },
     };
+
+    /* Preserve argument vector */
+    sokoke_get_argv (argument_vector);
+
+    /* libSoup uses threads, therefore if WebKit is built with libSoup
+     * or Midori is using it, we need to initialize threads. */
+    if (!g_thread_supported ()) g_thread_init (NULL);
+
+    #if ENABLE_NLS
+    setlocale (LC_ALL, "");
+    if (g_getenv ("MIDORI_NLSPATH"))
+        bindtextdomain (GETTEXT_PACKAGE, g_getenv ("MIDORI_NLSPATH"));
+    else
+    #ifdef G_OS_WIN32
+    {
+        gchar* path = sokoke_find_data_filename ("locale", FALSE);
+        bindtextdomain (GETTEXT_PACKAGE, path);
+        g_free (path);
+    }
+    #else
+        bindtextdomain (GETTEXT_PACKAGE, LOCALEDIR);
+    #endif
+    bind_textdomain_codeset (GETTEXT_PACKAGE, "UTF-8");
+    textdomain (GETTEXT_PACKAGE);
+    #endif
+
+    g_type_init ();
+    factory = gtk_icon_factory_new ();
+    for (i = 0; i < G_N_ELEMENTS (items); i++)
+    {
+        icon_set = gtk_icon_set_new ();
+        icon_source = gtk_icon_source_new ();
+        if (items[i].fallback)
+        {
+            gtk_icon_source_set_icon_name (icon_source, items[i].fallback);
+            items[i].fallback = NULL;
+            gtk_icon_set_add_source (icon_set, icon_source);
+        }
+        gtk_icon_source_set_icon_name (icon_source, items[i].stock_id);
+        gtk_icon_set_add_source (icon_set, icon_source);
+        gtk_icon_source_free (icon_source);
+        gtk_icon_factory_add (factory, items[i].stock_id, icon_set);
+        gtk_icon_set_unref (icon_set);
+    }
+    gtk_stock_add_static ((GtkStockItem*)items, G_N_ELEMENTS (items));
+    gtk_icon_factory_add_default (factory);
+    g_object_unref (factory);
+
+    #if HAVE_HILDON
+    /* Maemo doesn't theme stock icons. So we map platform icons
+        to stock icons. These are all monochrome toolbar icons. */
+    typedef struct
+    {
+        const gchar* stock_id;
+        const gchar* icon_name;
+    } CompatItem;
+    static CompatItem compat_items[] =
+    {
+        { GTK_STOCK_ADD,        "general_add" },
+        { GTK_STOCK_BOLD,       "general_bold" },
+        { GTK_STOCK_CLOSE,      "general_close_b" },
+        { GTK_STOCK_DELETE,     "general_delete" },
+        { GTK_STOCK_DIRECTORY,  "general_toolbar_folder" },
+        { GTK_STOCK_FIND,       "general_search" },
+        { GTK_STOCK_FULLSCREEN, "general_fullsize_b" },
+        { GTK_STOCK_GO_BACK,    "general_back" },
+        { GTK_STOCK_GO_FORWARD, "general_forward" },
+        { GTK_STOCK_GO_UP,      "filemanager_folder_up" },
+        { GTK_STOCK_GOTO_FIRST, "pdf_viewer_first_page" },
+        { GTK_STOCK_GOTO_LAST,  "pdf_viewer_last_page" },
+        { GTK_STOCK_INFO,       "general_information" },
+        { GTK_STOCK_ITALIC,     "general_italic" },
+        { GTK_STOCK_JUMP_TO,    "general_move_to_folder" },
+        { GTK_STOCK_PREFERENCES,"general_settings" },
+        { GTK_STOCK_REFRESH,    "general_refresh" },
+        { GTK_STOCK_SAVE,       "notes_save" },
+        { GTK_STOCK_STOP,       "general_stop" },
+        { GTK_STOCK_UNDERLINE,  "notes_underline" },
+        { GTK_STOCK_ZOOM_IN,    "pdf_zoomin" },
+        { GTK_STOCK_ZOOM_OUT,   "pdf_zoomout" },
+    };
+
+    factory = gtk_icon_factory_new ();
+    for (i = 0; i < G_N_ELEMENTS (compat_items); i++)
+    {
+        icon_set = gtk_icon_set_new ();
+        icon_source = gtk_icon_source_new ();
+        gtk_icon_source_set_icon_name (icon_source, compat_items[i].icon_name);
+        gtk_icon_set_add_source (icon_set, icon_source);
+        gtk_icon_source_free (icon_source);
+        gtk_icon_factory_add (factory, compat_items[i].stock_id, icon_set);
+        gtk_icon_set_unref (icon_set);
+    }
+    gtk_icon_factory_add_default (factory);
+    g_object_unref (factory);
+    #endif
 
     /* Print messages to stdout on Win32 console, cf. AbiWord
      * http://svn.abisource.com/abiword/trunk/src/wp/main/win/Win32Main.cpp */
@@ -1405,90 +1464,5 @@ midori_app_setup (gint               *argc,
         }
     }
     #endif
-
-    /* libSoup uses threads, therefore if WebKit is built with libSoup
-     * or Midori is using it, we need to initialize threads. */
-    #if !GLIB_CHECK_VERSION (2, 32, 0)
-    if (!g_thread_supported ()) g_thread_init (NULL);
-    #endif
-
-    /* Midori.Paths uses GFile */
-    g_type_init ();
-    /* Preserve argument vector */
-    midori_paths_init_exec_path (*argument_vector, *argc);
-
-    #if ENABLE_NLS
-    if (g_getenv ("MIDORI_NLSPATH"))
-        bindtextdomain (GETTEXT_PACKAGE, g_getenv ("MIDORI_NLSPATH"));
-    else
-    #ifdef G_OS_WIN32
-    {
-        gchar* path = midori_paths_get_data_filename ("locale", FALSE);
-        bindtextdomain (GETTEXT_PACKAGE, path);
-        g_free (path);
-    }
-    #else
-        bindtextdomain (GETTEXT_PACKAGE, LOCALEDIR);
-    #endif
-    bind_textdomain_codeset (GETTEXT_PACKAGE, "UTF-8");
-    textdomain (GETTEXT_PACKAGE);
-    #endif
-
-    success = gtk_init_with_args (argc, argument_vector, _("[Addresses]"),
-                                  entries, GETTEXT_PACKAGE, error);
-
-    factory = gtk_icon_factory_new ();
-    for (i = 0; i < G_N_ELEMENTS (items); i++)
-    {
-        icon_set = gtk_icon_set_new ();
-        icon_source = gtk_icon_source_new ();
-        gtk_icon_source_set_icon_name (icon_source, items[i].stock_id);
-        gtk_icon_set_add_source (icon_set, icon_source);
-        gtk_icon_source_free (icon_source);
-        gtk_icon_factory_add (factory, items[i].stock_id, icon_set);
-        gtk_icon_set_unref (icon_set);
-    }
-    gtk_stock_add_static ((GtkStockItem*)items, G_N_ELEMENTS (items));
-    gtk_icon_factory_add_default (factory);
-    g_object_unref (factory);
-
-    return success;
-}
-
-gboolean
-midori_debug (const gchar* token)
-{
-    static const gchar* debug_token = NULL;
-    const gchar* debug = g_getenv ("MIDORI_DEBUG");
-    const gchar* debug_tokens = "headers body referer cookies paths hsts unarmed ";
-    const gchar* full_debug_tokens = "adblock:match adblock:time startup bookmarks ";
-    if (debug_token == NULL)
-    {
-        gchar* found_token;
-        if (debug && (found_token = strstr (full_debug_tokens, debug)) && *(found_token + strlen (debug)) == ' ')
-        {
-            #ifdef G_ENABLE_DEBUG
-            debug_token = g_intern_static_string (debug);
-            #else
-            g_warning ("Value '%s' for MIDORI_DEBUG requires a full debugging build.", debug);
-            #endif
-        }
-        else if (debug && (found_token = strstr (debug_tokens, debug)) && *(found_token + strlen (debug)) == ' ')
-            debug_token = g_intern_static_string (debug);
-        else if (debug)
-            g_warning ("Unrecognized value '%s' for MIDORI_DEBUG.", debug);
-        else
-            debug_token = "NONE";
-        if (!debug_token)
-        {
-            debug_token = "INVALID";
-            g_print ("Supported values: %s\nWith full debugging: %s\n",
-                     debug_tokens, full_debug_tokens);
-        }
-    }
-    if (debug_token != g_intern_static_string ("NONE")
-     && !strstr (debug_tokens, token) && !strstr (full_debug_tokens, token))
-        g_warning ("Token '%s' passed to midori_debug is not a known token.", token);
-    return debug_token == g_intern_static_string (token);
 }
 

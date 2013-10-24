@@ -29,7 +29,7 @@ from Configure import find_program_impl
 
 major = 0
 minor = 4
-micro = 7
+micro = 3
 
 APPNAME = 'midori'
 VERSION = VERSION_FULL = str (major) + '.' + str (minor) + '.' + str (micro)
@@ -45,7 +45,7 @@ except:
     pass
 
 srcdir = '.'
-blddir = '_build' # recognized by ack
+blddir = '_build_'
 
 def option_enabled (option):
     if getattr (Options.options, 'enable_' + option):
@@ -61,9 +61,6 @@ def is_mingw (env):
             cc = ''.join (cc)
         return cc.find ('mingw') != -1# or cc.find ('wine') != -1
     return False
-
-def is_win32 (env):
-    return is_mingw (env) or Options.platform == 'win32'
 
 # Compile Win32 res files to (resource) object files
 def rc_file(self, node):
@@ -92,23 +89,9 @@ def configure (conf):
         conf.define (defname, dirvalue)
         return dirvalue
 
-    def check_version (given_version, major, minor, micro):
-        if '.' in given_version:
-            given_major, given_minor, given_micro = given_version.split ('.', 2)
-            if '.' in given_micro:
-                given_micro, given_pico = given_micro.split ('.', 1)
-        else:
-            given_major, given_minor, given_micro = given_version
-        return int(given_major) >  major or \
-               int(given_major) == major and int(given_minor) >  minor or \
-               int(given_major) == major and int(given_minor) == minor and int(given_micro) >= micro
-
     conf.check_tool ('compiler_cc')
     conf.check_tool ('vala')
     conf.check_tool ('glib2')
-    if not check_version (conf.env['VALAC_VERSION'], 0, 14, 0):
-        Utils.pprint ('RED', 'Vala 0.14.0 or later is required.')
-        sys.exit (1)
 
     if option_enabled ('nls'):
         conf.check_tool ('intltool')
@@ -126,7 +109,7 @@ def configure (conf):
     else:
         icons = 'no '
 
-    if is_win32 (conf.env):
+    if is_mingw (conf.env) or Options.platform == 'win32':
         conf.find_program ('windres', var='WINRC')
         conf.env['platform'] = 'win32'
 
@@ -183,12 +166,14 @@ def configure (conf):
             atleast_version=version, mandatory=mandatory)
         return conf.env['HAVE_' + var]
 
-    if option_enabled ('gtk3'):
-        gcr_pkg = 'gcr-3'
-    else:
-        gcr_pkg = 'gcr-3-gtk2'
-    check_pkg (gcr_pkg, '2.32', mandatory=False)
-    conf.define ('GCR_VERSION', ['No',conf.check_cfg(modversion=gcr_pkg)][conf.env['HAVE_GCR'] == 1])
+    def check_version (given_version, major, minor, micro):
+        if '.' in given_version:
+            given_major, given_minor, given_micro = given_version.split ('.')
+        else:
+            given_major, given_minor, given_micro = given_version
+        return int(given_major) >  major or \
+               int(given_major) == major and int(given_minor) >  minor or \
+               int(given_major) == major and int(given_minor) == minor and int(given_micro) >= micro
 
     if option_enabled ('unique'):
         if option_enabled('gtk3'): unique_pkg = 'unique-3.0'
@@ -218,26 +203,6 @@ def configure (conf):
         conf.define ('LIBNOTIFY_VERSION', 'No')
     conf.define ('HAVE_LIBNOTIFY', [0,1][libnotify == 'yes'])
 
-    if option_enabled ('granite'):
-        if not option_enabled ('gtk3'):
-            if getattr (Options.options, 'enable_granite'):
-                Utils.pprint ('RED', 'Granite requires --enable-gtk3')
-                sys.exit (1)
-            else:
-                granite = 'no (requires --enable-gtk3)'
-        else:
-            check_pkg ('granite', '0.1', False)
-            granite = ['N/A', 'yes'][conf.env['HAVE_GRANITE'] == 1]
-        if granite != 'yes':
-            option_checkfatal ('granite', 'new notebook, pop-overs')
-            conf.define ('GRANITE_VERSION', 'No')
-        else:
-            conf.define ('GRANITE_VERSION', conf.check_cfg (modversion='granite'))
-    else:
-        granite = 'no '
-        conf.define ('GRANITE_VERSION', 'No')
-
-    check_pkg ('zeitgeist-1.0', '0.3.14', mandatory=False)
     conf.check (lib='m', mandatory=True)
     check_pkg ('gmodule-2.0', '2.8.0', False)
     check_pkg ('gthread-2.0', '2.8.0', False)
@@ -245,7 +210,6 @@ def configure (conf):
     args = ''
     if Options.platform == 'win32':
         args = '--define-variable=target=win32'
-        conf.env.append_value ('VALAFLAGS', '-D HAVE_WIN32')
     elif sys.platform != 'darwin':
         check_pkg ('x11')
         # Pass /usr/X11R6/include for OpenBSD
@@ -253,6 +217,12 @@ def configure (conf):
                     includes='/usr/X11R6/include', mandatory=False)
         conf.check (lib='Xss', libpath='/usr/X11R6/lib', mandatory=False)
     if option_enabled ('gtk3'):
+        if option_enabled ('addons') and not check_version (conf.env['VALAC_VERSION'], 0, 13, 2):
+            Utils.pprint ('RED', 'Vala 0.13.2 or later is required ' \
+                'to build with GTK+ 3 and extensions.\n' \
+                'Pass --disable-addons to build without extensions.\n' \
+                'Pass --disable-gtk3 to build with extensions and GTK+ 2.')
+            sys.exit (1)
         check_pkg ('gtk+-3.0', '3.0.0', var='GTK', mandatory=False)
         check_pkg ('webkitgtk-3.0', '1.1.17', var='WEBKIT', mandatory=False)
         if not conf.env['HAVE_GTK'] or not conf.env['HAVE_WEBKIT']:
@@ -262,29 +232,21 @@ def configure (conf):
         if check_version (conf.check_cfg (modversion='webkitgtk-3.0'), 1, 5, 1):
             check_pkg ('javascriptcoregtk-3.0', '1.5.1', args=args)
         conf.env.append_value ('VALAFLAGS', '-D HAVE_GTK3')
-        conf.env.append_value ('VALAFLAGS', '-D HAVE_OFFSCREEN')
     else:
-        check_pkg ('gtk+-2.0', '2.16.0', var='GTK')
+        check_pkg ('gtk+-2.0', '2.10.0', var='GTK')
         check_pkg ('webkit-1.0', '1.1.17', args=args)
         if check_version (conf.check_cfg (modversion='webkit-1.0'), 1, 5, 1):
             check_pkg ('javascriptcoregtk-1.0', '1.5.1', args=args)
-        if check_version (conf.check_cfg (modversion='gtk+-2.0'), 2, 20, 0):
-            conf.env.append_value ('VALAFLAGS', '-D HAVE_OFFSCREEN')
     conf.env['HAVE_GTK3'] = option_enabled ('gtk3')
     check_pkg ('libsoup-2.4', '2.27.90')
+    conf.define ('HAVE_LIBSOUP_2_25_2', 1)
+    conf.define ('HAVE_LIBSOUP_2_27_90', 1)
+    check_pkg ('libsoup-2.4', '2.29.3', False, var='LIBSOUP_2_29_3')
+    check_pkg ('libsoup-2.4', '2.29.91', False, var='LIBSOUP_2_29_91')
+    check_pkg ('libsoup-2.4', '2.37.1', False, var='LIBSOUP_2_37_1')
     conf.define ('LIBSOUP_VERSION', conf.check_cfg (modversion='libsoup-2.4'))
-    if check_version (conf.env['LIBSOUP_VERSION'], 2, 29, 3):
-        conf.define ('HAVE_LIBSOUP_2_29_3', 1)
-    if check_version (conf.env['LIBSOUP_VERSION'], 2, 29, 91):
-        conf.define ('HAVE_LIBSOUP_2_29_91', 1)
-    if check_version (conf.env['LIBSOUP_VERSION'], 2, 33, 4):
-        conf.define ('HAVE_LIBSOUP_2_33_4', 1)
-    if check_version (conf.env['LIBSOUP_VERSION'], 2, 34, 0):
-        conf.define ('HAVE_LIBSOUP_2_34_0', 1)
-    if check_version (conf.env['LIBSOUP_VERSION'], 2, 37, 1):
-        conf.define ('HAVE_LIBSOUP_2_37_1', 1)
     check_pkg ('libxml-2.0', '2.6')
-    check_pkg ('sqlite3', '3.6.19', True, var='SQLITE')
+    check_pkg ('sqlite3', '3.0', True, var='SQLITE')
 
     if option_enabled ('hildon'):
         if check_pkg ('hildon-1', mandatory=False, var='HILDON'):
@@ -309,6 +271,8 @@ def configure (conf):
     if not conf.env['HAVE_UNIQUE']:
         if Options.platform == 'win32':
             conf.check (lib='ws2_32')
+        check_pkg ('openssl', mandatory=False)
+        conf.define ('USE_SSL', [0,1][conf.env['HAVE_OPENSSL'] == 1])
         conf.define ('HAVE_NETDB_H', [0,1][conf.check (header_name='netdb.h')])
         conf.check (header_name='sys/wait.h')
         conf.check (header_name='sys/select.h')
@@ -390,14 +354,6 @@ def configure (conf):
     if unique == 'yes' and conf.check_cfg (modversion='unique-1.0') == '1.0.4':
         Utils.pprint ('RED', 'unique 1.0.4 found, this version is erroneous.')
         Utils.pprint ('RED', 'Please use an older or newer version.')
-        sys.exit (1)
-    if check_version (conf.env['LIBSOUP_VERSION'], 2, 33, 4) \
-        and check_version (conf.check_cfg (modversion='gio-2.0'), 2, 32, 1) \
-        and not check_version (conf.check_cfg (modversion='gio-2.0'), 2, 32, 3):
-        Utils.pprint ('RED', 'libsoup >= 2.33.4 found with glib >= 2.32.1 < 2.32.3:')
-        Utils.pprint ('RED', 'This combination breaks the download GUI.')
-        Utils.pprint ('RED', 'See https://bugs.launchpad.net/midori/+bug/780133/comments/14')
-        sys.exit (1)
 
 def set_options (opt):
     def is_maemo (): return os.path.exists ('/etc/osso-af-init/')
@@ -435,9 +391,8 @@ def set_options (opt):
     add_enable_option ('apidocs', 'API documentation', group, disable=True)
 
     group = opt.add_option_group ('Optional features', '')
-    add_enable_option ('unique', 'single instance support', group, disable=is_win32 (os.environ))
+    add_enable_option ('unique', 'single instance support', group)
     add_enable_option ('libnotify', 'notification support', group)
-    add_enable_option ('granite', 'new notebook, pop-overs', group)
     add_enable_option ('addons', 'building of extensions', group)
     add_enable_option ('tests', 'building of tests', group, disable=True)
     add_enable_option ('hildon', 'Maemo integration', group, disable=not is_maemo ())
@@ -497,7 +452,7 @@ def build (bld):
         bld.install_files ('${DOCDIR}/api/', blddir + '/docs/api/*')
 
     for desktop in [APPNAME + '.desktop', APPNAME + '-private.desktop']:
-        if is_win32 (bld.env):
+        if is_mingw (bld.env) or Options.platform == 'win32':
             break
         if bld.env['HAVE_HILDON']:
             appdir = '${MDATADIR}/applications/hildon'
@@ -542,8 +497,11 @@ def build (bld):
         else:
             Utils.pprint ('BLUE', "logo-shade could not be rasterized.")
 
-    for res_file in ['about.css', 'error.html', 'close.png', 'gtk3.css', 'speeddial-head.html']:
+    for res_file in ['error.html', 'close.png']:
         bld.install_files ('${MDATADIR}/' + APPNAME + '/res', 'data/' + res_file)
+    bld.install_as ( \
+        '${MDATADIR}/' + APPNAME + '/res/speeddial-head-%s.html' % VERSION, \
+        'data/speeddial-head.html')
 
     if bld.env['addons']:
         bld.install_files ('${MDATADIR}/' + APPNAME + '/res', 'data/autosuggestcontrol.js')
@@ -629,6 +587,7 @@ def shutdown ():
         except:
             pass
         try:
+            ext = 'MIDORI_EXTENSION_PATH=' + relfolder + os.sep + 'extensions'
             nls = 'MIDORI_NLSPATH=' + relfolder + os.sep + 'po'
             lang = os.environ['LANG']
             try:
@@ -645,7 +604,7 @@ def shutdown ():
                         'LC_MESSAGES' + os.sep + APPNAME + '.mo')
             except:
                 pass
-            command = nls + ' '
+            command = ext + ' ' + nls + ' '
             if is_mingw (Build.bld.env):
                 # This works only if everything is installed to that prefix
                 os.chdir (Build.bld.env['PREFIX'] + os.sep + 'bin')

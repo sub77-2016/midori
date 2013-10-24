@@ -27,9 +27,9 @@ sokoke_on_entry_focus_in_event (GtkEntry*      entry,
         g_object_get_data (G_OBJECT (entry), "sokoke_has_default"));
     if (has_default)
     {
+        gtk_entry_set_text (entry, "");
         g_object_set_data (G_OBJECT (entry), "sokoke_has_default",
                            GINT_TO_POINTER (0));
-        gtk_entry_set_text (entry, "");
         sokoke_widget_set_pango_font_style (GTK_WIDGET (entry),
                                             PANGO_STYLE_NORMAL);
     }
@@ -46,9 +46,9 @@ sokoke_on_entry_focus_out_event (GtkEntry*      entry,
     {
         const gchar* default_text = (const gchar*)g_object_get_data (
             G_OBJECT (entry), "sokoke_default_text");
+        gtk_entry_set_text (entry, default_text);
         g_object_set_data (G_OBJECT (entry),
                            "sokoke_has_default", GINT_TO_POINTER (1));
-        gtk_entry_set_text (entry, default_text);
         sokoke_widget_set_pango_font_style (GTK_WIDGET (entry),
                                             PANGO_STYLE_ITALIC);
     }
@@ -71,15 +71,14 @@ gtk_entry_set_placeholder_text (GtkEntry*    entry,
                                 const gchar* default_text)
 {
     /* Note: The default text initially overwrites any previous text */
-    gchar* old_value = g_object_get_data (G_OBJECT (entry), "sokoke_default_text");
-    g_object_set_data (G_OBJECT (entry), "sokoke_default_text", (gpointer)default_text);
-
-    if (default_text == NULL)
-        g_object_set_data (G_OBJECT (entry), "sokoke_has_default", GINT_TO_POINTER (0));
-    else if (!old_value)
+    gchar* old_value = g_object_get_data (G_OBJECT (entry),
+                                          "sokoke_default_text");
+    if (!old_value)
     {
-        g_object_set_data (G_OBJECT (entry), "sokoke_has_default", GINT_TO_POINTER (1));
-        sokoke_widget_set_pango_font_style (GTK_WIDGET (entry), PANGO_STYLE_ITALIC);
+        g_object_set_data (G_OBJECT (entry), "sokoke_has_default",
+                           GINT_TO_POINTER (1));
+        sokoke_widget_set_pango_font_style (GTK_WIDGET (entry),
+                                            PANGO_STYLE_ITALIC);
         gtk_entry_set_text (entry, default_text);
         g_signal_connect (entry, "drag-data-received",
             G_CALLBACK (sokoke_on_entry_drag_data_received), NULL);
@@ -90,19 +89,55 @@ gtk_entry_set_placeholder_text (GtkEntry*    entry,
     }
     else if (!gtk_widget_has_focus (GTK_WIDGET (entry)))
     {
-        gint has_default = GPOINTER_TO_INT (g_object_get_data (G_OBJECT (entry), "sokoke_has_default"));
+        gint has_default = GPOINTER_TO_INT (
+            g_object_get_data (G_OBJECT (entry), "sokoke_has_default"));
         if (has_default)
         {
             gtk_entry_set_text (entry, default_text);
-            sokoke_widget_set_pango_font_style (GTK_WIDGET (entry), PANGO_STYLE_ITALIC);
+            sokoke_widget_set_pango_font_style (GTK_WIDGET (entry),
+                                                PANGO_STYLE_ITALIC);
         }
+    }
+    g_object_set_data (G_OBJECT (entry), "sokoke_default_text",
+                       (gpointer)default_text);
+}
+#endif
+
+#if !GTK_CHECK_VERSION (2, 12, 0)
+
+void
+gtk_widget_set_has_tooltip (GtkWidget* widget,
+                            gboolean   has_tooltip)
+{
+    /* Do nothing */
+}
+
+void
+gtk_widget_set_tooltip_text (GtkWidget*   widget,
+                             const gchar* text)
+{
+    if (text && *text)
+    {
+        static GtkTooltips* tooltips = NULL;
+        if (G_UNLIKELY (!tooltips))
+            tooltips = gtk_tooltips_new ();
+        gtk_tooltips_set_tip (tooltips, widget, text, NULL);
     }
 }
 
-const gchar*
-gtk_entry_get_placeholder_text (GtkEntry* entry)
+void
+gtk_tool_item_set_tooltip_text (GtkToolItem* toolitem,
+                                const gchar* text)
 {
-    return g_object_get_data (G_OBJECT (entry), "sokoke_default_text");
+    if (text && *text)
+    {
+        static GtkTooltips* tooltips = NULL;
+        if (G_UNLIKELY (!tooltips))
+            tooltips = gtk_tooltips_new ();
+
+        gtk_tool_item_set_tooltip (toolitem, tooltips, text, NULL);
+    }
 }
+
 #endif
 

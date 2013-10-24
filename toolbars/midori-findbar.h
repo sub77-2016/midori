@@ -1,5 +1,5 @@
 /*
- Copyright (C) 2012 Christian Dywan <christian@twotoasts.de>
+ Copyright (C) 2010 Christian Dywan <christian@twotoasts.de>
 
  This library is free software; you can redistribute it and/or
  modify it under the terms of the GNU Lesser General Public
@@ -47,9 +47,6 @@ midori_findbar_find_text              (MidoriFindbar* findbar,
                                        const gchar*   text,
                                        gboolean       forward);
 
-const gchar*
-midori_findbar_get_text                (MidoriFindbar* findbar);
-
 void
 midori_findbar_set_can_find           (MidoriFindbar* findbar,
                                        gboolean       can_find);
@@ -58,7 +55,7 @@ void
 midori_findbar_search_text            (MidoriFindbar* findbar,
                                        GtkWidget*     view,
                                        gboolean       found,
-                                       const gchar*   typing);
+                                       gchar*         typing);
 
 void
 midori_findbar_set_close_button_left  (MidoriFindbar* findbar,

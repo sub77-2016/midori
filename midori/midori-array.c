@@ -982,25 +982,23 @@ katze_item_set_value_from_column (sqlite3_stmt* stmt,
         item->added = date;
     }
     else if (g_str_equal (name, "day") || g_str_equal (name, "app")
-          || g_str_equal (name, "toolbar") || g_str_equal (name, "id")
-          || g_str_equal (name, "parentid") || g_str_equal (name, "seq")
-          || g_str_equal (name, "pos_panel") || g_str_equal (name, "pos_bar"))
+          || g_str_equal (name, "toolbar"))
     {
         gint value;
         value = sqlite3_column_int64 (stmt, column);
         katze_item_set_meta_integer (item, name, value);
+    }
+    else if (g_str_equal (name, "folder"))
+    {
+        const unsigned char* folder;
+        folder = sqlite3_column_text (stmt, column);
+        katze_item_set_meta_string (item, name, (gchar*)folder);
     }
     else if (g_str_equal (name, "desc"))
     {
         const unsigned char* text;
         text = sqlite3_column_text (stmt, column);
         item->text =  g_strdup ((gchar*)text);
-    }
-    else if (g_str_equal (name, "sql"))
-    {
-        const unsigned char* sql;
-        sql = sqlite3_column_text (stmt, column);
-        katze_item_set_meta_string (item, name, (gchar*)sql);
     }
     else
         g_warn_if_reached ();
@@ -1069,74 +1067,6 @@ katze_array_from_sqlite (sqlite3*     db,
 }
 
 /**
- * midori_array_query_recursive:
- * @array: the main bookmark array
- * @fields: comma separated list of fields
- * @condition: condition, like "folder = '%q'"
- * @value: a value to be inserted if @condition contains %q
- * @recursive: if %TRUE include children
- *
- * Stores the result in a #KatzeArray.
- *
- * Return value: a #KatzeArray on success, %NULL otherwise
- *
- * Since: 0.4.4
- **/
-KatzeArray*
-midori_array_query_recursive (KatzeArray*  bookmarks,
-                              const gchar* fields,
-                              const gchar* condition,
-                              const gchar* value,
-                              gboolean     recursive)
-{
-    sqlite3* db;
-    gchar* sqlcmd;
-    char* sqlcmd_value;
-    KatzeArray* array;
-    KatzeItem* item;
-    GList* list;
-
-    g_return_val_if_fail (KATZE_IS_ARRAY (bookmarks), NULL);
-    g_return_val_if_fail (fields, NULL);
-    g_return_val_if_fail (condition, NULL);
-    db = g_object_get_data (G_OBJECT (bookmarks), "db");
-    if (db == NULL)
-        return NULL;
-
-    sqlcmd = g_strdup_printf ("SELECT %s FROM bookmarks WHERE %s "
-                              "ORDER BY (uri='') ASC, title DESC", fields, condition);
-    if (strstr (condition, "%q"))
-    {
-        sqlcmd_value = sqlite3_mprintf (sqlcmd, value ? value : "");
-        array = katze_array_from_sqlite (db, sqlcmd_value);
-        sqlite3_free (sqlcmd_value);
-    }
-    else
-        array = katze_array_from_sqlite (db, sqlcmd);
-    g_free (sqlcmd);
-
-    if (!recursive)
-        return array;
-
-    KATZE_ARRAY_FOREACH_ITEM_L (item, array, list)
-    {
-        if (KATZE_ITEM_IS_FOLDER (item))
-        {
-            gchar* parentid = g_strdup_printf ("%" G_GINT64_FORMAT,
-                katze_item_get_meta_integer (item, "id"));
-            KatzeArray* subarray = midori_array_query_recursive (bookmarks,
-                fields, "parentid=%q", parentid, TRUE);
-            katze_item_set_name (KATZE_ITEM (subarray), item->name);
-            katze_array_add_item (array, subarray);
-
-            g_free (parentid);
-        }
-    }
-    g_list_free (list);
-    return array;
-}
-
-/**
  * midori_array_query:
  * @array: the main bookmark array
  * @fields: comma separated list of fields
@@ -1148,8 +1078,6 @@ midori_array_query_recursive (KatzeArray*  bookmarks,
  * Return value: a #KatzeArray on success, %NULL otherwise
  *
  * Since: 0.4.3
- *
- * Deprecated: 0.4.4: Use midori_array_query_recursive() instead.
  **/
 KatzeArray*
 midori_array_query (KatzeArray*  bookmarks,
@@ -1157,6 +1085,29 @@ midori_array_query (KatzeArray*  bookmarks,
                     const gchar* condition,
                     const gchar* value)
 {
-    return midori_array_query_recursive (bookmarks, fields, condition, value, FALSE);
+    sqlite3* db;
+    gchar* sqlcmd;
+    char* sqlcmd_value;
+    KatzeArray* array;
+
+    g_return_val_if_fail (KATZE_IS_ARRAY (bookmarks), NULL);
+    g_return_val_if_fail (fields, NULL);
+    g_return_val_if_fail (condition, NULL);
+    db = g_object_get_data (G_OBJECT (bookmarks), "db");
+    if (db == NULL)
+        return NULL;
+
+    sqlcmd = g_strdup_printf ("SELECT %s FROM bookmarks WHERE %s "
+                              "ORDER BY title DESC", fields, condition);
+    if (strstr (condition, "%q"))
+    {
+        sqlcmd_value = sqlite3_mprintf (sqlcmd, value ? value : "");
+        array = katze_array_from_sqlite (db, sqlcmd_value);
+        sqlite3_free (sqlcmd_value);
+    }
+    else
+        array = katze_array_from_sqlite (db, sqlcmd);
+    g_free (sqlcmd);
+    return array;
 }
 

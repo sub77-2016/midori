@@ -14,6 +14,7 @@
 #include "midori-app.h"
 #include "midori-extension.h"
 #include "midori-platform.h"
+#include "midori-viewable.h"
 #include "midori-core.h"
 
 #include <glib/gi18n.h>
@@ -93,7 +94,7 @@ midori_extensions_get_label (MidoriViewable* viewable)
 static const gchar*
 midori_extensions_get_stock_id (MidoriViewable* viewable)
 {
-    return STOCK_EXTENSION;
+    return STOCK_EXTENSIONS;
 }
 
 static GtkWidget*
@@ -284,7 +285,6 @@ midori_extensions_treeview_render_text_cb (GtkTreeViewColumn* column,
 
     g_object_set (renderer,
         "markup", text,
-        "ellipsize", PANGO_ELLIPSIZE_END,
         "sensitive", midori_extension_is_prepared (extension),
         NULL);
 
@@ -305,17 +305,13 @@ midori_extensions_treeview_row_activated_cb (GtkTreeView*       treeview,
     if (gtk_tree_model_get_iter (model, &iter, path))
     {
         MidoriExtension* extension;
-        KatzeArray* array = katze_object_get_object (extensions->app, "extensions");
 
         gtk_tree_model_get (model, &iter, 0, &extension, -1);
         if (midori_extension_is_active (extension))
             midori_extension_deactivate (extension);
         else if (midori_extension_is_prepared (extension))
             g_signal_emit_by_name (extension, "activate", extensions->app);
-        /* Make it easy for listeners to see that extensions changed */
-        katze_array_update (array);
 
-        g_object_unref (array);
         g_object_unref (extension);
     }
 }
@@ -332,17 +328,13 @@ midori_extensions_cell_renderer_toggled_cb (GtkCellRendererToggle* renderer,
     if (gtk_tree_model_get_iter_from_string (model, &iter, path))
     {
         MidoriExtension* extension;
-        KatzeArray* array = katze_object_get_object (extensions->app, "extensions");
 
         gtk_tree_model_get (model, &iter, 0, &extension, -1);
         if (midori_extension_is_active (extension))
             midori_extension_deactivate (extension);
         else if (midori_extension_is_prepared (extension))
             g_signal_emit_by_name (extension, "activate", extensions->app);
-        /* Make it easy for listeners to see that extensions changed */
-        katze_array_update (array);
 
-        g_object_unref (array);
         g_object_unref (extension);
     }
 }
@@ -462,9 +454,10 @@ midori_extensions_init (MidoriExtensions* extensions)
         extensions->treeview, NULL);
     gtk_tree_view_append_column (GTK_TREE_VIEW (extensions->treeview), column);
     column = gtk_tree_view_column_new ();
-    gtk_tree_view_column_set_expand (column, TRUE);
+    gtk_tree_view_column_set_sizing (column, GTK_TREE_VIEW_COLUMN_AUTOSIZE);
     renderer_text = gtk_cell_renderer_text_new ();
-    gtk_tree_view_column_pack_start (column, renderer_text, TRUE);
+    gtk_tree_view_column_pack_start (column, renderer_text, FALSE);
+    gtk_tree_view_column_set_expand (column, TRUE);
     gtk_tree_view_column_set_cell_data_func (column, renderer_text,
         (GtkTreeCellDataFunc)midori_extensions_treeview_render_text_cb,
         extensions->treeview, NULL);

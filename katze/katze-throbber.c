@@ -97,12 +97,12 @@ katze_throbber_realize (GtkWidget* widget);
 #if GTK_CHECK_VERSION (3, 0, 0)
 static void
 katze_throbber_get_preferred_height (GtkWidget *widget,
-                                     gint      *minimal_height,
-                                     gint      *natural_height);
+                               gint      *minimal_width,
+                               gint      *natural_width);
 static void
 katze_throbber_get_preferred_width (GtkWidget *widget,
-                                     gint      *minimal_width,
-                                     gint      *natural_width);
+                               gint      *minimal_width,
+                               gint      *natural_width);
 #endif
 static void
 katze_throbber_unrealize (GtkWidget* widget);
@@ -495,8 +495,8 @@ katze_throbber_set_animated (KatzeThrobber*  throbber,
                          (GSourceFunc)katze_throbber_timeout,
                          throbber,
                          (GDestroyNotify)katze_throbber_timeout_destroy);
-    #endif
     gtk_widget_queue_draw (GTK_WIDGET (throbber));
+    #endif
 
     g_object_notify (G_OBJECT (throbber), "animated");
 }
@@ -857,14 +857,14 @@ katze_throbber_size_request (GtkWidget*      widget,
 #if GTK_CHECK_VERSION (3, 0, 0)
 static void
 katze_throbber_get_preferred_height (GtkWidget *widget,
-                                     gint      *minimal_height,
-                                     gint      *natural_height)
+                                     gint      *minimal_width,
+                                     gint      *natural_width)
 {
     GtkRequisition requisition;
 
     katze_throbber_size_request (widget, &requisition);
 
-    *minimal_height = *natural_height = requisition.height;
+    *minimal_width = *natural_width = requisition.height;
 }
 
 static void
@@ -902,7 +902,6 @@ katze_throbber_aligned_coords (GtkWidget* widget,
     #endif
 
     #if GTK_CHECK_VERSION (3, 0, 0)
-    allocation.x = allocation.y = 0;
     allocation.width = gtk_widget_get_allocated_width (widget);
     allocation.height = gtk_widget_get_allocated_height (widget);
     gtk_widget_get_preferred_size (widget, &requisition, NULL);

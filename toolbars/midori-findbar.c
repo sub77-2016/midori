@@ -1,5 +1,5 @@
 /*
- Copyright (C) 2008-2012 Christian Dywan <christian@twotoasts.de>
+ Copyright (C) 2008-2010 Christian Dywan <christian@twotoasts.de>
 
  This library is free software; you can redistribute it and/or
  modify it under the terms of the GNU Lesser General Public
@@ -50,16 +50,27 @@ midori_findbar_set_icon (MidoriFindbar*       findbar,
                          GtkIconEntryPosition icon_pos,
                          const gchar*         icon_name)
 {
-    if (icon_name != NULL)
+    #if !HAVE_HILDON
+    GdkScreen* screen = gtk_widget_get_screen (findbar->find_text);
+    GtkIconTheme* icon_theme = gtk_icon_theme_get_for_screen (screen);
+    gchar* symbolic_icon_name;
+
+    if (icon_name == NULL)
     {
-        gchar* symbolic_icon_name = g_strconcat (icon_name, "-symbolic", NULL);
-        gtk_entry_set_icon_from_gicon (GTK_ENTRY (findbar->find_text), icon_pos,
-            g_themed_icon_new_with_default_fallbacks (symbolic_icon_name));
-        g_free (symbolic_icon_name);
-    }
-    else
         gtk_icon_entry_set_icon_from_icon_name (GTK_ICON_ENTRY (findbar->find_text),
                                                 icon_pos, NULL);
+        return;
+    }
+
+    symbolic_icon_name = g_strconcat (icon_name, "-symbolic", NULL);
+    if (gtk_icon_theme_has_icon (icon_theme, symbolic_icon_name))
+        gtk_icon_entry_set_icon_from_icon_name (GTK_ICON_ENTRY (findbar->find_text),
+                                                icon_pos, symbolic_icon_name);
+    else
+        gtk_icon_entry_set_icon_from_icon_name (GTK_ICON_ENTRY (findbar->find_text),
+                                                icon_pos, icon_name);
+    g_free (symbolic_icon_name);
+    #endif
 }
 
 static void
@@ -86,11 +97,24 @@ midori_findbar_find_key_press_event_cb (MidoriFindbar* findbar,
     else if (event->keyval == GDK_KEY_Return
           && (event->state & GDK_SHIFT_MASK))
     {
-        midori_findbar_find_text (findbar, NULL, FALSE);
+        midori_findbar_find (findbar, FALSE);
         return TRUE;
     }
 
     return FALSE;
+}
+
+static void
+midori_findbar_entry_clear_icon_released_cb (GtkIconEntry* entry,
+                                             gint          icon_pos,
+                                             gint          button,
+                                             MidoriFindbar*findbar)
+{
+    if (icon_pos == GTK_ICON_ENTRY_SECONDARY)
+    {
+        gtk_entry_set_text (GTK_ENTRY (entry), "");
+        midori_findbar_set_icon (findbar, GTK_ICON_ENTRY_PRIMARY, "edit-find");
+    }
 }
 
 static gboolean
@@ -118,43 +142,16 @@ midori_findbar_find_text (MidoriFindbar* findbar,
     if (!(view = midori_browser_get_current_tab (browser)))
         return;
 
-    if (text == NULL)
-        text = gtk_entry_get_text (GTK_ENTRY (findbar->find_text));
-
     case_sensitive = midori_findbar_case_sensitive (findbar);
     midori_view_search_text (MIDORI_VIEW (view), text, case_sensitive, forward);
 }
 
-/**
- * midori_findbar_get_text:
- * @findbar: #MidoriFindbar
- *
- * Returns: the text typed in the entry
- *
- * Since: 0.4.5
- **/
-const gchar*
-midori_findbar_get_text (MidoriFindbar* findbar)
-{
-    g_return_val_if_fail (MIDORI_IS_FINDBAR (findbar), NULL);
-
-    return gtk_entry_get_text (GTK_ENTRY (findbar->find_text));
-}
-
-/**
- * midori_findbar_find:
- * @findbar: #MidoriFindbar
- * @forward: %TRUE to search forward
- *
- * Advance to the next match.
- *
- * Deprecated: 0.4.5: Use midori_findbar_find_text() instead.
- **/
 void
 midori_findbar_find (MidoriFindbar* findbar,
                      gboolean       forward)
 {
-    midori_findbar_find_text (findbar, NULL, forward);
+    const gchar* text = gtk_entry_get_text (GTK_ENTRY (findbar->find_text));
+    midori_findbar_find_text (findbar, text, forward);
 }
 
 void
@@ -168,7 +165,7 @@ midori_findbar_invoke (MidoriFindbar* findbar)
         GtkWidget* view = midori_browser_get_current_tab (browser);
         const gchar* text;
 
-        midori_findbar_set_icon (findbar, GTK_ICON_ENTRY_PRIMARY, STOCK_EDIT_FIND);
+        midori_findbar_set_icon (findbar, GTK_ICON_ENTRY_PRIMARY, "edit-find");
         gtk_widget_show (GTK_WIDGET (findbar->find_case));
         gtk_widget_show (GTK_WIDGET (findbar->find_highlight));
         gtk_widget_show (GTK_WIDGET (findbar->find_close));
@@ -183,14 +180,14 @@ static void
 midori_findbar_next_activate_cb (GtkWidget*     entry,
                                  MidoriFindbar* findbar)
 {
-    midori_findbar_find_text (findbar, NULL, TRUE);
+    midori_findbar_find (findbar, TRUE);
 }
 
 static void
 midori_findbar_previous_clicked_cb (GtkWidget*     entry,
                                     MidoriFindbar* findbar)
 {
-    midori_findbar_find_text (findbar, NULL, FALSE);
+    midori_findbar_find (findbar, FALSE);
 }
 
 static void
@@ -210,7 +207,7 @@ midori_findbar_preedit_changed_cb (GtkWidget*     entry,
     midori_view_unmark_text_matches (MIDORI_VIEW (view));
     if (g_utf8_strlen (preedit, -1) >= 1)
     {
-        midori_findbar_set_icon (findbar, GTK_ICON_ENTRY_SECONDARY, STOCK_EDIT_CLEAR);
+        midori_findbar_set_icon (findbar, GTK_ICON_ENTRY_SECONDARY, "edit-clear");
         midori_findbar_find_text (findbar, preedit, TRUE);
     }
     else
@@ -251,10 +248,12 @@ midori_findbar_init (MidoriFindbar* findbar)
     GtkToolItem* toolitem;
 
     gtk_widget_set_name (GTK_WIDGET (findbar), "MidoriFindbar");
-    katze_widget_add_class (GTK_WIDGET (findbar), "bottom-toolbar");
+    #if GTK_CHECK_VERSION (3, 0, 0)
+    gtk_style_context_add_class (
+        gtk_widget_get_style_context (GTK_WIDGET (findbar)), "bottom-toolbar");
+    #endif
     gtk_toolbar_set_icon_size (GTK_TOOLBAR (findbar), GTK_ICON_SIZE_MENU);
     gtk_toolbar_set_style (GTK_TOOLBAR (findbar), GTK_TOOLBAR_BOTH_HORIZ);
-    gtk_toolbar_set_show_arrow (GTK_TOOLBAR (findbar), FALSE);
     g_signal_connect (findbar, "key-press-event",
         G_CALLBACK (midori_findbar_find_key_press_event_cb), NULL);
 
@@ -264,7 +263,12 @@ midori_findbar_init (MidoriFindbar* findbar)
         /* i18n: A panel at the bottom, to search text in pages */
         gtk_label_new_with_mnemonic (_("_Inline Find:")));
     gtk_toolbar_insert (GTK_TOOLBAR (findbar), toolitem, -1);
-    findbar->find_text = sokoke_search_entry_new (NULL);
+    findbar->find_text = gtk_icon_entry_new ();
+    midori_findbar_set_icon (findbar, GTK_ICON_ENTRY_PRIMARY, "edit-find");
+    gtk_icon_entry_set_icon_highlight (GTK_ICON_ENTRY (findbar->find_text),
+                                       GTK_ICON_ENTRY_SECONDARY, TRUE);
+    g_signal_connect (findbar->find_text, "icon-release",
+        G_CALLBACK (midori_findbar_entry_clear_icon_released_cb), findbar);
     g_signal_connect (findbar->find_text, "activate",
         G_CALLBACK (midori_findbar_next_activate_cb), findbar);
     g_signal_connect (findbar->find_text, "preedit-changed",
@@ -334,13 +338,13 @@ void
 midori_findbar_search_text (MidoriFindbar* findbar,
                             GtkWidget*     view,
                             gboolean       found,
-                            const gchar*   typing)
+                            gchar*         typing)
 {
     const gchar* text;
     gboolean case_sensitive;
     gboolean highlight;
 
-    midori_findbar_set_icon (findbar, GTK_ICON_ENTRY_PRIMARY, found ? STOCK_EDIT_FIND : STOCK_STOP);
+    midori_findbar_set_icon (findbar, GTK_ICON_ENTRY_PRIMARY, found ? "edit-find" : "stop");
 
     if (typing)
     {

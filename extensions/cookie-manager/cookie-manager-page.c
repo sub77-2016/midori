@@ -702,6 +702,7 @@ static gchar *cm_get_domain_description_text(const gchar *domain, gint cookie_co
 }
 
 
+#if GTK_CHECK_VERSION(2, 12, 0)
 static gboolean cm_tree_query_tooltip(GtkWidget *widget, gint x, gint y, gboolean keyboard_mode,
 									  GtkTooltip *tooltip, CookieManagerPage *cmp)
 {
@@ -730,6 +731,8 @@ static gboolean cm_tree_query_tooltip(GtkWidget *widget, gint x, gint y, gboolea
 
 	return FALSE;
 }
+#endif
+
 
 static gboolean cm_filter_match(const gchar *haystack, const gchar *needle)
 {
@@ -809,19 +812,24 @@ static void cm_filter_entry_changed_cb(GtkEditable *editable, CookieManagerPage 
 	if (priv->ignore_changed_filter)
 		return;
 
-	if (!g_object_get_data (G_OBJECT (editable), "sokoke_has_default"))
-		text = gtk_entry_get_text(GTK_ENTRY(editable));
-	else
-		text = NULL;
+	text = gtk_entry_get_text(GTK_ENTRY(editable));
 	cm_filter_tree(cmp, text);
 
 	cookie_manager_update_filter(priv->parent, text);
 
-	if (text && *text)
-		gtk_tree_view_collapse_all(GTK_TREE_VIEW(priv->treeview));
-	else
+	if (*text != '\0')
 		gtk_tree_view_expand_all(GTK_TREE_VIEW(priv->treeview));
+	else
+		gtk_tree_view_collapse_all(GTK_TREE_VIEW(priv->treeview));
 }
+
+
+static void cm_filter_entry_clear_icon_released_cb(GtkIconEntry *e, gint pos, gint btn, gpointer data)
+{
+	if (pos == GTK_ICON_ENTRY_SECONDARY)
+		gtk_entry_set_text(GTK_ENTRY(e), "");
+}
+
 
 static void cm_tree_selection_changed_cb(GtkTreeSelection *selection, CookieManagerPage *cmp)
 {
@@ -994,7 +1002,6 @@ static void cm_tree_render_text_cb(GtkTreeViewColumn *column, GtkCellRenderer *r
 	}
 	else
 		g_object_set(renderer, "text", name, NULL);
-	g_object_set (renderer, "ellipsize", PANGO_ELLIPSIZE_END, NULL);
 
 	g_free(name);
 }
@@ -1015,7 +1022,6 @@ static GtkWidget *cm_tree_prepare(CookieManagerPage *cmp)
 	renderer = gtk_cell_renderer_text_new();
 	column = gtk_tree_view_column_new_with_attributes(
 		_("Name"), renderer, "text", COOKIE_MANAGER_COL_NAME, NULL);
-	gtk_tree_view_column_set_expand (column, TRUE);
 	gtk_tree_view_column_set_sort_indicator(column, TRUE);
 	gtk_tree_view_column_set_sort_column_id(column, COOKIE_MANAGER_COL_NAME);
 	gtk_tree_view_column_set_resizable(column, TRUE);
@@ -1039,8 +1045,10 @@ static GtkWidget *cm_tree_prepare(CookieManagerPage *cmp)
 	g_signal_connect(treeview, "popup-menu", G_CALLBACK(cm_tree_popup_menu_cb), cmp);
 
 	/* tooltips */
+#if GTK_CHECK_VERSION(2, 12, 0)
 	gtk_widget_set_has_tooltip(treeview, TRUE);
 	g_signal_connect(treeview, "query-tooltip", G_CALLBACK(cm_tree_query_tooltip), cmp);
+#endif
 
 	/* drag'n'drop */
 	gtk_tree_view_enable_model_drag_source(
@@ -1092,6 +1100,7 @@ static void cookie_manager_page_init(CookieManagerPage *self)
 	GtkWidget *desc_swin;
 	GtkWidget *paned;
 	GtkWidget *filter_hbox;
+	GtkWidget *filter_label;
 	GtkWidget *treeview;
 	CookieManagerPagePrivate *priv;
 
@@ -1123,15 +1132,29 @@ static void cookie_manager_page_init(CookieManagerPage *self)
 	tree_swin = gtk_scrolled_window_new(NULL, NULL);
 	gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(tree_swin),
 		GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
+	gtk_scrolled_window_set_shadow_type(GTK_SCROLLED_WINDOW(tree_swin), GTK_SHADOW_IN);
 	gtk_container_add(GTK_CONTAINER(tree_swin), treeview);
 	gtk_widget_show(tree_swin);
 
-	priv->filter_entry = sokoke_search_entry_new (_("Search Cookies by Name or Domain"));
+	filter_label = gtk_label_new(_("Filter:"));
+	gtk_widget_show(filter_label);
+
+	priv->filter_entry = gtk_icon_entry_new();
+	gtk_widget_set_tooltip_text(priv->filter_entry,
+		_("Enter a filter string to show only cookies whose name or domain "
+		  "field match the entered filter"));
 	gtk_widget_show(priv->filter_entry);
+	gtk_icon_entry_set_icon_from_stock(GTK_ICON_ENTRY(priv->filter_entry),
+		GTK_ICON_ENTRY_SECONDARY, GTK_STOCK_CLEAR);
+	gtk_icon_entry_set_icon_highlight(GTK_ICON_ENTRY (priv->filter_entry),
+		GTK_ICON_ENTRY_SECONDARY, TRUE);
+	g_signal_connect(priv->filter_entry, "icon-release",
+		G_CALLBACK(cm_filter_entry_clear_icon_released_cb), NULL);
 	g_signal_connect(priv->filter_entry, "changed", G_CALLBACK(cm_filter_entry_changed_cb), self);
 	g_signal_connect(priv->filter_entry, "activate", G_CALLBACK(cm_filter_entry_changed_cb), self);
 
 	filter_hbox = gtk_hbox_new(FALSE, 0);
+	gtk_box_pack_start(GTK_BOX(filter_hbox), filter_label, FALSE, FALSE, 3);
 	gtk_box_pack_start(GTK_BOX(filter_hbox), priv->filter_entry, TRUE, TRUE, 3);
 	gtk_widget_show(filter_hbox);
 

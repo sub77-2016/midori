@@ -75,13 +75,6 @@ static void
 katze_array_finalize (GObject* object);
 
 static void
-_katze_array_update (KatzeArray* array)
-{
-    g_object_set_data (G_OBJECT (array), "last-update",
-                       GINT_TO_POINTER (time (NULL)));
-}
-
-static void
 _katze_array_add_item (KatzeArray* array,
                        gpointer    item)
 {
@@ -91,7 +84,6 @@ _katze_array_add_item (KatzeArray* array,
         katze_item_set_parent (item, array);
 
     array->items = g_list_append (array->items, item);
-    _katze_array_update (array);
 }
 
 static void
@@ -103,7 +95,6 @@ _katze_array_remove_item (KatzeArray* array,
     if (KATZE_IS_ITEM (item))
         katze_item_set_parent (item, NULL);
     g_object_unref (item);
-    _katze_array_update (array);
 }
 
 static void
@@ -113,7 +104,6 @@ _katze_array_move_item (KatzeArray* array,
 {
     array->items = g_list_remove (array->items, item);
     array->items = g_list_insert (array->items, item, position);
-    _katze_array_update (array);
 }
 
 static void
@@ -122,10 +112,9 @@ _katze_array_clear (KatzeArray* array)
     GObject* item;
 
     while ((item = g_list_nth_data (array->items, 0)))
-        g_signal_emit (array, signals[REMOVE_ITEM], 0, item);
+        katze_array_remove_item (array, item);
     g_list_free (array->items);
     array->items = NULL;
-    _katze_array_update (array);
 }
 
 static void
@@ -203,7 +192,7 @@ katze_array_class_init (KatzeArrayClass* class)
         "update",
         G_TYPE_FROM_CLASS (class),
         (GSignalFlags)(G_SIGNAL_RUN_LAST | G_SIGNAL_ACTION),
-        G_STRUCT_OFFSET (KatzeArrayClass, update),
+        0,
         0,
         NULL,
         g_cclosure_marshal_VOID__VOID,
@@ -216,7 +205,6 @@ katze_array_class_init (KatzeArrayClass* class)
     class->remove_item = _katze_array_remove_item;
     class->move_item = _katze_array_move_item;
     class->clear = _katze_array_clear;
-    class->update = _katze_array_update;
 }
 
 static void
@@ -229,11 +217,14 @@ katze_array_init (KatzeArray* array)
 static void
 katze_array_finalize (GObject* object)
 {
-    KatzeArray* array = KATZE_ARRAY (object);
-    GList* items;
+    KatzeArray* array;
+    guint i;
+    gpointer item;
 
-    for (items = array->items; items; items = g_list_next (items))
-        g_object_unref (items->data);
+    array = KATZE_ARRAY (object);
+    i = 0;
+    while ((item = g_list_nth_data (array->items, i++)))
+        g_object_unref (item);
     g_list_free (array->items);
 
     G_OBJECT_CLASS (katze_array_parent_class)->finalize (object);
@@ -373,16 +364,15 @@ katze_array_get_item_index (KatzeArray* array,
 /**
  * katze_array_find_token:
  * @array: a #KatzeArray
- * @token: a token string, or "token keywords" string
+ * @token: a token string
  *
  * Looks up an item in the array which has the specified token.
  *
- * This function will fail if the type of the list
- * is not based on #KatzeItem children.
+ * This function will silently fail if the type of the list
+ * is not based on #GObject and only #KatzeItem children
+ * are checked for their token, any other objects are skipped.
  *
  * Note that @token is by definition unique to one item.
- *
- * Since 0.4.4 @token can be a "token keywords" string.
  *
  * Return value: an item, or %NULL
  **/
@@ -390,27 +380,21 @@ gpointer
 katze_array_find_token (KatzeArray*  array,
                         const gchar* token)
 {
-    goffset token_length;
-    GList* items;
+    guint i;
+    gpointer item;
 
     g_return_val_if_fail (KATZE_IS_ARRAY (array), NULL);
-    g_return_val_if_fail (katze_array_is_a (array, KATZE_TYPE_ITEM), NULL);
-    g_return_val_if_fail (token != NULL, NULL);
 
-    token_length = strchr (token, ' ') - token;
-    if (token_length < 1)
-        token_length = strlen (token);
-
-    for (items = array->items; items; items = g_list_next (items))
+    i = 0;
+    while ((item = g_list_nth_data (array->items, i++)))
     {
-        const gchar* found_token = ((KatzeItem*)items->data)->token;
-        if (found_token != NULL)
-        {
-            guint bigger_item = strlen (found_token) > token_length ? strlen (found_token) : token_length;
+        const gchar* found_token;
 
-            if (strncmp (token, found_token, bigger_item) == 0)
-                return items->data;
-        }
+        if (!KATZE_IS_ITEM (item))
+            continue;
+        found_token = ((KatzeItem*)item)->token;
+        if (!g_strcmp0 (found_token, token))
+            return item;
     }
     return NULL;
 }
@@ -422,8 +406,9 @@ katze_array_find_token (KatzeArray*  array,
  *
  * Looks up an item in the array which has the specified URI.
  *
- * This function will fail if the type of the list
- * is not based on #KatzeItem children.
+ * This function will silently fail if the type of the list
+ * is not based on #GObject and only #KatzeItem children
+ * are checked for their token, any other objects are skipped.
  *
  * Return value: an item, or %NULL
  *
@@ -433,17 +418,19 @@ gpointer
 katze_array_find_uri (KatzeArray*  array,
                       const gchar* uri)
 {
-    GList* items;
+    guint i;
+    gpointer item;
 
-    g_return_val_if_fail (KATZE_IS_ARRAY (array), NULL);
-    g_return_val_if_fail (katze_array_is_a (array, KATZE_TYPE_ITEM), NULL);
-    g_return_val_if_fail (uri != NULL, NULL);
-
-    for (items = array->items; items; items = g_list_next (items))
+    i = 0;
+    while ((item = g_list_nth_data (array->items, i++)))
     {
-        const gchar* found_uri = ((KatzeItem*)items->data)->uri;
-        if (found_uri != NULL && !strcmp (found_uri, uri))
-            return items->data;
+        const gchar* found_uri;
+
+        if (!KATZE_IS_ITEM (item))
+            continue;
+        found_uri = ((KatzeItem*)item)->uri;
+        if (!g_strcmp0 (found_uri, uri))
+            return item;
     }
     return NULL;
 }

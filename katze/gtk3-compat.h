@@ -6,7 +6,7 @@
 
 G_BEGIN_DECLS
 
-#if GTK_CHECK_VERSION (3, 2, 0) && defined (GTK_DISABLE_DEPRECATED)
+#if GTK_CHECK_VERSION (3, 2, 0)
     #define GTK_TYPE_VBOX GTK_TYPE_BOX
     #define GtkVBox GtkBox
     #define GtkVBoxClass GtkBoxClass
@@ -37,6 +37,25 @@ G_BEGIN_DECLS
 
 #if !GLIB_CHECK_VERSION (2, 30, 0)
     #define g_format_size(sz) g_format_size_for_display ((goffset)sz)
+#endif
+
+#if !GTK_CHECK_VERSION (2, 14, 0)
+    #define gtk_dialog_get_content_area(dlg) dlg->vbox
+    #define gtk_dialog_get_action_area(dlg) dlg->action_area
+    #define gtk_widget_get_window(wdgt) wdgt->window
+    #define gtk_adjustment_get_page_size(adj) adj->page_size
+    #define gtk_adjustment_get_upper(adj) adj->upper
+    #define gtk_adjustment_get_lower(adj) adj->lower
+    #define gtk_adjustment_get_value(adj) adj->value
+#endif
+
+#if !GTK_CHECK_VERSION (2, 16, 0)
+    #define GTK_ACTIVATABLE GTK_WIDGET
+    #define gtk_activatable_get_related_action gtk_widget_get_action
+    #define gtk_menu_item_set_label(menuitem, label) \
+        gtk_label_set_label (GTK_LABEL (GTK_BIN (menuitem)->child), \
+                             label ? label : "");
+    #define gtk_image_menu_item_set_always_show_image(menuitem, yesno) ()
 #endif
 
 #if !GTK_CHECK_VERSION (2, 18, 0)
@@ -70,10 +89,24 @@ G_BEGIN_DECLS
 
 #if !GTK_CHECK_VERSION (3, 2, 0) && defined (HAVE_HILDON_2_2)
     #define gtk_entry_set_placeholder_text hildon_gtk_entry_set_placeholder_text
-    #define gtk_entry_get_placeholder_text hildon_gtk_entry_get_placeholder_text
 #elif !GTK_CHECK_VERSION (3, 2, 0)
-    void gtk_entry_set_placeholder_text (GtkEntry* entry, const gchar* text);
-    const gchar* gtk_entry_get_placeholder_text (GtkEntry* entry);
+    #define gtk_entry_set_placeholder_text sokoke_entry_set_default_text
+#endif
+
+#if !GTK_CHECK_VERSION(2, 12, 0)
+
+void
+gtk_widget_set_has_tooltip             (GtkWidget*         widget,
+                                        gboolean           has_tooltip);
+
+void
+gtk_widget_set_tooltip_text            (GtkWidget*         widget,
+                                        const gchar*       text);
+
+void
+gtk_tool_item_set_tooltip_text         (GtkToolItem*       toolitem,
+                                        const gchar*       text);
+
 #endif
 
 #if !GTK_CHECK_VERSION (2, 24 ,0)
@@ -114,10 +147,6 @@ G_BEGIN_DECLS
     #define GDK_KEY_H GDK_H
     #define GDK_KEY_J GDK_J
     #define GDK_KEY_Return GDK_Return
-#endif
-
-#ifndef GDK_IS_X11_DISPLAY
-    #define GDK_IS_X11_DISPLAY(display) TRUE
 #endif
 
 G_END_DECLS

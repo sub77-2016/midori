@@ -2,7 +2,7 @@ Makefile
 
 .waf-*
 .lock-wscript
-_build
+_build_
 
 po/.intltool-merge-cache
 po/LINGUAS

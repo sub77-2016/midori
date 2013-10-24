@@ -166,25 +166,13 @@ extension_settings (void)
 static void
 extension_activate (gconstpointer data)
 {
-    MidoriExtension* extension;
     MidoriApp* app = midori_app_new ();
+    MidoriExtension* extension = MIDORI_EXTENSION (data);
+    if (extension == NULL)
+        return;
     g_object_set (app, "settings", midori_web_settings_new (), NULL);
-
-    if (MIDORI_IS_EXTENSION (data))
-    {
-       extension = MIDORI_EXTENSION (data);
-       g_signal_emit_by_name (extension, "activate", app);
-       midori_extension_deactivate (extension);
-    }
-    else if (KATZE_IS_ARRAY (data))
-    {
-       KATZE_ARRAY_FOREACH_ITEM (extension, KATZE_ARRAY (data))
-       {
-           g_signal_emit_by_name (extension, "activate", app);
-           midori_extension_deactivate (extension);
-       }
-    }
-
+    g_signal_emit_by_name (extension, "activate", app);
+    midori_extension_deactivate (extension);
     g_object_unref (app);
 }
 
@@ -245,9 +233,9 @@ int
 main (int    argc,
       char** argv)
 {
+    midori_app_setup (argv);
     g_test_init (&argc, &argv, NULL);
-    midori_app_setup (&argc, &argv, NULL, NULL);
-    midori_paths_init (MIDORI_RUNTIME_MODE_PRIVATE, NULL);
+    gtk_init_check (&argc, &argv);
     soup_session_add_feature_by_type (webkit_get_default_session (),
         SOUP_TYPE_COOKIE_JAR);
 

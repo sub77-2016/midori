@@ -12,7 +12,11 @@
 #ifndef __MIDORI_TRANSFERS_H__
 #define __MIDORI_TRANSFERS_H__
 
-#include "midori-core.h"
+#include <gtk/gtk.h>
+
+#include <katze/katze.h>
+
+#include "midori-viewable.h"
 
 G_BEGIN_DECLS
 

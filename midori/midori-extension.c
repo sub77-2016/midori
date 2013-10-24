@@ -14,7 +14,6 @@
 
 #include <katze/katze.h>
 #include "midori-platform.h"
-#include "midori-core.h"
 #include <glib/gi18n.h>
 
 G_DEFINE_TYPE (MidoriExtension, midori_extension, G_TYPE_OBJECT);
@@ -26,7 +25,6 @@ struct _MidoriExtensionPrivate
     gchar* version;
     gchar* authors;
     gchar* website;
-    gchar* key;
 
     MidoriApp* app;
     gint active;
@@ -129,8 +127,7 @@ enum
     PROP_DESCRIPTION,
     PROP_VERSION,
     PROP_AUTHORS,
-    PROP_WEBSITE,
-    PROP_KEY
+    PROP_WEBSITE
 };
 
 enum {
@@ -263,23 +260,6 @@ midori_extension_class_init (MidoriExtensionClass* class)
                                      NULL,
                                      flags));
 
-    /**
-     * MidoriExtension:key:
-     *
-     * The extension key.
-     * Needed if there is more than one extension object in a single module.
-     *
-     * Since: 0.4.5
-     */
-    g_object_class_install_property (gobject_class,
-                                     PROP_KEY,
-                                     g_param_spec_string (
-                                     "key",
-                                     "Key",
-                                     "The extension key",
-                                     NULL,
-                                     flags));
-
     g_type_class_add_private (class, sizeof (MidoriExtensionPrivate));
 }
 
@@ -318,10 +298,10 @@ midori_extension_activate_cb (MidoriExtension* extension,
                         strlen (filename) - strlen ("." G_MODULE_SUFFIX));
                 else
                     filename = g_strdup (filename);
-                folder = g_build_filename ("extensions", filename, NULL);
+                folder = g_strconcat ("extensions/", filename, NULL);
                 g_free (filename);
                 katze_assign (config_file,
-                    midori_paths_get_preset_filename (folder, "config"));
+                    sokoke_find_config_filename (folder, "config"));
                 g_free (folder);
                 g_key_file_load_from_file (extension->priv->key_file, config_file,
                                            G_KEY_FILE_KEEP_COMMENTS, NULL);
@@ -341,32 +321,29 @@ midori_extension_activate_cb (MidoriExtension* extension,
         if (setting->type == G_TYPE_BOOLEAN)
         {
             MESettingBoolean* setting_ = (MESettingBoolean*)setting;
-            if (extension->priv->key_file
-             && g_key_file_has_key (extension->priv->key_file, "settings", setting_->name, NULL))
-                setting_->value = g_key_file_get_boolean (extension->priv->key_file,
-                    "settings", setting->name, NULL);
+            if (extension->priv->key_file)
+                setting_->value = sokoke_key_file_get_boolean_default (
+                    extension->priv->key_file,
+                    "settings", setting->name, setting_->default_value, NULL);
             else
                 setting_->value = setting_->default_value;
         }
         else if (setting->type == G_TYPE_INT)
         {
             MESettingInteger* setting_ = (MESettingInteger*)setting;
-            if (extension->priv->key_file
-             && g_key_file_has_key (extension->priv->key_file, "settings", setting_->name, NULL))
-                setting_->value = g_key_file_get_integer (extension->priv->key_file,
-                    "settings", setting_->name, NULL);
+            if (extension->priv->key_file)
+                setting_->value = sokoke_key_file_get_integer_default (
+                    extension->priv->key_file,
+                    "settings", setting->name, setting_->default_value, NULL);
             else
                 setting_->value = setting_->default_value;
         }
         else if (setting->type == G_TYPE_STRING)
         {
             if (extension->priv->key_file)
-            {
-                setting->value = g_key_file_get_string (
-                    extension->priv->key_file, "settings", setting->name, NULL);
-                if (setting->value == NULL)
-                    setting->value = setting->default_value;
-            }
+                setting->value = sokoke_key_file_get_string_default (
+                    extension->priv->key_file,
+                    "settings", setting->name, setting->default_value, NULL);
             else
                 setting->value = g_strdup (setting->default_value);
         }
@@ -375,10 +352,10 @@ midori_extension_activate_cb (MidoriExtension* extension,
             MESettingStringList* setting_ = (MESettingStringList*)setting;
             if (extension->priv->key_file)
             {
-                setting_->value = g_key_file_get_string_list (extension->priv->key_file,
-                    "settings", setting->name, &setting_->length, NULL);
-                if (setting_->value == NULL)
-                    setting_->value = g_strdupv (setting_->default_value);
+                setting_->value = sokoke_key_file_get_string_list_default (
+                    extension->priv->key_file,
+                    "settings", setting->name, &setting_->length,
+                    setting_->default_value, &setting_->default_length, NULL);
             }
             else
                 setting_->value = g_strdupv (setting_->default_value);
@@ -423,7 +400,6 @@ midori_extension_finalize (GObject* object)
     katze_assign (extension->priv->version, NULL);
     katze_assign (extension->priv->authors, NULL);
     katze_assign (extension->priv->website, NULL);
-    katze_assign (extension->priv->key, NULL);
 
     katze_assign (extension->priv->config_dir, NULL);
     g_list_free (extension->priv->lsettings);
@@ -470,9 +446,6 @@ midori_extension_set_property (GObject*      object,
     case PROP_WEBSITE:
         katze_assign (extension->priv->website, g_value_dup_string (value));
         break;
-    case PROP_KEY:
-        katze_assign (extension->priv->key, g_value_dup_string (value));
-        break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
         break;
@@ -503,9 +476,6 @@ midori_extension_get_property (GObject*    object,
         break;
     case PROP_WEBSITE:
         g_value_set_string (value, extension->priv->website);
-        break;
-    case PROP_KEY:
-        g_value_set_string (value, extension->priv->key);
         break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -649,11 +619,10 @@ midori_extension_get_config_dir (MidoriExtension* extension)
     if (!extension->priv->config_dir)
     {
         gchar* filename = g_object_get_data (G_OBJECT (extension), "filename");
-        if (filename != NULL)
-            extension->priv->config_dir = g_build_filename (
-                midori_paths_get_config_dir (), "extensions", filename, NULL);
-        else
-            extension->priv->config_dir = NULL;
+        if (!filename)
+            return "/";
+        extension->priv->config_dir = g_build_filename (
+            sokoke_set_config_dir (NULL), "extensions", filename, NULL);
     }
 
     return extension->priv->config_dir;

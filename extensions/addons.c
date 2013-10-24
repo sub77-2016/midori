@@ -14,7 +14,6 @@
 /* This extensions add support for user addons: userscripts and userstyles */
 
 #include <midori/midori.h>
-#include "midori-core.h"
 #include <glib/gstdio.h>
 
 #include "config.h"
@@ -183,8 +182,8 @@ addons_install_response (GtkWidget*  infobar,
 
             if (!filename)
                 filename = g_path_get_basename (uri);
-            folder_path = g_build_path (G_DIR_SEPARATOR_S,
-                midori_paths_get_user_data_dir (), PACKAGE_NAME, folder, NULL);
+            folder_path = g_build_path (G_DIR_SEPARATOR_S, g_get_user_data_dir (),
+                                 PACKAGE_NAME, folder, NULL);
 
             if (!g_file_test (folder_path, G_FILE_TEST_EXISTS))
                 katze_mkdir_with_parents (folder_path, 0700);
@@ -294,13 +293,13 @@ addons_button_add_clicked_cb (GtkToolItem* toolitem,
     if (addons->kind == ADDONS_USER_SCRIPTS)
     {
         addons_type = g_strdup ("userscripts");
-        path = g_build_path (G_DIR_SEPARATOR_S, midori_paths_get_user_data_dir (),
+        path = g_build_path (G_DIR_SEPARATOR_S, g_get_user_data_dir (),
                              PACKAGE_NAME, "scripts", NULL);
     }
     else if (addons->kind == ADDONS_USER_STYLES)
     {
         addons_type = g_strdup ("userstyles");
-        path = g_build_path (G_DIR_SEPARATOR_S, midori_paths_get_user_data_dir (),
+        path = g_build_path (G_DIR_SEPARATOR_S, g_get_user_data_dir (),
                              PACKAGE_NAME, "styles", NULL);
     }
     else
@@ -337,13 +336,23 @@ addons_button_add_clicked_cb (GtkToolItem* toolitem,
         if (!g_file_test (path, G_FILE_TEST_EXISTS))
             katze_mkdir_with_parents (path, 0700);
 
+        #if !GTK_CHECK_VERSION (2, 14, 0)
+        files = gtk_file_chooser_get_filenames (GTK_FILE_CHOOSER (dialog));
+        #else
         files = gtk_file_chooser_get_files (GTK_FILE_CHOOSER (dialog));
+        #endif
+
         while (files)
         {
             GFile* src_file;
             GError* error = NULL;
 
+            #if !GTK_CHECK_VERSION (2, 14, 0)
+            src_file = g_file_new_for_path (files);
+            #else
             src_file = files->data;
+            #endif
+
             if (G_IS_FILE (src_file))
             {
                 GFile* dest_file;
@@ -482,7 +491,7 @@ addons_open_in_editor_clicked_cb (GtkWidget* toolitem,
 
         g_object_get (settings, "text-editor", &text_editor, NULL);
         if (text_editor && *text_editor)
-            sokoke_spawn_program (text_editor, TRUE, element->fullpath, TRUE);
+            sokoke_spawn_program (text_editor, element->fullpath);
         else
         {
             gchar* element_uri = g_filename_to_uri (element->fullpath, NULL, NULL);
@@ -513,13 +522,10 @@ addons_open_target_folder_clicked_cb (GtkWidget* toolitem,
         folder = g_path_get_dirname (element->fullpath);
     }
     else
-    {
-        folder = g_build_path (G_DIR_SEPARATOR_S, midori_paths_get_user_data_dir (),
-            PACKAGE_NAME, addons->kind == ADDONS_USER_SCRIPTS
-                          ? "scripts" : "styles", NULL);
-        katze_mkdir_with_parents (folder, 0700);
-    }
-
+        folder = g_build_path (G_DIR_SEPARATOR_S, g_get_user_data_dir (),
+                               PACKAGE_NAME,
+                               addons->kind == ADDONS_USER_SCRIPTS
+                               ? "scripts" : "styles", NULL);
     folder_uri = g_filename_to_uri (folder, NULL, NULL);
     g_free (folder);
 
@@ -777,10 +783,11 @@ addons_treeview_render_text_cb (GtkTreeViewColumn* column,
 
     gtk_tree_model_get (model, iter, 0, &element, -1);
 
-    g_object_set (renderer, "text", element->displayname,
-                            "sensitive", element->enabled,
-                            "ellipsize", PANGO_ELLIPSIZE_END,
-                            NULL);
+    g_object_set (renderer, "text", element->displayname, NULL);
+    if (!element->enabled)
+        g_object_set (renderer, "sensitive", false, NULL);
+    else
+        g_object_set (renderer, "sensitive", true, NULL);
 }
 
 static void
@@ -824,16 +831,19 @@ addons_get_directories (AddonsKind kind)
     else
         g_assert_not_reached ();
 
-    path = g_build_path (G_DIR_SEPARATOR_S, midori_paths_get_user_data_dir (),
+    path = g_build_path (G_DIR_SEPARATOR_S, g_get_user_data_dir (),
                          PACKAGE_NAME, folder_name, NULL);
-    directories = g_slist_prepend (directories, path);
+    if (g_access (path, X_OK) == 0)
+        directories = g_slist_prepend (directories, path);
+    else
+        g_free (path);
 
     datadirs = g_get_system_data_dirs ();
     while (*datadirs)
     {
         path = g_build_path (G_DIR_SEPARATOR_S, *datadirs,
                              PACKAGE_NAME, folder_name, NULL);
-        if (g_slist_find (directories, path) == NULL)
+        if (g_slist_find (directories, path) == NULL && g_access (path, X_OK) == 0)
             directories = g_slist_prepend (directories, path);
         else
             g_free (path);
@@ -1325,9 +1335,8 @@ addons_init (Addons* addons)
         G_CALLBACK (addons_cell_renderer_toggled_cb), addons);
     gtk_tree_view_append_column (GTK_TREE_VIEW (addons->treeview), column);
     column = gtk_tree_view_column_new ();
-    gtk_tree_view_column_set_expand (column, TRUE);
     renderer_text = gtk_cell_renderer_text_new ();
-    gtk_tree_view_column_pack_start (column, renderer_text, TRUE);
+    gtk_tree_view_column_pack_start (column, renderer_text, FALSE);
     gtk_tree_view_column_set_cell_data_func (column, renderer_text,
         (GtkTreeCellDataFunc)addons_treeview_render_text_cb,
         addons->treeview, NULL);
@@ -1678,10 +1687,10 @@ addons_save_settings (MidoriApp*       app,
 
     config_dir = midori_extension_get_config_dir (extension);
     config_file = g_build_filename (config_dir, "addons", NULL);
-    if (config_dir != NULL)
-        katze_mkdir_with_parents (config_dir, 0700);
+    katze_mkdir_with_parents (config_dir, 0700);
     sokoke_key_file_save_to_file (keyfile, config_file, &error);
-    if (error && midori_extension_get_config_dir (extension) != NULL)
+    /* If the folder is /, this is a test run, thus no error */
+    if (error && !g_str_equal (config_dir, "/"))
     {
         g_warning (_("The configuration of the extension '%s' couldn't be saved: %s\n"),
                     _("User addons"), error->message);

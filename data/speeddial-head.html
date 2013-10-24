@@ -55,7 +55,10 @@
         width: 85%;
         height: 75%;
         margin: auto;
-        -webkit-box-shadow: 0 2px 5px rgba(0,0,0,.3), 0 0 0px #fff inset;
+        -webkit-box-shadow: 0 4px 18px rgba(0,0,0,.3), 0 0 2px #fff inset;
+        background-image: -webkit-gradient(
+            linear, center top, center bottom,
+            from(#f6f6f6), to(#e3e3e3));
         border: 1px solid #bcbcbc;
         border-bottom-color: #a0a0a0;
         position: relative;
@@ -72,15 +75,9 @@
     div.shortcut .preview.new .add {
         display: block;
         height: 100%;
-        width: 100%;
+        width: 50%;
         margin: 0 auto;
         cursor: pointer;
-        -webkit-box-shadow: 0 2px 5px rgba(0,0,0,.3), 0 0 0px #fff inset;
-        background-image: -webkit-gradient(
-            linear, center top, center bottom,
-            from(#f6f6f6), to(#e3e3e3));
-        background-repeat: repeat-x;
-        -webkit-border-radius: 3px;
     }
 
     .title {
@@ -114,148 +111,95 @@
         display:none;
     }
 
-    .selected {
-        outline: 1px dotted black;
-        background-color: #eef;
+    div.osd {
+        top: 9px;
+        position: fixed;
+        width: 100%;
+        text-align: right;
+    }
+
+    div.osd span {
+        border: 1px solid #999;
+        background-color: #f5f5f5;
+        padding: 8px;
+        color: #999;
+        -webkit-border-bottom-left-radius: 10px;
+        visibility: hidden;
     }
     </style>
 
     <script type="text/javascript">
 
-    function add_tile (ev) {
-        ev.preventDefault();
+    var getAction = function (id)
+    {
+        var s = document.getElementById(id).childNodes[0];
+        if (s.className == 'preview')
+            return true;
 
         var url = prompt ("{enter_shortcut_address}", "http://");
-        if (!url)
-            return false;
-
+        if (!url) return false;
         if (url.indexOf ("://") == -1)
             url = "http://" + url;
 
-        var id = ev.target.parentNode.parentNode.id;
         console.log ("speed_dial-save-add " + id + " " + url + " ");
+        return false;
     }
 
-    function rename_tile (ev) {
-        var old_name = ev.target.textContent;
+    var renameShortcut = function (id)
+    {
+        var old_name = document.getElementById(id).childNodes[1].textContent;
 
         var name = prompt ("{enter_shortcut_name}", old_name);
-        if (!name)
-            return;
+        if (!name) return;
 
-        var id = ev.target.parentNode.id;
         console.log ("speed_dial-save-rename " + id + " " + name);
     }
 
-    function delete_tile (ev) {
-        ev.preventDefault();
-
-        if (!confirm("{are_you_sure}"))
+    var clearShortcut = function (id)
+    {
+        if(!confirm("{are_you_sure}"))
             return;
 
-        var id = ev.target.parentNode.parentNode.id;
         console.log ("speed_dial-save-delete " + id);
     }
 
+    var key_id = 's';
+    var key_timeout;
 
-    var firstNode, secondNode;
-    var cursor;
+    document.onkeypress = function ()
+    {
+        key_id = key_id + String.fromCharCode (event.which);
 
-    var get_dial_div = function (ele) {
-        var dial_div;
-        if (ele.nodeName == 'IMG')
-            dial_div = ele.parentNode.parentNode.parentNode;
-        if (ele.className == 'title')
-            dial_div = ele.parentNode;
-        if (ele.className.indexOf ('shortcut') != -1)
-            dial_div = ele;
-        return dial_div;
-    }
+        clearTimeout (key_timeout);
 
-    function click (ev) {
-        if (ev == undefined)
-            return;
+        document.getElementById('dialing').innerText = key_id.substr(1);
+        document.getElementById('dialing').style.visibility = 'visible';
 
-        ev.preventDefault();
-        var ele = ev.target;
-        cursor = ele.style.cursor;
-        ele.style.cursor = 'move';
-
-        var eparent = get_dial_div (ele);
-        if (eparent != undefined) {
-            eparent.className = 'shortcut selected';
-            firstNode = eparent.id;
-        }
-    };
-
-    function up (ev) {
-        if (ev == undefined)
-            return;
-
-        ev.preventDefault();
-        ele = ev.target;
-        var eparent = get_dial_div (ele);
-
-        ele.style.cursor = cursor;
-        secondNode = eparent.id;
-
-        /* ommit just mere clicking the dial */
-        if (firstNode != secondNode && firstNode != undefined)
-            swap();
-    };
-
-    function over (ev) {
-        if (ev == undefined)
-            return;
-
-        ev.preventDefault();
-        var ele = ev.target;
-        var eparent = get_dial_div (ele);
-
-        var dial = document.getElementsByClassName("shortcut");
-        if (firstNode != undefined)
+        var div = document.getElementById(key_id);
+        if (div)
         {
-            eparent.className = 'shortcut selected';
-            for (var i = 0; i < dial.length; i++) {
-                if (eparent.id != firstNode.id && dial[i].id != eparent.id) {
-                    dial[i].className = 'shortcut';
-                }
+            if (key_id.substr(1) > 9)
+            {
+                if (getAction (key_id))
+                    document.location = div.childNodes[0].childNodes[1].href;
+                key_id = 's';
             }
+            else
+                key_timeout = setTimeout ('if (getAction (key_id)) document.location = document.getElementById(key_id).childNodes[0].childNodes[1].href; key_id = \'s\'', 1000);
         }
-        ele.style.cursor = cursor;
+        else
+            key_id = 's';
+
+        if (key_id.length <= 1)
+            document.getElementById('dialing').style.visibility = 'hidden';
+
+        return false;
     }
 
-    function swap () {
-        console.log ("speed_dial-save-swap " + firstNode + " " + secondNode);
-    };
-
-    function init () {
-        var new_tile = document.getElementsByClassName ("preview new");
-        new_tile[0].addEventListener ('click', add_tile, false);
-
-        var titles = document.getElementsByClassName ("title");
-        var len = titles.length;
-        for (var i = 0; i < len; i++) {
-            if (titles[i].parentNode.childNodes[0].className != "preview new")
-                titles[i].addEventListener ('click', rename_tile, false);
-        }
-
-        var crosses = document.getElementsByClassName ("cross");
-        var len = crosses.length;
-        for (var i = 0; i < len; i++)
-            crosses[i].addEventListener ('click', delete_tile, false);
-
-        var occupied_tiles = document.getElementsByClassName ("shortcut");
-        var len = occupied_tiles.length;
-        for (var i = 0; i < len; i++) {
-            if (occupied_tiles[i].childNodes[0].className != "preview new") {
-                occupied_tiles[i].addEventListener('mousedown', click, false);
-                occupied_tiles[i].addEventListener('mouseover', over, false);
-                occupied_tiles[i].addEventListener('mouseup', up, false);
-            }
-        }
-    }
     </script>
 </head>
-<body onload="init ();">
+<body>
+    <div class="osd" >
+        <span id="dialing"></span>
+    </div>
     <div id="content">

@@ -14,19 +14,19 @@ namespace Midori {
         [NoAccessorMethod]
         public string name { get; set; }
         [NoAccessorMethod]
-        public Midori.WebSettings settings { owned get; set; }
+        public Midori.WebSettings settings { get; set; }
         [NoAccessorMethod]
-        public Katze.Array bookmarks { get; set; }
+        public GLib.Object bookmarks { get; set; }
         [NoAccessorMethod]
-        public Katze.Array trash { get; set; }
+        public GLib.Object trash { get; set; }
         [NoAccessorMethod]
-        public Katze.Array search_engines { get; set; }
+        public GLib.Object search_engines { get; set; }
         [NoAccessorMethod]
-        public Katze.Array history { get; set; }
+        public GLib.Object history { get; set; }
         [NoAccessorMethod]
-        public Katze.Array extensions { get; set; }
+        public GLib.Object extensions { get; set; }
         [NoAccessorMethod]
-        public Katze.Array browsers { get; }
+        public GLib.Object browsers { get; }
         public Browser? browser { get; }
 
         [HasEmitter]
@@ -35,20 +35,18 @@ namespace Midori {
         [HasEmitter]
         public signal void quit ();
     }
-
-    [CCode (cheader_filename = "midori/midori.h")]
     public class Browser : Gtk.Window {
         public Browser ();
-        public int add_item (Katze.Item item);
+        public int add_item (GLib.Object item);
         public int add_uri (string uri);
         public unowned View get_nth_tab (int n);
         public GLib.List<weak View> get_tabs ();
         public void block_action (Gtk.Action action);
         public void unblock_action (Gtk.Action action);
         public unowned Gtk.ActionGroup get_action_group ();
-        public static unowned Browser get_for_widget (Gtk.Widget widget);
+        public unowned Browser get_for_widget (Gtk.Widget widget);
         public unowned string[] get_toolbar_actions ();
-        public unowned Katze.Array get_proxy_items ();
+        public unowned GLib.Object get_proxy_items ();
 
         [NoAccessorMethod]
         public Gtk.MenuBar menubar { owned get; }
@@ -69,13 +67,13 @@ namespace Midori {
         public string statusbar_text { owned get; set; }
         public Midori.WebSettings settings { get; set; }
         [NoAccessorMethod]
-        public Katze.Array? bookmarks { owned get; set; }
+        public GLib.Object bookmarks { owned get; set; }
         [NoAccessorMethod]
-        public Katze.Array? trash { owned get; set; }
+        public GLib.Object trash { owned get; set; }
         [NoAccessorMethod]
-        public Katze.Array? search_engines { owned get; set; }
+        public GLib.Object search_engines { owned get; set; }
         [NoAccessorMethod]
-        public Katze.Array? history { owned get; set; }
+        public GLib.Object history { owned get; set; }
         [NoAccessorMethod]
         public bool show_tabs { get; set; }
 
@@ -84,10 +82,9 @@ namespace Midori {
         public signal void add_tab (View tab);
         [HasEmitter]
         public signal void remove_tab (View tab);
-        public signal void switch_tab (View? old_view, View? new_view);
         [HasEmitter]
         public signal void activate_action (string name);
-        public signal void add_download (WebKit.Download download);
+        public signal void add_download (GLib.Object download);
         public signal void populate_tool_menu (Gtk.Menu menu);
         [HasEmitter]
         public signal void quit ();
@@ -118,17 +115,12 @@ namespace Midori {
         public string version { get; set; }
         [NoAccessorMethod]
         public string authors { get; set; }
-        [NoAccessorMethod]
-        public string website { get; set; }
-        [NoAccessorMethod]
-        public string key { get; set; }
 
         public signal void activate (Midori.App app);
         public signal void deactivate ();
         public signal void open_preferences ();
     }
 
-    [CCode (cheader_filename = "midori/midori.h")]
     public class View : Gtk.VBox {
         [CCode (type = "GtkWidget*")]
         public View (GLib.Object net);
@@ -146,8 +138,9 @@ namespace Midori {
         public Gtk.Menu get_tab_menu ();
         public Pango.EllipsizeMode get_label_ellipsize ();
         public Gtk.Label get_proxy_tab_label ();
-        public Katze.Item get_proxy_item ();
+        public GLib.Object get_proxy_item ();
         public bool can_view_source ();
+        public bool can_find ();
         public void search_text (string text, bool case_sensitive, bool forward);
         public void mark_text_matches (string text, bool case_sensitive);
         public void set_highlight_text_matches (bool highlight);
@@ -155,7 +148,6 @@ namespace Midori {
         public Gdk.Pixbuf get_snapshot (int width, int height);
         public unowned WebKit.WebView get_web_view ();
         public void populate_popup (Gtk.Menu menu, bool manual);
-        public void reload (bool from_cache);
 
         public string uri { get; }
         public string title { get; }
@@ -166,42 +158,15 @@ namespace Midori {
         public double progress { get; set; }
         public bool minimized { get; }
         public float zoom_level { get; }
-        public Katze.Array news_feeds { get; }
+        public GLib.Object news_feeds { get; }
         public string statusbar_text { get; }
         public WebSettings settings { get; set; }
         public GLib.Object net { get; }
 
-        [HasEmitter]
-        public signal bool download_requested (WebKit.Download download);
-
-    }
-
-    [CCode (cheader_filename = "midori/midori.h")]
-    public class SearchAction : Gtk.Action {
-        public static Katze.Item? get_engine_for_form (WebKit.WebView web_view, Pango.EllipsizeMode ellipsize);
-    }
-
-    [CCode (cheader_filename = "midori/midori-view.h", cprefix = "MIDORI_DOWNLOAD_")]
-    public enum DownloadType {
-        CANCEL,
-        OPEN,
-        SAVE,
-        SAVE_AS,
-        OPEN_IN_VIEWER
     }
 
     public class WebSettings : WebKit.WebSettings {
         public WebSettings ();
-        [NoAccessorMethod]
-        public MidoriStartup load_on_startup { get; set; }
-    }
-
-    [CCode (cheader_filename = "midori/midori-websettings.h", cprefix = "MIDORI_STARTUP_")]
-    public enum MidoriStartup {
-        BLANK_PAGE,
-        HOMEPAGE,
-        LAST_OPEN_PAGES,
-        DELAYED_PAGES
     }
 
     [CCode (cheader_filename = "midori/sokoke.h", lower_case_cprefix = "sokoke_")]

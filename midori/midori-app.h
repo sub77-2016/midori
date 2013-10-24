@@ -41,9 +41,6 @@ midori_app_get_type               (void) G_GNUC_CONST;
 MidoriApp*
 midori_app_new                    (void);
 
-const gchar*
-midori_app_get_name               (MidoriApp*         app);
-
 gboolean
 midori_app_instance_is_running    (MidoriApp*         app);
 
@@ -82,14 +79,8 @@ midori_app_send_notification      (MidoriApp*         app,
                                    const gchar*       title,
                                    const gchar*       message);
 
-gboolean
-midori_app_setup                  (gint               *argc,
-                                   gchar**            *argument_vector,
-                                   const GOptionEntry *entries,
-                                   GError*            *error);
-
-gboolean
-midori_debug                      (const gchar*       token);
+void
+midori_app_setup                  (gchar**            argument_vector);
 
 G_END_DECLS
 

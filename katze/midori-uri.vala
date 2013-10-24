@@ -85,9 +85,6 @@ namespace Midori {
             if (uri == null)
                 return keywords;
             string escaped = GLib.Uri.escape_string (keywords, ":/", true);
-            /* Allow DuckDuckGo to distinguish Midori and in turn share revenue */
-            if (uri == "https://duckduckgo.com/?q=%s")
-                return "https://duckduckgo.com/?q=%s&t=midori".printf (escaped);
             if (uri.str ("%s") != null)
                 return uri.printf (escaped);
             return uri + escaped;
@@ -114,69 +111,43 @@ namespace Midori {
               || (uri.has_prefix ("geo:") && uri.chr (-1, ',') != null)
               || uri.has_prefix ("javascript:"));
         }
-
+        public static bool is_email (string? uri) {
+            return uri != null
+             && (uri.chr (-1, '@') != null || uri.has_prefix ("mailto:"))
+            /* :// and @ together would mean login credentials */
+             && uri.str ("://") == null;
+        }
         public static bool is_ip_address (string? uri) {
             /* Quick check for IPv4 or IPv6, no validation.
                FIXME: Schemes are not handled
                hostname_is_ip_address () is not used because
                we'd have to separate the path from the URI first. */
-            if (uri == null)
-                return false;
-            /* Skip leading user/ password */
-            if (uri.chr (-1, '@') != null)
-                return is_ip_address (uri.split ("@")[1]);
-            /* IPv4 */
-            if (uri[0] != '0' && uri[0].isdigit () && (uri.chr (4, '.') != null))
-                return true;
-            /* IPv6 */
-            if (uri[0].isalnum () && uri[1].isalnum ()
-             && uri[2].isalnum () && uri[3].isalnum () && uri[4] == ':'
-             && (uri[5] == ':' || uri[5].isalnum ()))
-                return true;
-            return false;
+            return uri != null && uri[0].isdigit ()
+             && (uri.chr (4, '.') != null || uri.chr (4, ':') != null);
         }
         public static bool is_valid (string? uri) {
             return uri != null
              && uri.chr (-1, ' ') == null
              && (URI.is_location (uri) || uri.chr (-1, '.') != null);
         }
-
-        public static string? get_folder (string uri) {
-            /* Base the start folder on the current view's uri if it is local */
-            try {
-                string? filename = Filename.from_uri (uri);
-                if (filename != null) {
-                    string? dirname = Path.get_dirname (filename);
-                    if (dirname != null && FileUtils.test (dirname, FileTest.IS_DIR))
-                        return dirname;
-                }
-            }
-            catch (Error error) { }
-            return null;
-        }
-
         public static GLib.ChecksumType get_fingerprint (string uri,
             out string checksum, out string label) {
 
             /* http://foo.bar/baz/spam.eggs#!algo!123456 */
-            unowned string display = null;
-            GLib.ChecksumType type = (GLib.ChecksumType)int.MAX;
-
             unowned string delimiter = "#!md5!";
+            unowned string display = _("MD5-Checksum:");
+            GLib.ChecksumType type = GLib.ChecksumType.MD5;
             unowned string? fragment = uri.str (delimiter);
-            if (fragment != null) {
-                display = _("MD5-Checksum:");
-                type = GLib.ChecksumType.MD5;
-            }
-
-            delimiter = "#!sha1!";
-            fragment = uri.str (delimiter);
-            if (fragment != null) {
+            if (fragment == null) {
+                delimiter = "#!sha1!";
                 display = _("SHA1-Checksum:");
                 type = GLib.ChecksumType.SHA1;
+                fragment = uri.str (delimiter);
             }
-
-            /* No SHA256: no known usage and no need for strong encryption */
+            if (fragment == null) {
+                type = (GLib.ChecksumType)int.MAX;
+                display = null;
+            }
 
             if (&checksum != null)
                 checksum = fragment != null
