@@ -1,3 +1,21 @@
+midori (0.4.6-1) UNRELEASED; urgency=low
+
+  * New upstream release.
+  * Apply patch from Colin Watson to improve conffile handling, using new
+    debhelper features.                                         closes: #659773
+  * debian/control:
+    - update standards version to 3.9.3.
+    - update homepage address.
+  * debian/midori.maintscript:
+    - handle the /etc/xdg/midori/extensions/libadblock.so removal there.
+                                                                closes: #660303
+  * debian/patches:
+    - force-ssl-cert-verification added, set ssl-strict to TRUE so connections
+      are not done if the ssl certificate can't be trusted.
+  * debian/compat bumped to 9.
+
+ -- Yves-Alexis Perez <corsac@debian.org>  Tue, 15 May 2012 23:31:12 +0200
+
 midori (0.4.3+dfsg-0.1) unstable; urgency=low
 
   * Non-maintainer upload

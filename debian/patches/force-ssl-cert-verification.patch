@@ -1,0 +1,22 @@
+diff --git a/midori/main.c b/midori/main.c
+index 2ec5599..af3cc71 100644
+--- a/midori/main.c
++++ b/midori/main.c
+@@ -1019,7 +1019,7 @@ midori_load_soup_session (gpointer settings)
+     #if defined (HAVE_LIBSOUP_2_37_1)
+     g_object_set (session,
+                   "ssl-use-system-ca-file", TRUE,
+-                  "ssl-strict", FALSE,
++                  "ssl-strict", TRUE,
+                   NULL);
+     #elif defined (HAVE_LIBSOUP_2_29_91)
+     const gchar* certificate_files[] =
+@@ -1038,7 +1038,7 @@ midori_load_soup_session (gpointer settings)
+         {
+             g_object_set (session,
+                 "ssl-ca-file", certificate_files[i],
+-                "ssl-strict", FALSE,
++                "ssl-strict", TRUE,
+                 NULL);
+             break;
+         }
