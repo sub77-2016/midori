@@ -14,6 +14,7 @@
 #endif
 
 #include "katze-http-cookies.h"
+#include "midori/midori-core.h"
 
 #include <stdlib.h>
 #ifdef HAVE_UNISTD_H
@@ -211,7 +212,7 @@ katze_http_cookies_update_jar (KatzeHttpCookies* http_cookies)
         goto failed;
     g_free (temporary_filename);
 
-    if (g_getenv ("MIDORI_COOKIES_DEBUG") != NULL)
+    if (!g_strcmp0 (g_getenv ("MIDORI_DEBUG"), "cookies"))
     {
         g_print ("KatzeHttpCookies: %d cookies changed\n", http_cookies->counter);
         http_cookies->counter = 0;
@@ -223,7 +224,7 @@ failed:
         fclose (f);
     g_unlink (temporary_filename);
     g_free (temporary_filename);
-    if (g_getenv ("MIDORI_COOKIES_DEBUG") != NULL)
+    if (!g_strcmp0 (g_getenv ("MIDORI_DEBUG"), "cookies"))
         g_print ("KatzeHttpCookies: Failed to write '%s'\n",
                  http_cookies->filename);
     return FALSE;
@@ -263,12 +264,12 @@ katze_http_cookies_jar_changed_cb (SoupCookieJar*    jar,
         }
     }
 
-    if (g_getenv ("MIDORI_COOKIES_DEBUG") != NULL)
+    if (!g_strcmp0 (g_getenv ("MIDORI_DEBUG"), "cookies"))
         http_cookies->counter++;
 
-    if (!http_cookies->timeout && (old_cookie || new_cookie->expires))
-        http_cookies->timeout = g_timeout_add_seconds (5,
-            (GSourceFunc)katze_http_cookies_update_jar, http_cookies);
+    if (!http_cookies->timeout && (old_cookie || (new_cookie && new_cookie->expires)))
+        http_cookies->timeout = midori_timeout_add_seconds (
+            5, (GSourceFunc)katze_http_cookies_update_jar, http_cookies, NULL);
 }
 
 static void

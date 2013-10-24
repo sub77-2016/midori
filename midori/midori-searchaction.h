@@ -59,18 +59,38 @@ midori_search_action_set_current_item      (MidoriSearchAction* search_action,
 KatzeItem*
 midori_search_action_get_default_item      (MidoriSearchAction* search_action);
 
-GdkPixbuf*
-midori_search_action_get_icon              (KatzeItem*          item,
-                                            GtkWidget*          widget,
-                                            const gchar** icon_name,
-                                            gboolean      in_entry);
-
 void
 midori_search_action_set_default_item      (MidoriSearchAction* search_action,
                                             KatzeItem*          item);
 
 GtkWidget*
 midori_search_action_get_dialog            (MidoriSearchAction* search_action);
+
+void
+midori_search_action_get_editor            (MidoriSearchAction* search_action,
+                                            KatzeItem*          item,
+                                            gboolean            new_engine);
+
+KatzeItem*
+midori_search_action_get_engine_for_form   (WebKitWebView*      web_view,
+                                            PangoEllipsizeMode  ellipsize);
+
+KatzeArray*
+midori_search_engines_new_from_file        (const gchar*        filename,
+                                            GError**            error);
+
+
+KatzeArray*
+midori_search_engines_new_from_folder      (GString*            error_messages);
+
+gboolean
+midori_search_engines_save_to_file         (KatzeArray*         search_engines,
+                                            const gchar*        filename,
+                                            GError**            error);
+
+void
+midori_search_engines_set_filename         (KatzeArray*         search_engines,
+                                            const gchar*        filename);
 
 G_END_DECLS
 

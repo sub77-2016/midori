@@ -39,7 +39,19 @@ GType
 midori_app_get_type               (void) G_GNUC_CONST;
 
 MidoriApp*
-midori_app_new                    (void);
+midori_app_new                    (const gchar*       name);
+
+MidoriApp*
+midori_app_new_proxy              (MidoriApp*         app);
+
+const gchar*
+midori_app_get_name               (MidoriApp*         app);
+
+gboolean
+midori_app_get_crashed            (MidoriApp*         app);
+
+void
+midori_app_set_instance_is_running(gboolean           is_running);
 
 gboolean
 midori_app_instance_is_running    (MidoriApp*         app);
@@ -80,7 +92,16 @@ midori_app_send_notification      (MidoriApp*         app,
                                    const gchar*       message);
 
 void
-midori_app_setup                  (gchar**            argument_vector);
+midori_app_setup                  (gint               *argc,
+                                   gchar**            *argument_vector,
+                                   const GOptionEntry *entries);
+
+gboolean
+midori_debug                      (const gchar*       token);
+
+void
+midori_error                      (const gchar*       format,
+                                   ...);
 
 G_END_DECLS
 

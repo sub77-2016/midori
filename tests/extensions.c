@@ -10,6 +10,7 @@
 */
 
 #include "midori.h"
+#include <glib/gstdio.h>
 
 const gpointer magic = (gpointer)0xdeadbeef;
 
@@ -32,7 +33,7 @@ extension_create (void)
     MidoriApp* app;
     MidoriExtension* extension;
 
-    app = midori_app_new ();
+    app = midori_app_new (NULL);
     extension = g_object_new (MIDORI_TYPE_EXTENSION, NULL);
     g_assert (!midori_extension_is_prepared (extension));
     g_object_set (extension, "name", "TestExtension",
@@ -98,7 +99,7 @@ extension_settings (void)
     gchar** names;
     gsize names_n;
 
-    app = midori_app_new ();
+    app = midori_app_new (NULL);
     extension = extension_mock_object ();
     midori_extension_install_boolean (extension, "nihilist", TRUE);
     nihilist = midori_extension_get_boolean (extension, "nihilist");
@@ -166,83 +167,79 @@ extension_settings (void)
 static void
 extension_activate (gconstpointer data)
 {
-    MidoriApp* app = midori_app_new ();
-    MidoriExtension* extension = MIDORI_EXTENSION (data);
-    if (extension == NULL)
-        return;
+    MidoriApp* app = midori_app_new (NULL);
     g_object_set (app, "settings", midori_web_settings_new (), NULL);
-    g_signal_emit_by_name (extension, "activate", app);
-    midori_extension_deactivate (extension);
+    midori_extension_activate (G_OBJECT (data), NULL, TRUE, app);
+    /* TODO: MidoriCompletion */
     g_object_unref (app);
 }
 
 static void
-load_extensions (void)
+extension_load (const gchar* extension_path,
+                GDir*        extension_dir)
 {
-    if (g_module_supported ())
+    const gchar* filename;
+    while ((filename = g_dir_read_name (extension_dir)))
     {
-        GDir* extension_dir = g_dir_open (EXTENSION_PATH, 0, NULL);
-        if (extension_dir != NULL)
+        GObject* extension = midori_extension_load_from_file (extension_path, filename, FALSE, TRUE);
+        if (KATZE_IS_ARRAY (extension))
         {
-            const gchar* filename;
-
-            while ((filename = g_dir_read_name (extension_dir)))
-            {
-                gchar* fullname;
-                GModule* module;
-                typedef MidoriExtension* (*extension_init_func)(void);
-                extension_init_func extension_init;
-
-                /* Ignore files which don't have the correct suffix */
-                if (!g_str_has_suffix (filename, G_MODULE_SUFFIX))
-                    continue;
-
-                fullname = g_build_filename (EXTENSION_PATH, filename, NULL);
-                module = g_module_open (fullname, G_MODULE_BIND_LOCAL);
-                g_free (fullname);
-
-                if (module && g_module_symbol (module, "extension_init",
-                                               (gpointer) &extension_init))
+            MidoriExtension* extension_item;
+            KATZE_ARRAY_FOREACH_ITEM (extension_item, KATZE_ARRAY (extension))
+                if (MIDORI_IS_EXTENSION (extension_item))
                 {
-                    guint length;
-                    gchar* name;
-                    gchar* path;
-                    typedef MidoriExtension* (*extension_test_func)(const gchar* path);
-                    extension_test_func extension_test;
-
-                    if (g_str_has_prefix (filename, "lib"))
-                        filename = &filename[3];
-                    length = strlen (filename);
-                    name = g_strdup (filename);
-                    name[length - strlen (G_MODULE_SUFFIX) - 1] = '\0';
-                    path = g_strconcat ("/extensions/", name, "/activate", NULL);
-                    g_free (name);
-                    g_test_add_data_func (path, extension_init (), extension_activate);
+                    gchar* key = katze_object_get_object (extension_item, "key");
+                    gchar* path = g_strdup_printf ("/extensions/%s/%s", filename, key);
+                    g_test_add_data_func (path, extension_item, extension_activate);
                     g_free (path);
-                    if (g_module_symbol (module, "extension_test",
-                                                 (gpointer) &extension_test))
-                        extension_test (path);
+                    g_free (key);
                 }
-            }
-            g_dir_close (extension_dir);
+        }
+        else if (extension != NULL)
+        {
+            gchar* path = g_strconcat ("/extensions/", filename, NULL);
+            g_test_add_data_func (path, extension, extension_activate);
+            g_free (path);
         }
     }
+}
+
+static void
+extension_config (void)
+{
+    gchar* filename = midori_paths_get_extension_config_dir ("adblock");
+    g_assert (g_access (filename, F_OK) == 0);
 }
 
 int
 main (int    argc,
       char** argv)
 {
-    midori_app_setup (argv);
     g_test_init (&argc, &argv, NULL);
-    gtk_init_check (&argc, &argv);
+    midori_app_setup (&argc, &argv, NULL);
+    midori_paths_init (MIDORI_RUNTIME_MODE_NORMAL, NULL);
+    #ifndef HAVE_WEBKIT2
     soup_session_add_feature_by_type (webkit_get_default_session (),
         SOUP_TYPE_COOKIE_JAR);
+    #endif
 
     g_test_add_func ("/extensions/create", extension_create);
     g_test_add_func ("/extensions/settings", extension_settings);
+    g_test_add_func ("/extensions/config", extension_config);
 
-    load_extensions ();
+    if (g_module_supported ())
+    {
+        gchar* extension_path = midori_paths_get_lib_path (PACKAGE_NAME);
+        GDir* extension_dir = g_dir_open (extension_path, 0, NULL);
+        g_assert (extension_dir != NULL);
+
+        /* We require that extensions can be loaded repeatedly */
+        extension_load (extension_path, extension_dir);
+        extension_load (extension_path, extension_dir);
+
+        g_dir_close (extension_dir);
+        g_free (extension_path);
+    }
 
     return g_test_run ();
 }

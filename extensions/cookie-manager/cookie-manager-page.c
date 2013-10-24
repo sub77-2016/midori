@@ -12,7 +12,7 @@
 #include <gdk/gdkkeysyms.h>
 
 #include <midori/midori.h>
-#include <webkit/webkit.h>
+#include "katze/katze.h"
 #include <time.h>
 
 #include "cookie-manager.h"
@@ -166,12 +166,15 @@ static void cookie_manager_page_cookies_changed_cb(CookieManager *cm, CookieMana
 	gtk_tree_view_set_model(GTK_TREE_VIEW(priv->treeview), GTK_TREE_MODEL(priv->filter));
 	g_object_unref(priv->filter);
 
-	/* if a filter is set, apply it again */
-	filter_text = gtk_entry_get_text(GTK_ENTRY(priv->filter_entry));
-	if (*filter_text != '\0')
+	/* if a filter is set, apply it again but ignore the place holder text */
+	if (!g_object_get_data (G_OBJECT (priv->filter_entry), "sokoke_has_default"))
 	{
-		cm_filter_tree(cmp, filter_text);
-		gtk_tree_view_expand_all(GTK_TREE_VIEW(priv->treeview));
+		filter_text = gtk_entry_get_text(GTK_ENTRY(priv->filter_entry));
+		if (*filter_text != '\0')
+		{
+			cm_filter_tree(cmp, filter_text);
+			gtk_tree_view_expand_all(GTK_TREE_VIEW(priv->treeview));
+		}
 	}
 }
 
@@ -576,11 +579,14 @@ static void cm_button_delete_all_clicked_cb(GtkToolButton *button, CookieManager
 	if (toplevel != NULL)
 		gtk_window_set_icon_name(GTK_WINDOW(dialog), gtk_window_get_icon_name(GTK_WINDOW(toplevel)));
 
-	filter_text = gtk_entry_get_text(GTK_ENTRY(priv->filter_entry));
-	if (*filter_text != '\0')
+	if (!g_object_get_data (G_OBJECT (priv->filter_entry), "sokoke_has_default"))
 	{
-		gtk_message_dialog_format_secondary_text(GTK_MESSAGE_DIALOG(dialog),
-			_("Only cookies which match the filter will be deleted."));
+		filter_text = gtk_entry_get_text(GTK_ENTRY(priv->filter_entry));
+		if (*filter_text != '\0')
+		{
+			gtk_message_dialog_format_secondary_text(GTK_MESSAGE_DIALOG(dialog),
+				_("Only cookies which match the filter will be deleted."));
+		}
 	}
 
 	if (gtk_dialog_run(GTK_DIALOG(dialog)) == GTK_RESPONSE_YES)
@@ -650,25 +656,28 @@ static void cm_tree_drag_data_get_cb(GtkWidget *widget, GdkDragContext *drag_con
 
 static gchar *cm_get_cookie_description_text(SoupCookie *cookie)
 {
-	static gchar date_fmt[512];
 	gchar *expires;
 	gchar *text;
-	time_t expiration_time;
-	const struct tm *tm;
 
 	g_return_val_if_fail(cookie != NULL, NULL);
 
 	if (cookie->expires != NULL)
 	{
-		expiration_time = soup_date_to_time_t(cookie->expires);
-		tm = localtime(&expiration_time);
-		/* even if some gcc versions complain about "%c", there is nothing wrong with and here we
-		 * want to use it */
+		time_t expiration_time = soup_date_to_time_t(cookie->expires);
+		#if GLIB_CHECK_VERSION (2, 26, 0)
+		GDateTime* date = g_date_time_new_from_unix_local(expiration_time);
+		expires = g_date_time_format(date, "%c");
+		g_date_time_unref(date);
+		#else
+		static gchar date_fmt[512];
+		const struct tm *tm = localtime(&expiration_time);
+		/* Some GCC versions falsely complain about "%c" */
 		strftime(date_fmt, sizeof(date_fmt), "%c", tm);
-		expires = date_fmt;
+		expires = g_strdup(date_fmt);
+		#endif
 	}
 	else
-		expires = _("At the end of the session");
+		expires = g_strdup(_("At the end of the session"));
 
 	text = g_markup_printf_escaped(
 			_("<b>Host</b>: %s\n<b>Name</b>: %s\n<b>Value</b>: %s\n<b>Path</b>: %s\n"
@@ -677,8 +686,10 @@ static gchar *cm_get_cookie_description_text(SoupCookie *cookie)
 			cookie->name,
 			cookie->value,
 			cookie->path,
+	/* i18n: is this cookie secure (SSL)? yes/ no */
 			cookie->secure ? _("Yes") : _("No"),
 			expires);
+	g_free(expires);
 
 	return text;
 }
@@ -702,7 +713,6 @@ static gchar *cm_get_domain_description_text(const gchar *domain, gint cookie_co
 }
 
 
-#if GTK_CHECK_VERSION(2, 12, 0)
 static gboolean cm_tree_query_tooltip(GtkWidget *widget, gint x, gint y, gboolean keyboard_mode,
 									  GtkTooltip *tooltip, CookieManagerPage *cmp)
 {
@@ -731,8 +741,6 @@ static gboolean cm_tree_query_tooltip(GtkWidget *widget, gint x, gint y, gboolea
 
 	return FALSE;
 }
-#endif
-
 
 static gboolean cm_filter_match(const gchar *haystack, const gchar *needle)
 {
@@ -812,24 +820,19 @@ static void cm_filter_entry_changed_cb(GtkEditable *editable, CookieManagerPage 
 	if (priv->ignore_changed_filter)
 		return;
 
-	text = gtk_entry_get_text(GTK_ENTRY(editable));
+	if (!g_object_get_data (G_OBJECT (editable), "sokoke_has_default"))
+		text = gtk_entry_get_text(GTK_ENTRY(editable));
+	else
+		text = NULL;
 	cm_filter_tree(cmp, text);
 
 	cookie_manager_update_filter(priv->parent, text);
 
-	if (*text != '\0')
-		gtk_tree_view_expand_all(GTK_TREE_VIEW(priv->treeview));
-	else
+	if (text && *text)
 		gtk_tree_view_collapse_all(GTK_TREE_VIEW(priv->treeview));
+	else
+		gtk_tree_view_expand_all(GTK_TREE_VIEW(priv->treeview));
 }
-
-
-static void cm_filter_entry_clear_icon_released_cb(GtkIconEntry *e, gint pos, gint btn, gpointer data)
-{
-	if (pos == GTK_ICON_ENTRY_SECONDARY)
-		gtk_entry_set_text(GTK_ENTRY(e), "");
-}
-
 
 static void cm_tree_selection_changed_cb(GtkTreeSelection *selection, CookieManagerPage *cmp)
 {
@@ -1002,6 +1005,7 @@ static void cm_tree_render_text_cb(GtkTreeViewColumn *column, GtkCellRenderer *r
 	}
 	else
 		g_object_set(renderer, "text", name, NULL);
+	g_object_set (renderer, "ellipsize", PANGO_ELLIPSIZE_END, NULL);
 
 	g_free(name);
 }
@@ -1022,6 +1026,7 @@ static GtkWidget *cm_tree_prepare(CookieManagerPage *cmp)
 	renderer = gtk_cell_renderer_text_new();
 	column = gtk_tree_view_column_new_with_attributes(
 		_("Name"), renderer, "text", COOKIE_MANAGER_COL_NAME, NULL);
+	gtk_tree_view_column_set_expand (column, TRUE);
 	gtk_tree_view_column_set_sort_indicator(column, TRUE);
 	gtk_tree_view_column_set_sort_column_id(column, COOKIE_MANAGER_COL_NAME);
 	gtk_tree_view_column_set_resizable(column, TRUE);
@@ -1045,10 +1050,8 @@ static GtkWidget *cm_tree_prepare(CookieManagerPage *cmp)
 	g_signal_connect(treeview, "popup-menu", G_CALLBACK(cm_tree_popup_menu_cb), cmp);
 
 	/* tooltips */
-#if GTK_CHECK_VERSION(2, 12, 0)
 	gtk_widget_set_has_tooltip(treeview, TRUE);
 	g_signal_connect(treeview, "query-tooltip", G_CALLBACK(cm_tree_query_tooltip), cmp);
-#endif
 
 	/* drag'n'drop */
 	gtk_tree_view_enable_model_drag_source(
@@ -1100,7 +1103,6 @@ static void cookie_manager_page_init(CookieManagerPage *self)
 	GtkWidget *desc_swin;
 	GtkWidget *paned;
 	GtkWidget *filter_hbox;
-	GtkWidget *filter_label;
 	GtkWidget *treeview;
 	CookieManagerPagePrivate *priv;
 
@@ -1132,29 +1134,15 @@ static void cookie_manager_page_init(CookieManagerPage *self)
 	tree_swin = gtk_scrolled_window_new(NULL, NULL);
 	gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(tree_swin),
 		GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
-	gtk_scrolled_window_set_shadow_type(GTK_SCROLLED_WINDOW(tree_swin), GTK_SHADOW_IN);
 	gtk_container_add(GTK_CONTAINER(tree_swin), treeview);
 	gtk_widget_show(tree_swin);
 
-	filter_label = gtk_label_new(_("Filter:"));
-	gtk_widget_show(filter_label);
-
-	priv->filter_entry = gtk_icon_entry_new();
-	gtk_widget_set_tooltip_text(priv->filter_entry,
-		_("Enter a filter string to show only cookies whose name or domain "
-		  "field match the entered filter"));
+	priv->filter_entry = sokoke_search_entry_new (_("Search Cookies by Name or Domain"));
 	gtk_widget_show(priv->filter_entry);
-	gtk_icon_entry_set_icon_from_stock(GTK_ICON_ENTRY(priv->filter_entry),
-		GTK_ICON_ENTRY_SECONDARY, GTK_STOCK_CLEAR);
-	gtk_icon_entry_set_icon_highlight(GTK_ICON_ENTRY (priv->filter_entry),
-		GTK_ICON_ENTRY_SECONDARY, TRUE);
-	g_signal_connect(priv->filter_entry, "icon-release",
-		G_CALLBACK(cm_filter_entry_clear_icon_released_cb), NULL);
 	g_signal_connect(priv->filter_entry, "changed", G_CALLBACK(cm_filter_entry_changed_cb), self);
 	g_signal_connect(priv->filter_entry, "activate", G_CALLBACK(cm_filter_entry_changed_cb), self);
 
 	filter_hbox = gtk_hbox_new(FALSE, 0);
-	gtk_box_pack_start(GTK_BOX(filter_hbox), filter_label, FALSE, FALSE, 3);
 	gtk_box_pack_start(GTK_BOX(filter_hbox), priv->filter_entry, TRUE, TRUE, 3);
 	gtk_widget_show(filter_hbox);
 

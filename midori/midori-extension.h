@@ -1,5 +1,5 @@
 /*
- Copyright (C) 2008 Christian Dywan <christian@twotoasts.de>
+ Copyright (C) 2008-2012 Christian Dywan <christian@twotoasts.de>
 
  This library is free software; you can redistribute it and/or
  modify it under the terms of the GNU Lesser General Public
@@ -48,6 +48,24 @@ struct _MidoriExtensionClass
 GType
 midori_extension_get_type            (void) G_GNUC_CONST;
 
+GObject*
+midori_extension_load_from_file      (const gchar* extension_path,
+                                      const gchar* filename,
+                                      gboolean     activate,
+                                      gboolean     test);
+
+void
+midori_extension_activate           (GObject*     extension,
+                                     const gchar* filename,
+                                     gboolean     activate,
+                                     MidoriApp*   app);
+
+GObject*
+midori_extension_activate_gracefully (MidoriApp*   app,
+                                      const gchar* extension_path,
+                                      const gchar* filename,
+                                      gboolean     activate);
+
 gboolean
 midori_extension_is_prepared         (MidoriExtension* extension);
 
@@ -56,9 +74,6 @@ midori_extension_has_preferences     (MidoriExtension* extension);
 
 gboolean
 midori_extension_is_active           (MidoriExtension* extension);
-
-gboolean
-midori_extension_is_deactivating     (MidoriExtension* extension);
 
 void
 midori_extension_deactivate          (MidoriExtension* extension);
@@ -127,6 +142,11 @@ midori_extension_set_string_list     (MidoriExtension* extension,
                                       const gchar*     name,
                                       gchar**          value,
                                       gsize            length);
+
+void
+midori_extension_load_from_folder    (MidoriApp*       app,
+                                      gchar**          keys,
+                                      gboolean         activate);
 
 G_END_DECLS
 

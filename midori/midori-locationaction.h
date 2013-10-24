@@ -43,28 +43,6 @@ void
 midori_location_action_set_text             (MidoriLocationAction* location_action,
                                              const gchar*          text);
 
-const gchar*
-midori_location_action_get_uri              (MidoriLocationAction* location_action);
-
-void
-midori_location_action_set_icon             (MidoriLocationAction* location_action,
-                                             GdkPixbuf*            icon);
-
-void
-midori_location_action_add_uri              (MidoriLocationAction* location_action,
-                                             const gchar*          uri);
-
-void
-midori_location_action_add_item             (MidoriLocationAction* location_action,
-                                             const gchar*          uri,
-                                             GdkPixbuf*            icon,
-                                             const gchar*          title);
-
-void
-midori_location_action_set_icon_for_uri     (MidoriLocationAction* location_action,
-                                             GdkPixbuf*            icon,
-                                             const gchar*          text);
-
 void
 midori_location_action_set_title_for_uri    (MidoriLocationAction* location_action,
                                              const gchar*          title,
@@ -93,8 +71,21 @@ void
 midori_location_action_clear                (MidoriLocationAction* location_action);
 
 void
+midori_location_action_set_primary_icon     (MidoriLocationAction* location_action,
+                                             GIcon*                icon,
+                                             const gchar*          tooltip);
+
+void
 midori_location_action_set_security_hint    (MidoriLocationAction* location_action,
                                              MidoriSecurity        hint);
+
+gchar*
+midori_location_action_render_uri           (gchar**      keys,
+                                             const gchar* uri_escaped);
+
+gchar*
+midori_location_action_render_title         (gchar**      keys,
+                                             const gchar* title);
 
 G_END_DECLS
 

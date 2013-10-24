@@ -15,6 +15,7 @@
 
 #include "midori-core.h"
 #include "midori-platform.h"
+#include "midori-app.h"
 
 #include <config.h>
 #if HAVE_UNISTD_H
@@ -31,17 +32,7 @@
 #include <glib/gi18n.h>
 #include <glib/gprintf.h>
 #include <glib/gstdio.h>
-
-#ifdef HAVE_HILDON_FM
-    #include <hildon/hildon-file-chooser-dialog.h>
-#endif
-
-#if HAVE_HILDON
-    #include <libosso.h>
-    #include <hildon/hildon.h>
-    #include <hildon-mime.h>
-    #include <hildon-uri.h>
-#endif
+#include "katze/katze.h"
 
 static gchar*
 sokoke_js_string_utf8 (JSStringRef js_string)
@@ -62,15 +53,20 @@ sokoke_js_script_eval (JSContextRef js_context,
                        const gchar* script,
                        gchar**      exception)
 {
+    JSGlobalContextRef temporary_context = NULL;
     gchar* value;
     JSStringRef js_value_string;
+    JSStringRef js_script;
+    JSValueRef js_exception = NULL;
+    JSValueRef js_value;
 
-    g_return_val_if_fail (js_context, FALSE);
     g_return_val_if_fail (script, FALSE);
 
-    JSStringRef js_script = JSStringCreateWithUTF8CString (script);
-    JSValueRef js_exception = NULL;
-    JSValueRef js_value = JSEvaluateScript (js_context, js_script,
+    if (!js_context)
+        js_context = temporary_context = JSGlobalContextCreateInGroup (NULL, NULL);
+
+    js_script = JSStringCreateWithUTF8CString (script);
+    js_value = JSEvaluateScript (js_context, js_script,
         JSContextGetGlobalObject (js_context), NULL, 0, &js_exception);
     JSStringRelease (js_script);
 
@@ -78,6 +74,8 @@ sokoke_js_script_eval (JSContextRef js_context,
     {
         JSStringRef js_message = JSValueToStringCopy (js_context,
                                                       js_exception, NULL);
+        g_return_val_if_fail (js_message != NULL, NULL);
+
         value = sokoke_js_string_utf8 (js_message);
         if (exception)
             *exception = value;
@@ -87,21 +85,17 @@ sokoke_js_script_eval (JSContextRef js_context,
             g_free (value);
         }
         JSStringRelease (js_message);
+        if (temporary_context)
+            JSGlobalContextRelease (temporary_context);
         return NULL;
     }
 
     js_value_string = JSValueToStringCopy (js_context, js_value, NULL);
     value = sokoke_js_string_utf8 (js_value_string);
     JSStringRelease (js_value_string);
+    if (temporary_context)
+        JSGlobalContextRelease (temporary_context);
     return value;
-}
-
-static void
-sokoke_message_dialog_response_cb (GtkWidget* dialog,
-                                   gint       response,
-                                   gpointer   data)
-{
-    gtk_widget_destroy (dialog);
 }
 
 void
@@ -111,13 +105,7 @@ sokoke_message_dialog (GtkMessageType message_type,
                        gboolean       modal)
 {
     GtkWidget* dialog = gtk_message_dialog_new (
-        NULL, 0, message_type,
-        #if HAVE_HILDON
-        GTK_BUTTONS_NONE,
-        #else
-        GTK_BUTTONS_OK,
-        #endif
-        "%s", short_message);
+        NULL, 0, message_type, GTK_BUTTONS_OK, "%s", short_message);
     gtk_message_dialog_format_secondary_text (GTK_MESSAGE_DIALOG (dialog),
                                               "%s", detailed_message);
     if (modal)
@@ -127,92 +115,11 @@ sokoke_message_dialog (GtkMessageType message_type,
     }
     else
     {
-        g_signal_connect (dialog, "response",
-                          G_CALLBACK (sokoke_message_dialog_response_cb), NULL);
+        g_signal_connect_swapped (dialog, "response",
+            G_CALLBACK (gtk_widget_destroy), dialog);
         gtk_widget_show (dialog);
     }
 
-}
-
-/**
- * sokoke_show_uri_with_mime_type:
- * @screen: a #GdkScreen, or %NULL
- * @uri: the URI to show
- * @mime_type: a MIME type
- * @timestamp: the timestamp of the event
- * @error: the location of a #GError, or %NULL
- *
- * Shows the specified URI with an appropriate application,
- * as though it had the specified MIME type.
- *
- * On Maemo, hildon_mime_open_file_with_mime_type() is used.
- *
- * See also: sokoke_show_uri().
- *
- * Return value: %TRUE on success, %FALSE if an error occurred
- **/
-gboolean
-sokoke_show_uri_with_mime_type (GdkScreen*   screen,
-                                const gchar* uri,
-                                const gchar* mime_type,
-                                guint32      timestamp,
-                                GError**     error)
-{
-    gboolean success;
-    #if HAVE_HILDON
-    osso_context_t* osso;
-    DBusConnection* dbus;
-
-    osso = osso_initialize (PACKAGE_NAME, PACKAGE_VERSION, FALSE, NULL);
-    if (!osso)
-    {
-        g_print ("Failed to initialize libosso\n");
-        return FALSE;
-    }
-
-    dbus = (DBusConnection *) osso_get_dbus_connection (osso);
-    if (!dbus)
-    {
-        osso_deinitialize (osso);
-        g_print ("Failed to get dbus connection from osso context\n");
-        return FALSE;
-    }
-
-    success = (hildon_mime_open_file_with_mime_type (dbus,
-               uri, mime_type) == 1);
-    osso_deinitialize (osso);
-    #else
-    GFile* file = g_file_new_for_uri (uri);
-    gchar* content_type;
-    GAppInfo* app_info;
-    GList* files;
-    gpointer context;
-
-    content_type = g_content_type_from_mime_type (mime_type);
-    app_info = g_app_info_get_default_for_type (content_type,
-        !g_str_has_prefix (uri, "file://"));
-    g_free (content_type);
-    files = g_list_prepend (NULL, file);
-    #if GTK_CHECK_VERSION (2, 14, 0)
-    #if GTK_CHECK_VERSION (3, 0, 0)
-    context = gdk_display_get_app_launch_context (gdk_screen_get_display (screen));
-    #else
-    context = gdk_app_launch_context_new ();
-    #endif
-    gdk_app_launch_context_set_screen (context, screen);
-    gdk_app_launch_context_set_timestamp (context, timestamp);
-    #else
-    context = g_app_launch_context_new ();
-    #endif
-
-    success = g_app_info_launch (app_info, files, context, error);
-
-    g_object_unref (app_info);
-    g_list_free (files);
-    g_object_unref (file);
-    #endif
-
-    return success;
 }
 
 static void
@@ -224,7 +131,7 @@ sokoke_open_with_response_cb (GtkWidget* dialog,
     {
         const gchar* command = gtk_entry_get_text (entry);
         const gchar* uri = g_object_get_data (G_OBJECT (dialog), "uri");
-        sokoke_spawn_program (command, uri);
+        sokoke_spawn_program (command, FALSE, uri, TRUE, FALSE);
     }
     gtk_widget_destroy (dialog);
 }
@@ -237,8 +144,6 @@ sokoke_default_for_uri (const gchar* uri,
     GAppInfo* info;
 
     scheme = g_uri_parse_scheme (uri);
-    if (scheme_ptr != NULL)
-        *scheme_ptr = scheme;
     if (!scheme)
         return NULL;
 
@@ -251,7 +156,9 @@ sokoke_default_for_uri (const gchar* uri,
         g_free (type);
     }
     #endif
-    if (info != NULL && scheme_ptr != NULL)
+    if (scheme_ptr != NULL)
+        *scheme_ptr = scheme;
+    else
         g_free (scheme);
     return info;
 
@@ -264,12 +171,8 @@ sokoke_default_for_uri (const gchar* uri,
  * @timestamp: the timestamp of the event
  * @error: the location of a #GError, or %NULL
  *
- * Shows the specified URI with an appropriate application. This
- * supports xdg-open, exo-open and gnome-open as fallbacks if
- * GIO doesn't do the trick.
+ * Shows the specified URI with an application or xdg-open.
  * x-scheme-handler is supported for GLib < 2.28 as of 0.3.3.
- *
- * On Maemo, hildon_uri_open() is used.
  *
  * Return value: %TRUE on success, %FALSE if an error occurred
  **/
@@ -279,84 +182,19 @@ sokoke_show_uri (GdkScreen*   screen,
                  guint32      timestamp,
                  GError**     error)
 {
-    #if HAVE_HILDON
-    HildonURIAction* action = hildon_uri_get_default_action_by_uri (uri, NULL);
-    return hildon_uri_open (uri, action, error);
+    #ifdef G_OS_WIN32
+    CoInitializeEx (NULL, COINIT_APARTMENTTHREADED);
+    SHELLEXECUTEINFO info = { sizeof (info) };
+    info.nShow = SW_SHOWNORMAL;
+    info.lpFile = uri;
 
-    #elif defined (G_OS_WIN32)
-
-    const gchar* fallbacks [] = { "explorer" };
-    gsize i;
-    GAppInfo *app_info;
-    GFile *file;
-    gchar *free_uri;
-
-    g_return_val_if_fail (GDK_IS_SCREEN (screen) || !screen, FALSE);
-    g_return_val_if_fail (uri != NULL, FALSE);
-    g_return_val_if_fail (!error || !*error, FALSE);
-
-    file = g_file_new_for_uri (uri);
-    app_info = g_file_query_default_handler (file, NULL, error);
-
-    if (app_info != NULL)
-    {
-        GdkAppLaunchContext *context;
-        gboolean result;
-        GList l;
-
-        context = gdk_app_launch_context_new ();
-        gdk_app_launch_context_set_screen (context, screen);
-        gdk_app_launch_context_set_timestamp (context, timestamp);
-
-        l.data = (char *)file;
-        l.next = l.prev = NULL;
-        result = g_app_info_launch (app_info, &l, (GAppLaunchContext*)context, error);
-
-        g_object_unref (context);
-        g_object_unref (app_info);
-        g_object_unref (file);
-
-        if (result)
-            return TRUE;
-    }
-    else
-        g_object_unref (file);
-
-    free_uri = g_filename_from_uri (uri, NULL, NULL);
-    if (free_uri)
-    {
-        gchar *quoted = g_shell_quote (free_uri);
-        uri = quoted;
-        g_free (free_uri);
-        free_uri = quoted;
-    }
-
-    for (i = 0; i < G_N_ELEMENTS (fallbacks); i++)
-    {
-        gchar* command = g_strconcat (fallbacks[i], " ", uri, NULL);
-        gboolean result = g_spawn_command_line_async (command, error);
-        g_free (command);
-        if (result)
-        {
-            g_free (free_uri);
-            return TRUE;
-        }
-        if (error)
-            *error = NULL;
-    }
-
-    g_free (free_uri);
-
-    return FALSE;
-
+    return ShellExecuteEx (&info);
     #else
 
     #if !GLIB_CHECK_VERSION (2, 28, 0)
     GAppInfo* info;
     gchar* scheme;
     #endif
-    const gchar* fallbacks [] = { "xdg-open", "exo-open", "gnome-open" };
-    gsize i;
     GtkWidget* dialog;
     GtkWidget* box;
     gchar* filename;
@@ -369,13 +207,9 @@ sokoke_show_uri (GdkScreen*   screen,
 
     sokoke_recursive_fork_protection (uri, TRUE);
 
-    #if GTK_CHECK_VERSION (2, 14, 0)
+    /* g_app_info_launch_default_for_uri, gdk_display_get_app_launch_context */
     if (gtk_show_uri (screen, uri, timestamp, error))
         return TRUE;
-    #else
-    if (g_app_info_launch_default_for_uri (uri, NULL, NULL))
-        return TRUE;
-    #endif
 
     #if !GLIB_CHECK_VERSION (2, 28, 0)
     info = sokoke_default_for_uri (uri, &scheme);
@@ -396,9 +230,8 @@ sokoke_show_uri (GdkScreen*   screen,
     }
     #endif
 
-    for (i = 0; i < G_N_ELEMENTS (fallbacks); i++)
     {
-        gchar* command = g_strconcat (fallbacks[i], " ", uri, NULL);
+        gchar* command = g_strconcat ("xdg-open ", uri, NULL);
         gboolean result = g_spawn_command_line_async (command, error);
         g_free (command);
         if (result)
@@ -434,142 +267,167 @@ sokoke_show_uri (GdkScreen*   screen,
     #endif
 }
 
+/**
+ * sokoke_prepare_command:
+ * @command: the command, properly quoted
+ * @argument: any arguments, properly quoted
+ * @quote_command: if %TRUE, @command will be quoted
+ * @quote_argument: if %TRUE, @argument will be quoted, ie. a URI or filename
+ *
+ * If @command contains %s, @argument will be quoted and inserted into
+ * @command, which is left unquoted regardless of @quote_command.
+ *
+ * Return value: the command prepared for spawning
+ **/
+gchar*
+sokoke_prepare_command (const gchar* command,
+                        gboolean     quote_command,
+                        const gchar* argument,
+                        gboolean     quote_argument)
+{
+    g_return_val_if_fail (command != NULL, FALSE);
+    g_return_val_if_fail (argument != NULL, FALSE);
+
+    if (midori_debug ("paths"))
+        g_print ("Preparing command: %s %d %s %d\n",
+                 command, quote_command, argument, quote_argument);
+
+    {
+        gchar* uri_format;
+        gchar* real_command;
+        gchar* command_ready;
+
+        /* .desktop files accept %u, %U, %f, %F as URI/ filename, we treat it like %s */
+        real_command = g_strdup (command);
+        if ((uri_format = strstr (real_command, "%u"))
+         || (uri_format = strstr (real_command, "%U"))
+         || (uri_format = strstr (real_command, "%f"))
+         || (uri_format = strstr (real_command, "%F")))
+            uri_format[1] = 's';
+
+
+        if (strstr (real_command, "%s"))
+        {
+            gchar* argument_quoted = quote_argument ? g_shell_quote (argument) : g_strdup (argument);
+            command_ready = g_strdup_printf (real_command, argument_quoted);
+            g_free (argument_quoted);
+        }
+        else if (quote_argument)
+        {
+            gchar* quoted_command = quote_command ? g_shell_quote (real_command) : g_strdup (real_command);
+            gchar* argument_quoted = g_shell_quote (argument);
+            command_ready = g_strconcat (quoted_command, " ", argument_quoted, NULL);
+            g_free (argument_quoted);
+            g_free (quoted_command);
+        }
+        else
+        {
+            gchar* quoted_command = quote_command ? g_shell_quote (real_command) : g_strdup (real_command);
+            command_ready = g_strconcat (quoted_command, " ", argument, NULL);
+            g_free (quoted_command);
+        }
+        g_free (real_command);
+        return command_ready;
+    }
+}
+
+/**
+ * sokoke_spawn_program:
+ * @command: the command, properly quoted
+ * @argument: any arguments, properly quoted
+ * @quote_command: if %TRUE, @command will be quoted
+ * @quote_argument: if %TRUE, @argument will be quoted, ie. a URI or filename
+ * @sync: spawn synchronously and wait for command to exit
+ *
+ * If @command contains %s, @argument will be quoted and inserted into
+ * @command, which is left unquoted regardless of @quote_command.
+ *
+ * Return value: %TRUE on success, %FALSE if an error occurred
+ **/
 gboolean
 sokoke_spawn_program (const gchar* command,
-                      const gchar* argument)
+                      gboolean     quote_command,
+                      const gchar* argument,
+                      gboolean     quote_argument,
+                      gboolean     sync)
 {
     GError* error;
+    gchar* command_ready;
+    gchar** argv;
 
     g_return_val_if_fail (command != NULL, FALSE);
     g_return_val_if_fail (argument != NULL, FALSE);
 
-    if (!g_strstr_len (argument, 8, "://")
-     && !g_str_has_prefix (argument, "about:"))
+    command_ready = sokoke_prepare_command (command, quote_command, argument, quote_argument);
+    g_print ("Launching command: %s\n", command_ready);
+
+    error = NULL;
+    if (!g_shell_parse_argv (command_ready, NULL, &argv, &error))
     {
-        gboolean success;
-
-        #if HAVE_HILDON
-        osso_context_t* osso;
-        DBusConnection* dbus;
-
-        osso = osso_initialize (PACKAGE_NAME, PACKAGE_VERSION, FALSE, NULL);
-        if (!osso)
-        {
-            sokoke_message_dialog (GTK_MESSAGE_ERROR,
-                                   _("Could not run external program."),
-                                   "Failed to initialize libosso", FALSE);
-            return FALSE;
-        }
-
-        dbus = (DBusConnection *) osso_get_dbus_connection (osso);
-        if (!dbus)
-        {
-            osso_deinitialize (osso);
-            sokoke_message_dialog (GTK_MESSAGE_ERROR,
-                                   _("Could not run external program."),
-                                   "Failed to get dbus connection from osso context", FALSE);
-            return FALSE;
-        }
-
-        error = NULL;
-        /* FIXME: This is not correct, find a proper way to do this */
-        success = (osso_application_top (osso, command, argument) == OSSO_OK);
-        osso_deinitialize (osso);
-        #else
-        GAppInfo* info;
-        GFile* file;
-        GList* files;
-
-        info = g_app_info_create_from_commandline (command,
-            NULL, G_APP_INFO_CREATE_NONE, NULL);
-        file = g_file_new_for_commandline_arg (argument);
-        files = g_list_append (NULL, file);
-
-        error = NULL;
-        success = g_app_info_launch (info, files, NULL, &error);
-        g_object_unref (file);
-        g_list_free (files);
-        #endif
-
-        if (!success)
-        {
-            sokoke_message_dialog (GTK_MESSAGE_ERROR,
-                _("Could not run external program."),
-                error ? error->message : "", FALSE);
-            if (error)
-                g_error_free (error);
-            return FALSE;
-        }
-    }
-    else
-    {
-        /* FIXME: Implement Hildon specific version */
-        gchar* uri_format;
-        gchar* argument_quoted;
-        gchar* command_ready;
-        gchar** argv;
-
-        if ((uri_format = strstr (command, "%u")))
-            uri_format[1] = 's';
-
-        argument_quoted = g_shell_quote (argument);
-        if (strstr (command, "%s"))
-            command_ready = g_strdup_printf (command, argument_quoted);
-        else
-            command_ready = g_strconcat (command, " ", argument_quoted, NULL);
-        g_free (argument_quoted);
-
-        error = NULL;
-        if (!g_shell_parse_argv (command_ready, NULL, &argv, &error))
-        {
-            sokoke_message_dialog (GTK_MESSAGE_ERROR,
-                                   _("Could not run external program."),
-                                   error->message, FALSE);
-            g_error_free (error);
-            g_free (command_ready);
-            return FALSE;
-        }
+        sokoke_message_dialog (GTK_MESSAGE_ERROR,
+                               _("Could not run external program."),
+                               error->message, FALSE);
+        g_error_free (error);
         g_free (command_ready);
+        return FALSE;
+    }
+    g_free (command_ready);
 
-        error = NULL;
-        if (!g_spawn_async (NULL, argv, NULL,
+    error = NULL;
+    if (sync)
+        g_spawn_sync (NULL, argv, NULL,
+            (GSpawnFlags)G_SPAWN_SEARCH_PATH,
+            NULL, NULL, NULL, NULL, NULL, &error);
+    else
+        g_spawn_async (NULL, argv, NULL,
             (GSpawnFlags)G_SPAWN_SEARCH_PATH | G_SPAWN_DO_NOT_REAP_CHILD,
-            NULL, NULL, NULL, &error))
-        {
-            sokoke_message_dialog (GTK_MESSAGE_ERROR,
-                                   _("Could not run external program."),
-                                   error->message, FALSE);
-            g_error_free (error);
-        }
-
-        g_strfreev (argv);
+            NULL, NULL, NULL, &error);
+    if (error != NULL)
+    {
+        sokoke_message_dialog (GTK_MESSAGE_ERROR,
+                               _("Could not run external program."),
+                               error->message, FALSE);
+        g_error_free (error);
     }
 
+    g_strfreev (argv);
     return TRUE;
+}
+
+void
+sokoke_spawn_gdb (const gchar* gdb,
+                  gboolean     sync)
+{
+    gchar* args = midori_paths_get_command_line_str (FALSE);
+    const gchar* runtime_dir = midori_paths_get_runtime_dir ();
+    gchar* cmd = g_strdup_printf (
+        "--batch -ex 'set print thread-events off' -ex run "
+        "-ex 'set logging on %s/%s' -ex 'bt' --return-child-result "
+        "--args %s",
+        runtime_dir, "gdb.bt", args);
+    sokoke_spawn_program (gdb, TRUE, cmd, FALSE, sync);
+    g_free (cmd);
+    g_free (args);
 }
 
 void
 sokoke_spawn_app (const gchar* uri,
                   gboolean     private)
 {
-    const gchar* executable = sokoke_get_argv (NULL)[0];
-    /* "midori"
-       "/usr/bin/midori"
-       "c:/Program Files/Midori/bin/midori.exe" */
-    gchar* quoted = g_shell_quote (executable);
-    gchar* command;
+    const gchar* executable = midori_paths_get_command_line (NULL)[0];
+    gchar* uri_quoted = g_shell_quote (uri);
+    gchar* argument;
     if (private)
     {
-        gchar* quoted_config = g_shell_quote (sokoke_set_config_dir (NULL));
-        command = g_strconcat (quoted, " -c ", quoted_config,
-                                       " -p", NULL);
-        g_free (quoted_config);
+        gchar* config_quoted = g_shell_quote (midori_paths_get_config_dir_for_reading ());
+        argument = g_strconcat ("-c ", config_quoted,
+                                " -p ", uri_quoted, NULL);
     }
     else
-        command = g_strconcat (quoted, " -a", NULL);
-    g_free (quoted);
-    sokoke_spawn_program (command, uri);
-    g_free (command);
+        argument = g_strconcat ("-a ", uri_quoted, NULL);
+    g_free (uri_quoted);
+    sokoke_spawn_program (executable, TRUE, argument, FALSE, FALSE);
+    g_free (argument);
 }
 
 static void
@@ -599,7 +457,7 @@ sokoke_resolve_hostname (const gchar* hostname)
     gint host_resolved = 0;
 
     uri = g_strconcat ("http://", hostname, NULL);
-    if (sokoke_prefetch_uri (NULL, uri, sokoke_resolve_hostname_cb,
+    if (sokoke_prefetch_uri (NULL, uri, G_CALLBACK (sokoke_resolve_hostname_cb),
                              &host_resolved))
     {
         GTimer* timer = g_timer_new ();
@@ -640,7 +498,9 @@ sokoke_external_uri (const gchar* uri)
  * Return value: a newly allocated URI, or %NULL
  **/
 gchar*
-sokoke_magic_uri (const gchar* uri)
+sokoke_magic_uri (const gchar* uri,
+                  gboolean     allow_search,
+                  gboolean     allow_relative)
 {
     gchar** parts;
     gchar* search;
@@ -649,7 +509,15 @@ sokoke_magic_uri (const gchar* uri)
 
     /* Add file:// if we have a local path */
     if (g_path_is_absolute (uri))
-        return g_strconcat ("file://", uri, NULL);
+        return g_filename_to_uri (uri, NULL, NULL);
+    if (allow_relative
+     && g_file_test (uri, G_FILE_TEST_EXISTS | G_FILE_TEST_IS_REGULAR))
+    {
+        GFile* file = g_file_new_for_commandline_arg (uri);
+        gchar* uri_ready = g_file_get_uri (file);
+        g_object_unref (file);
+        return uri_ready;
+    }
     /* Parse geo URI geo:48.202778,16.368472;crs=wgs84;u=40 as a location */
     if (!strncmp (uri, "geo:", 4))
     {
@@ -684,7 +552,7 @@ sokoke_magic_uri (const gchar* uri)
     search = NULL;
     if (!strchr (uri, ' ') &&
         ((search = strchr (uri, ':')) || (search = strchr (uri, '@'))) &&
-        search[0] && !g_ascii_isalpha (search[1]))
+        search[0] && g_ascii_isdigit (search[1]))
         return g_strconcat ("http://", uri, NULL);
     if ((!strcmp (uri, "localhost") || strchr (uri, '/'))
       && sokoke_resolve_hostname (uri))
@@ -704,6 +572,8 @@ sokoke_magic_uri (const gchar* uri)
         }
         g_strfreev (parts);
     }
+    if (!allow_search)
+        midori_error (_("Invalid URI"));
     return NULL;
 }
 
@@ -742,26 +612,29 @@ sokoke_get_desktop (void)
         }
         else
         {
-        /* Are we running in Xfce <= 4.6? */
-        GdkDisplay* display = gdk_display_get_default ();
-        Display* xdisplay = GDK_DISPLAY_XDISPLAY (display);
-        Window root_window = RootWindow (xdisplay, 0);
-        Atom save_mode_atom = gdk_x11_get_xatom_by_name_for_display (
-            display, "_DT_SAVE_MODE");
-        Atom actual_type;
-        int actual_format;
-        unsigned long n_items, bytes;
-        gchar* value;
-        int status = XGetWindowProperty (xdisplay, root_window,
-            save_mode_atom, 0, (~0L),
-            False, AnyPropertyType, &actual_type, &actual_format,
-            &n_items, &bytes, (unsigned char**)&value);
-        if (status == Success)
-        {
-            if (n_items == 6 && !strncmp (value, "xfce4", 6))
-                desktop = SOKOKE_DESKTOP_XFCE;
-            XFree (value);
-        }
+            /* Are we running in Xfce <= 4.6? */
+            GdkDisplay* display = gdk_display_get_default ();
+            if (GDK_IS_X11_DISPLAY (display))
+            {
+                Display* xdisplay = GDK_DISPLAY_XDISPLAY (display);
+                Window root_window = RootWindow (xdisplay, 0);
+                Atom save_mode_atom = gdk_x11_get_xatom_by_name_for_display (
+                    display, "_DT_SAVE_MODE");
+                Atom actual_type;
+                int actual_format;
+                unsigned long n_items, bytes;
+                gchar* value;
+                int status = XGetWindowProperty (xdisplay, root_window,
+                    save_mode_atom, 0, (~0L),
+                    False, AnyPropertyType, &actual_type, &actual_format,
+                    &n_items, &bytes, (unsigned char**)&value);
+                if (status == Success)
+                {
+                    if (n_items == 6 && !strncmp (value, "xfce4", 6))
+                        desktop = SOKOKE_DESKTOP_XFCE;
+                    XFree (value);
+                }
+            }
         }
     }
 
@@ -793,7 +666,6 @@ sokoke_xfce_header_new (const gchar* icon,
     if (sokoke_get_desktop () == SOKOKE_DESKTOP_XFCE)
     {
         GtkWidget* entry;
-        GtkStyle* style;
         gchar* markup;
         GtkWidget* xfce_heading;
         GtkWidget* hbox;
@@ -804,9 +676,7 @@ sokoke_xfce_header_new (const gchar* icon,
 
         xfce_heading = gtk_event_box_new ();
         entry = gtk_entry_new ();
-        style = gtk_widget_get_style (entry);
-        gtk_widget_modify_bg (xfce_heading, GTK_STATE_NORMAL,
-            &style->base[GTK_STATE_NORMAL]);
+
         hbox = gtk_hbox_new (FALSE, 12);
         gtk_container_set_border_width (GTK_CONTAINER (hbox), 6);
         if (icon)
@@ -816,8 +686,6 @@ sokoke_xfce_header_new (const gchar* icon,
                 GTK_ICON_SIZE_DIALOG);
         gtk_box_pack_start (GTK_BOX (hbox), image, FALSE, FALSE, 0);
         label = gtk_label_new (NULL);
-        gtk_widget_modify_fg (label, GTK_STATE_NORMAL
-         , &style->text[GTK_STATE_NORMAL]);
         markup = g_strdup_printf ("<span size='large' weight='bold'>%s</span>",
                                   title);
         gtk_label_set_markup (GTK_LABEL (label), markup);
@@ -825,6 +693,16 @@ sokoke_xfce_header_new (const gchar* icon,
         gtk_container_add (GTK_CONTAINER (xfce_heading), hbox);
         g_free (markup);
         gtk_widget_destroy (entry);
+
+        #if !GTK_CHECK_VERSION (3, 0, 0)
+        {
+        GtkStyle* style = gtk_widget_get_style (entry);
+        gtk_widget_modify_bg (xfce_heading, GTK_STATE_NORMAL,
+            &style->base[GTK_STATE_NORMAL]);
+        gtk_widget_modify_fg (label, GTK_STATE_NORMAL
+         , &style->text[GTK_STATE_NORMAL]);
+        }
+        #endif
 
         vbox = gtk_vbox_new (FALSE, 0);
         gtk_box_pack_start (GTK_BOX (vbox), xfce_heading, FALSE, FALSE, 0);
@@ -835,72 +713,6 @@ sokoke_xfce_header_new (const gchar* icon,
         return vbox;
     }
     return NULL;
-}
-
-gchar*
-sokoke_key_file_get_string_default (GKeyFile*    key_file,
-                                    const gchar* group,
-                                    const gchar* key,
-                                    const gchar* default_value,
-                                    GError**     error)
-{
-    gchar* value = g_key_file_get_string (key_file, group, key, error);
-    return value == NULL ? g_strdup (default_value) : value;
-}
-
-gint
-sokoke_key_file_get_integer_default (GKeyFile*    key_file,
-                                     const gchar* group,
-                                     const gchar* key,
-                                     const gint   default_value,
-                                     GError**     error)
-{
-    if (!g_key_file_has_key (key_file, group, key, NULL))
-        return default_value;
-    return g_key_file_get_integer (key_file, group, key, error);
-}
-
-gdouble
-sokoke_key_file_get_double_default (GKeyFile*     key_file,
-                                    const gchar*  group,
-                                    const gchar*  key,
-                                    const gdouble default_value,
-                                    GError**      error)
-{
-    if (!g_key_file_has_key (key_file, group, key, NULL))
-        return default_value;
-    return g_key_file_get_double (key_file, group, key, error);
-}
-
-gboolean
-sokoke_key_file_get_boolean_default (GKeyFile*      key_file,
-                                     const gchar*   group,
-                                     const gchar*   key,
-                                     const gboolean default_value,
-                                     GError**       error)
-{
-    if (!g_key_file_has_key (key_file, group, key, NULL))
-        return default_value;
-    return g_key_file_get_boolean (key_file, group, key, error);
-}
-
-gchar**
-sokoke_key_file_get_string_list_default (GKeyFile*     key_file,
-                                         const gchar*  group,
-                                         const gchar*  key,
-                                         gsize*        length,
-                                         gchar**       default_value,
-                                         gsize*        default_length,
-                                         GError*       error)
-{
-    gchar** value = g_key_file_get_string_list (key_file, group, key, length, NULL);
-    if (!value)
-    {
-        value = g_strdupv (default_value);
-        if (length)
-            *length = *default_length;
-    }
-    return value;
 }
 
 gboolean
@@ -981,7 +793,7 @@ sokoke_action_create_popup_menu_item (GtkAction* action)
         if (label)
         {
             menuitem = gtk_image_menu_item_new_with_mnemonic (label);
-            icon = gtk_image_new_from_stock (stock_id, GTK_ICON_SIZE_MENU);
+            icon = gtk_action_create_icon (action, GTK_ICON_SIZE_MENU);
             gtk_image_menu_item_set_image (GTK_IMAGE_MENU_ITEM (menuitem), icon);
         }
         else
@@ -1027,256 +839,6 @@ sokoke_time_t_to_julian (const time_t* timestamp)
     g_date_free (date);
 
     return julian;
-}
-
-/**
- * sokoke_days_between:
- * @day1: a time_t timestamp value
- * @day2: a time_t timestamp value
- *
- * Calculates the number of days between two timestamps.
- *
- * Return value: an integer.
- **/
-gint
-sokoke_days_between (const time_t* day1,
-                     const time_t* day2)
-{
-    GDate* date1;
-    GDate* date2;
-    gint age;
-
-    date1 = g_date_new ();
-    date2 = g_date_new ();
-
-    g_date_set_time_t (date1, *day1);
-    g_date_set_time_t (date2, *day2);
-
-    age = g_date_days_between (date1, date2);
-
-    g_date_free (date1);
-    g_date_free (date2);
-
-    return age;
-}
-
-/**
- * sokoke_set_config_dir:
- * @new_config_dir: an absolute path, or %NULL
- *
- * Retrieves and/ or sets the base configuration folder.
- *
- * "/" means no configuration is saved.
- *
- * Return value: the configuration folder, or %NULL
- **/
-const gchar*
-sokoke_set_config_dir (const gchar* new_config_dir)
-{
-    static gchar* config_dir = NULL;
-
-    if (config_dir)
-        return config_dir;
-
-    if (!new_config_dir)
-        config_dir = g_build_filename (g_get_user_config_dir (),
-                                       PACKAGE_NAME, NULL);
-    else
-    {
-        g_return_val_if_fail (g_path_is_absolute (new_config_dir), NULL);
-        katze_assign (config_dir, g_strdup (new_config_dir));
-    }
-
-    return config_dir;
-}
-
-gboolean
-sokoke_is_app_or_private (void)
-{
-    return !strcmp ("/", sokoke_set_config_dir (NULL));
-}
-
-/**
- * sokoke_remove_path:
- * @path: an absolute path
- * @ignore_errors: keep removing even if an error occurred
- *
- * Removes the file at @path or the folder including any
- * child folders and files if @path is a folder.
- *
- * If @ignore_errors is %TRUE and @path is a folder with
- * children, one of which can't be removed, remaining
- * children will be deleted nevertheless
- * If @ignore_errors is %FALSE and @path is a folder, the
- * removal process will cancel immediately.
- *
- * Return value: %TRUE on success, %FALSE if an error occurred
- **/
-gboolean
-sokoke_remove_path (const gchar* path,
-                    gboolean     ignore_errors)
-{
-    GDir* dir = g_dir_open (path, 0, NULL);
-    const gchar* name;
-
-    if (!dir)
-        return g_remove (path) == 0;
-
-    while ((name = g_dir_read_name (dir)))
-    {
-        gchar* sub_path = g_build_filename (path, name, NULL);
-        if (!sokoke_remove_path (sub_path, ignore_errors) && !ignore_errors)
-            return FALSE;
-        g_free (sub_path);
-    }
-
-    g_dir_close (dir);
-    g_rmdir (path);
-    return TRUE;
-}
-
-/**
- * sokoke_find_config_filename:
- * @folder: a subfolder
- * @filename: a filename or relative path
- *
- * Looks for the specified filename in the system config
- * directories, depending on the platform.
- *
- * Return value: a full path
- **/
-gchar*
-sokoke_find_config_filename (const gchar* folder,
-                             const gchar* filename)
-{
-    const gchar* const* config_dirs = g_get_system_config_dirs ();
-    guint i = 0;
-    const gchar* config_dir;
-    gchar* path;
-
-    if (!folder)
-        folder = "";
-
-    while ((config_dir = config_dirs[i++]))
-    {
-        path = g_build_filename (config_dir, PACKAGE_NAME, folder, filename, NULL);
-        if (g_access (path, F_OK) == 0)
-            return path;
-        g_free (path);
-    }
-
-    #ifdef G_OS_WIN32
-    config_dir = g_win32_get_package_installation_directory_of_module (NULL);
-    path = g_build_filename (config_dir, "etc", "xdg", PACKAGE_NAME, folder, filename, NULL);
-    if (g_access (path, F_OK) == 0)
-        return path;
-    g_free (path);
-    #endif
-
-    return g_build_filename (SYSCONFDIR, "xdg", PACKAGE_NAME, folder, filename, NULL);
-}
-
-/**
- * sokoke_find_lib_path:
- * @folder: the lib subfolder
- *
- * Looks for the specified folder in the lib directories.
- *
- * Return value: a newly allocated full path, or %NULL
- **/
-gchar* sokoke_find_lib_path (const gchar* folder)
-{
-    #ifdef G_OS_WIN32
-    gchar* path = g_win32_get_package_installation_directory_of_module (NULL);
-    gchar* lib_path = g_build_filename (path, "lib", folder ? folder : "", NULL);
-    g_free (path);
-    if (g_access (lib_path, F_OK) == 0)
-        return lib_path;
-    #else
-    const gchar* lib_dirs[] =
-    {
-        LIBDIR,
-        "/usr/local/lib",
-        "/usr/lib",
-        NULL
-    };
-    guint i;
-
-    for (i = 0; i < G_N_ELEMENTS (lib_dirs); i++)
-    {
-        gchar* lib_path = g_build_filename (lib_dirs[i], folder ? folder : "", NULL);
-        if (g_access (lib_path, F_OK) == 0)
-            return lib_path;
-        else
-            g_free (lib_path);
-    }
-    #endif
-
-    return NULL;
-}
-
-/**
- * sokoke_find_data_filename:
- * @filename: a filename or relative path
- *
- * Looks for the specified filename in the system data
- * directories, depending on the platform.
- *
- * Return value: a newly allocated full path
- **/
-gchar*
-sokoke_find_data_filename (const gchar* filename,
-                           gboolean     res)
-{
-    const gchar* res1 = res ? PACKAGE_NAME : "";
-    const gchar* res2 = res ? "res" : "";
-    const gchar* const* data_dirs = g_get_system_data_dirs ();
-    guint i = 0;
-    const gchar* data_dir;
-    gchar* path;
-
-    #ifdef G_OS_WIN32
-    gchar* install_path = g_win32_get_package_installation_directory_of_module (NULL);
-    path = g_build_filename (install_path, "share", res1, res2, filename, NULL);
-    g_free (install_path);
-    if (g_access (path, F_OK) == 0)
-        return path;
-
-    g_free (path);
-    #endif
-
-    path = g_build_filename (g_get_user_data_dir (), res1, res2, filename, NULL);
-    if (g_access (path, F_OK) == 0)
-        return path;
-    g_free (path);
-
-    while ((data_dir = data_dirs[i++]))
-    {
-        path = g_build_filename (data_dir, res1, res2, filename, NULL);
-        if (g_access (path, F_OK) == 0)
-            return path;
-        g_free (path);
-    }
-    return g_build_filename (MDATADIR, res1, res2, filename, NULL);
-}
-
-/**
- * sokoke_get_argv:
- * @argument_vector: %NULL
- *
- * Retrieves the argument vector passed at program startup.
- *
- * Return value: the argument vector
- **/
-gchar**
-sokoke_get_argv (gchar** argument_vector)
-{
-    static gchar** stored_argv = NULL;
-
-    if (!stored_argv)
-        stored_argv = g_strdupv (argument_vector);
-
-    return stored_argv;
 }
 
 gchar*
@@ -1380,40 +942,6 @@ sokoke_gtk_action_count_modifiers (GtkAction* action)
 }
 
 /**
- * sokoke_file_chooser_dialog_new:
- * @title: a window title, or %NULL
- * @window: a parent #GtkWindow, or %NULL
- * @action: a #GtkFileChooserAction
- *
- * Creates a new file chooser dialog, as appropriate for
- * the platform, with buttons according to the @action.
- *
- * The positive response is %GTK_RESPONSE_OK.
- *
- * Return value: a new #GtkFileChooser
- **/
-GtkWidget*
-sokoke_file_chooser_dialog_new (const gchar*         title,
-                                GtkWindow*           window,
-                                GtkFileChooserAction action)
-{
-    const gchar* stock_id = GTK_STOCK_OPEN;
-    GtkWidget* dialog;
-
-    if (action == GTK_FILE_CHOOSER_ACTION_SAVE)
-        stock_id = GTK_STOCK_SAVE;
-    #ifdef HAVE_HILDON_FM
-    dialog = hildon_file_chooser_dialog_new (window, action);
-    #else
-    dialog = gtk_file_chooser_dialog_new (title, window, action,
-        GTK_STOCK_CANCEL, GTK_RESPONSE_CANCEL,
-        stock_id, GTK_RESPONSE_OK, NULL);
-    gtk_window_set_icon_name (GTK_WINDOW (dialog), stock_id);
-    #endif
-    return dialog;
-}
-
-/**
  * sokoke_prefetch_uri:
  * @settings: a #MidoriWebSettings instance, or %NULL
  * @uri: an URI string
@@ -1426,7 +954,7 @@ sokoke_file_chooser_dialog_new (const gchar*         title,
 gboolean
 sokoke_prefetch_uri (MidoriWebSettings*  settings,
                      const char*         uri,
-                     SoupAddressCallback callback,
+                     GCallback           callback,
                      gpointer            user_data)
 {
     #define MAXHOSTS 50
@@ -1445,6 +973,12 @@ sokoke_prefetch_uri (MidoriWebSettings*  settings,
         return FALSE;
     }
 
+#ifdef HAVE_WEBKIT2
+    WebKitWebContext* context = webkit_web_context_get_default ();
+    webkit_web_context_prefetch_dns (context, hostname);
+    g_free (hostname);
+    return FALSE;
+#else
     if (!hosts ||
         !g_regex_match_simple (hostname, hosts,
                                G_REGEX_CASELESS, G_REGEX_MATCH_NOTEMPTY))
@@ -1453,7 +987,7 @@ sokoke_prefetch_uri (MidoriWebSettings*  settings,
         gchar* new_hosts;
 
         address = soup_address_new (hostname, SOUP_ADDRESS_ANY_PORT);
-        soup_address_resolve_async (address, 0, 0, callback, user_data);
+        soup_address_resolve_async (address, 0, 0, (SoupAddressCallback)callback, user_data);
         g_object_unref (address);
 
         if (host_count > MAXHOSTS)
@@ -1466,9 +1000,10 @@ sokoke_prefetch_uri (MidoriWebSettings*  settings,
         katze_assign (hosts, new_hosts);
     }
     else if (callback)
-        callback (NULL, SOUP_STATUS_OK, user_data);
+        ((SoupAddressCallback)callback) (NULL, SOUP_STATUS_OK, user_data);
     g_free (hostname);
     return TRUE;
+#endif
 }
 
 /**
@@ -1501,233 +1036,113 @@ sokoke_recursive_fork_protection (const gchar* uri,
     return g_strcmp0 (fork_uri, uri) == 0 ? FALSE : TRUE;
 }
 
-/* Provide a new way for SoupSession to assume an 'Accept-Language'
-   string automatically from the return value of g_get_language_names(),
-   properly formatted according to RFC2616.
-   Copyright (C) 2009 Mario Sanchez Prada <msanchez@igalia.com>
-   Copyright (C) 2009 Dan Winship <danw@gnome.org>
-   Mostly copied from libSoup 2.29, coding style adjusted */
-
-/* Converts a language in POSIX format and to be RFC2616 compliant    */
-/* Based on code from epiphany-webkit (ephy_langs_append_languages()) */
-static gchar *
-sokoke_posix_lang_to_rfc2616 (const gchar *language)
+static void
+sokoke_widget_clipboard_owner_clear_func (GtkClipboard* clipboard,
+                                          gpointer      user_data)
 {
-    if (!strchr (language, '.') && !strchr (language, '@') && language[0] != 'C')
-        /* change to lowercase and '_' to '-' */
-        return g_strdelimit (g_ascii_strdown (language, -1), "_", '-');
-
-    return NULL;
-}
-
-/* Adds a quality value to a string (any value between 0 and 1). */
-static gchar *
-sokoke_add_quality_value (const gchar *str,
-                          float        qvalue)
-{
-    if ((qvalue >= 0.0) && (qvalue <= 1.0))
-    {
-        int qv_int = (qvalue * 1000 + 0.5);
-        return g_strdup_printf ("%s;q=%d.%d",
-                                str, (int) (qv_int / 1000), qv_int % 1000);
-    }
-
-    return g_strdup (str);
-}
-
-/* Returns a RFC2616 compliant languages list from system locales */
-gchar *
-sokoke_accept_languages (const gchar* const * lang_names)
-{
-    GArray *langs_garray = NULL;
-    char *cur_lang = NULL;
-    char *prev_lang = NULL;
-    char **langs_array;
-    char *langs_str;
-    float delta;
-    int i, n_lang_names;
-
-    /* Calculate delta for setting the quality values */
-    n_lang_names = g_strv_length ((gchar **)lang_names);
-    delta = 0.999 / (n_lang_names - 1);
-
-    /* Build the array of languages */
-    langs_garray = g_array_new (TRUE, FALSE, sizeof (char*));
-    for (i = 0; lang_names[i] != NULL; i++)
-    {
-        cur_lang = sokoke_posix_lang_to_rfc2616 (lang_names[i]);
-
-        /* Apart from getting a valid RFC2616 compliant
-           language, also get rid of extra variants */
-        if (cur_lang && (!prev_lang ||
-           (!strcmp (prev_lang, cur_lang) || !strstr (prev_lang, cur_lang))))
-        {
-
-            gchar *qv_lang = NULL;
-
-            /* Save reference for further comparison */
-            prev_lang = cur_lang;
-
-            /* Add the quality value and append it */
-            qv_lang = sokoke_add_quality_value (cur_lang, 1 - i * delta);
-            g_array_append_val (langs_garray, qv_lang);
-        }
-    }
-
-    /* Fallback: add "en" if list is empty */
-    if (langs_garray->len == 0)
-    {
-        gchar* fallback = g_strdup ("en");
-        g_array_append_val (langs_garray, fallback);
-    }
-
-    langs_array = (char **) g_array_free (langs_garray, FALSE);
-    langs_str = g_strjoinv (", ", langs_array);
-
-    return langs_str;
-}
-
-/**
- * sokoke_register_privacy_item:
- * @name: the name of the privacy item
- * @label: a user visible, localized label
- * @clear: a callback clearing data
- *
- * Registers an item to clear data, either via the
- * Clear Private Data dialogue or when Midori quits.
- *
- * Return value: a #GList if all arguments are %NULL
- **/
-GList*
-sokoke_register_privacy_item (const gchar* name,
-                              const gchar* label,
-                              GCallback    clear)
-{
-    static GList* items = NULL;
-    SokokePrivacyItem* item;
-
-    if (name == NULL && label == NULL && clear == NULL)
-        return items;
-
-    g_return_val_if_fail (name != NULL, NULL);
-    g_return_val_if_fail (label != NULL, NULL);
-    g_return_val_if_fail (clear != NULL, NULL);
-
-    item = g_new (SokokePrivacyItem, 1);
-    item->name = g_strdup (name);
-    item->label = g_strdup (label);
-    item->clear = clear;
-    items = g_list_append (items, item);
-    return NULL;
+    g_object_unref (user_data);
 }
 
 void
-sokoke_widget_copy_clipboard (GtkWidget*   widget,
-                              const gchar* text)
+sokoke_widget_copy_clipboard (GtkWidget*          widget,
+                              const gchar*        text,
+                              GtkClipboardGetFunc get_cb,
+                              gpointer            owner)
 {
     GdkDisplay* display = gtk_widget_get_display (widget);
     GtkClipboard* clipboard;
 
-    clipboard = gtk_clipboard_get_for_display (display, GDK_SELECTION_CLIPBOARD);
-    gtk_clipboard_set_text (clipboard, text ? text : "", -1);
+    g_return_if_fail (text != NULL);
+
     clipboard = gtk_clipboard_get_for_display (display, GDK_SELECTION_PRIMARY);
-    gtk_clipboard_set_text (clipboard, text ? text : "", -1);
-}
+    gtk_clipboard_set_text (clipboard, text, -1);
 
-gchar*
-sokoke_build_thumbnail_path (const gchar* name)
-{
-    gchar* path = NULL;
-    if (name != NULL)
-    {
-        gchar* checksum = g_compute_checksum_for_string (G_CHECKSUM_MD5, name, -1);
-        gchar* filename = g_strdup_printf ("%s.png", checksum);
-
-        path = g_build_filename (g_get_user_cache_dir (), "midori", "thumbnails",
-                                 filename, NULL);
-
-        g_free (filename);
-        g_free (checksum);
-    }
-    return path;
-}
-
-gchar*
-midori_download_prepare_tooltip_text (WebKitDownload* download)
-{
-    gdouble* last_time;
-    guint64* last_size;
-    gint hour = 3600, min = 60;
-    gint hours_left, minutes_left, seconds_left;
-    guint64 total_size = webkit_download_get_total_size (download);
-    guint64 current_size  = webkit_download_get_current_size (download);
-    gdouble time_elapsed = webkit_download_get_elapsed_time (download);
-    gdouble time_estimated, time_diff;
-    gchar* current, *total, *download_speed;
-    gchar* hours_str, *minutes_str, *seconds_str;
-    GString* tooltip = g_string_new (NULL);
-
-    time_diff = time_elapsed / current_size;
-    time_estimated = (total_size - current_size) * time_diff;
-
-    hours_left = time_estimated / hour;
-    minutes_left = (time_estimated - (hours_left * hour)) / min;
-    seconds_left = (time_estimated - (hours_left * hour) - (minutes_left * min));
-
-    hours_str = g_strdup_printf (ngettext ("%d hour", "%d hours", hours_left), hours_left);
-    minutes_str = g_strdup_printf (ngettext ("%d minute", "%d minutes", minutes_left), minutes_left);
-    seconds_str = g_strdup_printf (ngettext ("%d second", "%d seconds", seconds_left), seconds_left);
-
-    current = g_format_size (current_size);
-    total = g_format_size (total_size);
-    last_time = g_object_get_data (G_OBJECT (download), "last-time");
-    last_size = g_object_get_data (G_OBJECT (download), "last-size");
-
-    /* i18n: Download tooltip (size): 4KB of 43MB */
-    g_string_append_printf (tooltip, _("%s of %s"), current, total);
-    g_free (current);
-    g_free (total);
-
-    if (time_elapsed != *last_time)
-        download_speed = g_format_size (
-                (current_size - *last_size) / (time_elapsed - *last_time));
+    clipboard = gtk_clipboard_get_for_display (display, GDK_SELECTION_CLIPBOARD);
+    if (get_cb == NULL)
+        gtk_clipboard_set_text (clipboard, text, -1);
     else
-        /* i18n: Unknown number of bytes, used for transfer rate like ?B/s */
-        download_speed = g_strdup (_("?B"));
-
-    /* i18n: Download tooltip (transfer rate): (130KB/s) */
-    g_string_append_printf (tooltip, _(" (%s/s)"), download_speed);
-    g_free (download_speed);
-
-    if (time_estimated > 0)
     {
-        gchar* eta = NULL;
-        if (hours_left > 0)
-            eta = g_strdup_printf ("%s, %s", hours_str, minutes_str);
-        else if (minutes_left >= 10)
-            eta = g_strdup_printf ("%s", minutes_str);
-        else if (minutes_left < 10 && minutes_left > 0)
-            eta = g_strdup_printf ("%s, %s", minutes_str, seconds_str);
-        else if (seconds_left > 0)
-            eta = g_strdup_printf ("%s", seconds_str);
-        if (eta != NULL)
-        {
-            /* i18n: Download tooltip (estimated time) : - 1 hour, 5 minutes remaning */
-            g_string_append_printf (tooltip, _(" - %s remaining"), eta);
-            g_free (eta);
-        }
+        GtkTargetList* target_list = gtk_target_list_new (NULL, 0);
+        GtkTargetEntry* targets;
+        gint n_targets;
+        gtk_target_list_add_text_targets (target_list, 0);
+        gtk_target_list_add_image_targets (target_list, 0, TRUE);
+        targets = gtk_target_table_new_from_list (target_list, &n_targets);
+        gtk_clipboard_set_with_owner (clipboard, targets, n_targets, get_cb,
+            sokoke_widget_clipboard_owner_clear_func, owner);
+        gtk_target_table_free (targets, n_targets);
+        gtk_target_list_unref (target_list);
     }
+}
 
-    g_free (hours_str);
-    g_free (seconds_str);
-    g_free (minutes_str);
+static gboolean
+sokoke_entry_has_placeholder_text (GtkEntry* entry)
+{
+    const gchar* text = gtk_entry_get_text (entry);
+    const gchar* hint = gtk_entry_get_placeholder_text (entry);
+    if (!gtk_widget_has_focus (GTK_WIDGET (entry))
+     && hint != NULL
+     && (text == NULL || !strcmp (text, hint)))
+        return TRUE;
+    return FALSE;
+}
 
-    if (time_elapsed - *last_time > 5.0)
+static void
+sokoke_entry_changed_cb (GtkEditable* editable,
+                         GtkEntry*    entry)
+{
+    const gchar* text = gtk_entry_get_text (entry);
+    gboolean visible = text && *text
+      && ! sokoke_entry_has_placeholder_text (entry);
+    gtk_icon_entry_set_icon_from_stock (
+        GTK_ICON_ENTRY (entry),
+        GTK_ICON_ENTRY_SECONDARY,
+        visible ? GTK_STOCK_CLEAR : NULL);
+}
+
+static gboolean
+sokoke_entry_focus_out_event_cb (GtkEditable*   editable,
+                                 GdkEventFocus* event,
+                                 GtkEntry*      entry)
+{
+    sokoke_entry_changed_cb (editable, entry);
+    return FALSE;
+}
+
+static void
+sokoke_entry_icon_released_cb (GtkEntry*            entry,
+                               GtkIconEntryPosition icon_pos,
+                               GdkEvent*            event,
+                               gpointer             user_data)
+{
+    if (icon_pos != GTK_ICON_ENTRY_SECONDARY)
+        return;
+
+    gtk_entry_set_text (entry, "");
+    gtk_widget_grab_focus (GTK_WIDGET (entry));
+}
+
+GtkWidget*
+sokoke_search_entry_new (const gchar* placeholder_text)
+{
+    GtkWidget* entry = gtk_entry_new ();
+    gtk_entry_set_placeholder_text (GTK_ENTRY (entry), placeholder_text);
+    gtk_entry_set_icon_from_stock (GTK_ENTRY (entry),
+                                   GTK_ENTRY_ICON_PRIMARY, GTK_STOCK_FIND);
+    gtk_icon_entry_set_icon_highlight (GTK_ENTRY (entry),
+        GTK_ENTRY_ICON_SECONDARY, TRUE);
     {
-        *last_time = time_elapsed;
-        *last_size = current_size;
+        g_object_connect (entry,
+            "signal::icon-release",
+            G_CALLBACK (sokoke_entry_icon_released_cb), NULL,
+            "signal::focus-in-event",
+            G_CALLBACK (sokoke_entry_focus_out_event_cb), entry,
+            "signal::focus-out-event",
+            G_CALLBACK (sokoke_entry_focus_out_event_cb), entry,
+            "signal::changed",
+            G_CALLBACK (sokoke_entry_changed_cb), entry, NULL);
+        sokoke_entry_changed_cb ((GtkEditable*)entry, GTK_ENTRY (entry));
     }
-
-    return g_string_free (tooltip, FALSE);
+    return entry;
 }
 

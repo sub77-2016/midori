@@ -18,6 +18,8 @@ namespace HistoryList {
     enum TabTreeCells {
         TREE_CELL_PIXBUF,
         TREE_CELL_STRING,
+        TREE_CELL_FG,
+        TREE_CELL_BG,
         TREE_CELL_POINTER,
         TREE_CELL_COUNT
     }
@@ -83,6 +85,8 @@ namespace HistoryList {
                 store.append (out iter);
                 store.set (iter, TabTreeCells.TREE_CELL_PIXBUF, icon,
                                  TabTreeCells.TREE_CELL_STRING, title,
+                                 TabTreeCells.TREE_CELL_FG, view.fg_color,
+                                 TabTreeCells.TREE_CELL_BG, view.bg_color,
                                  TabTreeCells.TREE_CELL_POINTER, view);
             }
         }
@@ -109,7 +113,8 @@ namespace HistoryList {
             this.hbox.pack_start (sw, true, true, 0);
 
             var store = new Gtk.ListStore (TabTreeCells.TREE_CELL_COUNT,
-                typeof (Gdk.Pixbuf), typeof (string), typeof (void*));
+                typeof (Gdk.Pixbuf), typeof (string),
+                typeof (Gdk.Color), typeof (Gdk.Color), typeof (void*));
 
             this.insert_rows (store);
 
@@ -123,18 +128,22 @@ namespace HistoryList {
 
             this.treeview.insert_column_with_attributes (
                 -1, "Icon",
-                new CellRendererPixbuf (), "pixbuf", TabTreeCells.TREE_CELL_PIXBUF);
+                new CellRendererPixbuf (), "pixbuf", TabTreeCells.TREE_CELL_PIXBUF,
+                "cell-background-gdk", TabTreeCells.TREE_CELL_BG);
             this.treeview.insert_column_with_attributes (
                 -1, "Title",
-                new CellRendererText (), "text", TabTreeCells.TREE_CELL_STRING);
+                new CellRendererText (), "text", TabTreeCells.TREE_CELL_STRING,
+                "foreground-gdk", TabTreeCells.TREE_CELL_FG,
+                "cell-background-gdk", TabTreeCells.TREE_CELL_BG);
+
+            this.show_all ();
 
             Requisition requisition;
             int height;
             int max_lines = 10;
 #if HAVE_GTK3
             requisition = Requisition();
-            this.treeview.get_preferred_width(out requisition.width, null);
-            this.treeview.get_preferred_height(out requisition.height, null);
+            this.treeview.get_preferred_size(out requisition, null);
 #else
             this.treeview.size_request (out requisition);
 #endif
@@ -145,8 +154,6 @@ namespace HistoryList {
                 height = requisition.height + 2;
             }
             sw.set_size_request (320, height);
-
-            this.show_all ();
         }
 
         public override void make_update () {
@@ -225,7 +232,7 @@ namespace HistoryList {
         }
     }
 
-    private class PreferencesDialog : Dialog {
+    private class PreferencesDialog : Gtk.Dialog {
         protected Manager hl_manager;
         protected ComboBox closing_behavior;
 
@@ -243,7 +250,7 @@ namespace HistoryList {
             this.response.connect (response_cb);
         }
 
-        private void response_cb (Dialog source, int response_id) {
+        private void response_cb (Gtk.Dialog source, int response_id) {
             switch (response_id) {
                 case ResponseType.APPLY:
                     int value;
@@ -304,6 +311,12 @@ namespace HistoryList {
 
             table.attach_defaults (this.closing_behavior, 1, 2, 0, 1);
 
+#if !HAVE_WIN32
+            var proxy = Katze.property_proxy (this.hl_manager.get_app ().settings, "flash-window-on-new-bg-tabs", null);
+            (proxy as Gtk.Button).label = _("Flash window on background tabs");
+            table.attach_defaults (proxy, 0, 2, 1, 2);
+#endif
+
 #if HAVE_GTK3
             (get_content_area() as Gtk.Box).pack_start (table, false, true, 0);
 #else
@@ -331,15 +344,27 @@ namespace HistoryList {
             this.closing_behavior = this.get_integer ("TabClosingBehavior");
         }
 
+        public bool is_key_a_modifier (Gdk.EventKey event_key) {
+#if HAVE_WIN32
+            /* On win is_modifier check does not seem to work */
+            if (event_key.keyval == Gdk.keyval_from_name("Control_L"))
+                return true;
+#else
+            if (event_key.is_modifier > 0)
+                return true;
+#endif
+            return false;
+        }
+
         public bool key_press (Gdk.EventKey event_key) {
-            if (event_key.is_modifier > 0) {
+            if (is_key_a_modifier (event_key)) {
                 this.modifier_count++;
             }
             return false;
         }
 
         public bool key_release (Gdk.EventKey event_key, Browser browser) {
-            if (event_key.is_modifier > 0) {
+            if (is_key_a_modifier (event_key)) {
                 this.modifier_count--;
             }
             if (this.modifier_count == 0 || event_key.keyval == this.escKeyval) {
@@ -462,7 +487,7 @@ namespace HistoryList {
                 tab_added (browser, tab);
             browser.add_tab.connect (tab_added);
             browser.remove_tab.connect (tab_removed);
-            browser.notify["tab"].connect (this.tab_changed);
+            browser.switch_tab.connect (this.tab_changed);
         }
 
         void browser_removed (Midori.Browser browser) {
@@ -491,7 +516,7 @@ namespace HistoryList {
 
             browser.add_tab.disconnect (tab_added);
             browser.remove_tab.disconnect (tab_removed);
-            browser.notify["tab"].disconnect (this.tab_changed);
+            browser.switch_tab.disconnect (this.tab_changed);
         }
 
         void tab_added (Midori.Browser browser, Midori.View view) {
@@ -504,6 +529,11 @@ namespace HistoryList {
             unowned GLib.PtrArray list_new = browser.get_data<GLib.PtrArray> ("history-list-tab-history-new");
             list.remove (view);
             list_new.remove (view);
+
+            Midori.View? current_view = browser.tab as Midori.View;
+
+            if (current_view != view)
+                return;
 
             if (this.closing_behavior == TabClosingBehavior.LAST || this.closing_behavior == TabClosingBehavior.NEW) {
                 browser.set_data<Midori.View?> ("history-list-last-change", null);
@@ -520,21 +550,18 @@ namespace HistoryList {
             }
         }
 
-        void tab_changed (GLib.Object window, GLib.ParamSpec pspec) {
+        void tab_changed (Midori.View? old_view, Midori.View? new_view) {
             if(this.ignoreNextChange) {
                 this.ignoreNextChange = false;
             } else {
-                Midori.Browser browser = window as Midori.Browser;
-                Midori.View view = null;
-                Midori.View last_view = null;
-                browser.get ("tab", ref view);
-
-                last_view = browser.get_data<Midori.View?> ("history-list-last-change");
+                Midori.Browser? browser = Midori.Browser.get_for_widget (new_view);
+                Midori.View? last_view
+                    = browser.get_data<Midori.View?> ("history-list-last-change");
 
                 if (last_view != null) {
                     this.tab_list_resort (browser, last_view);
                 }
-                browser.set_data<Midori.View?> ("history-list-last-change", view);
+                browser.set_data<Midori.View?> ("history-list-last-change", new_view);
             }
         }
 

@@ -28,8 +28,7 @@ web_cache_get_cache_dir (void)
 {
     static gchar* cache_dir = NULL;
     if (!cache_dir)
-        cache_dir = g_build_filename (g_get_user_cache_dir (),
-                                      PACKAGE_NAME, "web", NULL);
+        cache_dir = g_build_filename (midori_paths_get_cache_dir (), "web", NULL);
     return cache_dir;
 }
 
@@ -448,7 +447,7 @@ web_cache_activate_cb (MidoriExtension* extension,
 static void
 web_cache_clear_cache_cb (void)
 {
-    sokoke_remove_path (web_cache_get_cache_dir (), TRUE);
+    midori_paths_remove_path (web_cache_get_cache_dir ());
 }
 #endif
 
@@ -468,7 +467,7 @@ extension_init (void)
     g_signal_connect (extension, "activate",
         G_CALLBACK (web_cache_activate_cb), NULL);
 
-    sokoke_register_privacy_item ("web-cache", _("Web Cache"),
+    midori_private_data_register_item ("web-cache", _("Web Cache"),
         G_CALLBACK (web_cache_clear_cache_cb));
 
     return extension;

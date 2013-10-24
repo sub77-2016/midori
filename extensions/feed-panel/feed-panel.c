@@ -24,7 +24,6 @@ struct _FeedPanel
     GtkWidget* treeview;
     GtkWidget* webview;
     GtkWidget* delete;
-    GdkPixbuf* pixbuf;
 };
 
 struct _FeedPanelClass
@@ -82,22 +81,17 @@ feed_panel_treeview_render_icon_cb (GtkTreeViewColumn* column,
     else
         pitem = item;
 
-    uri = katze_item_get_uri (pitem);
-    if (uri)
+    if ((uri = katze_item_get_uri (pitem)))
     {
-        pixbuf = katze_load_cached_icon (uri, NULL);
-        if (!pixbuf)
-            pixbuf = panel->pixbuf;
+        if (!(pixbuf = midori_paths_get_icon (uri, NULL)))
+            pixbuf = gtk_widget_render_icon (panel->treeview, STOCK_NEWS_FEED, GTK_ICON_SIZE_MENU, NULL);
     }
     else
-    {
-        pixbuf = gtk_widget_render_icon (panel->treeview,
-                     GTK_STOCK_DIALOG_ERROR, GTK_ICON_SIZE_MENU, NULL);
-    }
+        pixbuf = gtk_widget_render_icon (panel->treeview, GTK_STOCK_DIALOG_ERROR, GTK_ICON_SIZE_MENU, NULL);
 
     g_object_set (renderer, "pixbuf", pixbuf, NULL);
 
-    if (pixbuf != panel->pixbuf)
+    if (pixbuf)
         g_object_unref (pixbuf);
 }
 
@@ -326,14 +320,11 @@ feed_panel_row_activated_cb (GtkTreeView*       treeview,
         uri = katze_item_get_uri (item);
         if (uri && *uri)
         {
-            MidoriWebSettings* settings;
-            MidoriBrowser* browser;
-            gint n;
-            browser = midori_browser_get_for_widget (GTK_WIDGET (panel));
-            n = midori_browser_add_item (browser, item);
-            settings = midori_browser_get_settings (browser);
+            MidoriBrowser* browser = midori_browser_get_for_widget (GTK_WIDGET (panel));
+            GtkWidget* view = midori_browser_add_item (browser, item);
+            MidoriWebSettings* settings = midori_browser_get_settings (browser);
             if (!katze_object_get_boolean (settings, "open-tabs-in-the-background"))
-                midori_browser_set_current_page (browser, n);
+                midori_browser_set_current_tab (browser, view);
         }
         g_object_unref (item);
     }
@@ -358,49 +349,45 @@ feed_panel_cursor_or_row_changed_cb (GtkTreeView* treeview,
 
         if (KATZE_IS_ARRAY (item))
         {
-            gint64 date;
-
             text = NULL;
             if (!uri)
                 text = g_strdup (katze_item_get_text (KATZE_ITEM (item)));
             else
             {
-                KatzeItem* parent;
-                const gchar* puri;
-
-                parent = katze_item_get_parent (item);
+                KatzeItem* parent = katze_item_get_parent (item);
+                gint64 added = katze_item_get_added (item);
                 g_assert (KATZE_IS_ARRAY (parent));
-                date = katze_item_get_added (item);
-                puri = katze_item_get_uri (parent);
-                if (date)
+                if (added)
                 {
-                    time_t date_t;
-                    const struct tm* tm;
-                    static gchar date_format[512];
-                    gchar* last_updated;
+                    #if GLIB_CHECK_VERSION (2, 26, 0)
+                    GDateTime* date = g_date_time_new_from_unix_local (added);
+                    gchar* pretty = g_date_time_format (date, "%c");
+                    g_date_time_unref (date);
+                    #else
+                    static gchar date_fmt[512];
+                    const struct tm *tm = localtime (&added);
+                    /* Some GCC versions falsely complain about "%c" */
+                    strftime (date_fmt, sizeof (date_fmt), "%c", tm);
+                    gchar* pretty = g_strdup (date_fmt);
+                    #endif
 
-                    date_t = (time_t)date;
-                    tm = localtime (&date_t);
-                    /* Some gcc versions complain about "%c" for no reason */
-                    strftime (date_format, sizeof (date_format), "%c", tm);
     /* i18n: The local date a feed was last updated */
-                    last_updated = g_strdup_printf (C_("Feed", "Last updated: %s."),
-                                                    date_format);
+                    gchar* last_updated = g_strdup_printf (C_("Feed", "Last updated: %s."), pretty);
                     text = g_strdup_printf (
                             "<html><head><title>feed</title></head>"
                             "<body><h3>%s</h3><p />%s</body></html>",
-                            puri, last_updated);
+                            katze_item_get_uri (KATZE_ITEM (parent)), last_updated);
+                    g_free (pretty);
                     g_free (last_updated);
                 }
                 else
                 {
                     text = g_strdup_printf (
-                            "<html><head><title>feed</title></head>"
-                            "<body><h3>%s</h3></body></html>", puri);
+                        "<html><head><title>feed</title></head>"
+                        "<body><h3>%s</h3></body></html>", katze_item_get_uri (KATZE_ITEM (parent)));
                 }
             }
-            webkit_web_view_load_html_string (
-                WEBKIT_WEB_VIEW (panel->webview), text ? text : "", uri);
+            midori_view_set_html (MIDORI_VIEW (panel->webview), text ? text : "", uri, NULL);
             g_free ((gchar*) text);
 
             sensitive = TRUE;
@@ -408,8 +395,7 @@ feed_panel_cursor_or_row_changed_cb (GtkTreeView* treeview,
         else
         {
             text = katze_item_get_text (item);
-            webkit_web_view_load_html_string (
-                WEBKIT_WEB_VIEW (panel->webview), text ? text : "", uri);
+            midori_view_set_html (MIDORI_VIEW (panel->webview), text ? text : "", uri, NULL);
         }
         g_object_unref (item);
     }
@@ -468,14 +454,11 @@ feed_panel_open_in_tab_activate_cb (GtkWidget* menuitem,
 
     if ((uri = katze_item_get_uri (item)) && *uri)
     {
-        MidoriWebSettings* settings;
-        MidoriBrowser* browser;
-
-        browser = midori_browser_get_for_widget (GTK_WIDGET (panel));
-        n = midori_browser_add_item (browser, item);
-        settings = midori_browser_get_settings (browser);
+        MidoriBrowser* browser = midori_browser_get_for_widget (GTK_WIDGET (panel));
+        GtkWidget* view = midori_browser_add_item (browser, item);
+        MidoriWebSettings* settings = midori_browser_get_settings (browser);
         if (!katze_object_get_boolean (settings, "open-tabs-in-the-background"))
-            midori_browser_set_current_page (browser, n);
+            midori_browser_set_current_tab (browser, view);
     }
 }
 
@@ -563,16 +546,11 @@ feed_panel_button_release_event_cb (GtkWidget*      widget,
 
             if (uri && *uri)
             {
-                MidoriWebSettings* settings;
-                MidoriBrowser* browser;
-                gint n;
-
-                browser = midori_browser_get_for_widget (GTK_WIDGET (panel));
-                n = midori_browser_add_item (browser, item);
-
-                settings = midori_browser_get_settings (browser);
+                MidoriBrowser* browser = midori_browser_get_for_widget (GTK_WIDGET (panel));
+                GtkWidget* view = midori_browser_add_item (browser, item);
+                MidoriWebSettings* settings = midori_browser_get_settings (browser);
                 if (!katze_object_get_boolean (settings, "open-tabs-in-the-background"))
-                    midori_browser_set_current_page (browser, n);
+                    midori_browser_set_current_tab (browser, view);
             }
         }
         else
@@ -620,6 +598,7 @@ webview_button_press_event_cb (GtkWidget*      widget,
     return MIDORI_EVENT_CONTEXT_MENU (event);
 }
 
+#ifndef HAVE_WEBKIT2
 static gboolean
 webview_navigation_request_cb (WebKitWebView*             web_view,
                                WebKitWebFrame*            frame,
@@ -631,14 +610,10 @@ webview_navigation_request_cb (WebKitWebView*             web_view,
     if (webkit_web_navigation_action_get_reason (navigation_action) ==
         WEBKIT_WEB_NAVIGATION_REASON_LINK_CLICKED)
     {
-        MidoriBrowser* browser;
-        const gchar* uri;
-        gint n;
-
-        browser = midori_browser_get_for_widget (GTK_WIDGET (panel));
-        uri = webkit_network_request_get_uri (request);
-        n = midori_browser_add_uri (browser, uri);
-        midori_browser_set_current_page (browser, n);
+        MidoriBrowser* browser = midori_browser_get_for_widget (GTK_WIDGET (panel));
+        const gchar* uri = webkit_network_request_get_uri (request);
+        GtkWidget* view = midori_browser_add_uri (browser, uri);
+        midori_browser_set_current_tab (browser, view);
         webkit_web_policy_decision_ignore (policy_decision);
 
         return TRUE;
@@ -646,6 +621,7 @@ webview_navigation_request_cb (WebKitWebView*             web_view,
 
     return FALSE;
 }
+#endif
 
 static const gchar*
 feed_panel_get_label (MidoriViewable* viewable)
@@ -729,9 +705,6 @@ feed_panel_get_toolbar (MidoriViewable* viewable)
 static void
 feed_panel_finalize (GObject* object)
 {
-    FeedPanel* panel = FEED_PANEL (object);
-
-    g_object_unref (panel->pixbuf);
 }
 
 static void
@@ -786,7 +759,7 @@ feed_panel_init (FeedPanel* panel)
     GtkIconFactory *factory;
     GtkIconSource *icon_source;
     GtkIconSet *icon_set;
-    WebKitWebSettings* settings;
+    MidoriWebSettings* settings;
     PangoFontDescription* font_desc;
     const gchar* family;
     gint size;
@@ -838,22 +811,24 @@ feed_panel_init (FeedPanel* panel)
                       NULL);
     gtk_widget_show (treeview);
 
-    webview = webkit_web_view_new ();
 #if GTK_CHECK_VERSION(3,0,0)
-    font_desc = gtk_style_context_get_font(gtk_widget_get_style_context(treeview), GTK_STATE_FLAG_NORMAL);
+    font_desc = (PangoFontDescription*)gtk_style_context_get_font (
+        gtk_widget_get_style_context (treeview), GTK_STATE_FLAG_NORMAL);
 #else
     font_desc = treeview->style->font_desc;
 #endif
     family = pango_font_description_get_family (font_desc);
     size = pango_font_description_get_size (font_desc) / PANGO_SCALE;
-    settings = webkit_web_settings_new ();
+    settings = midori_web_settings_new ();
     g_object_set (settings, "default-font-family", family,
                             "default-font-size", size, NULL);
-    g_object_set (webview, "settings", settings, NULL);
+    webview = midori_view_new_with_item (NULL, settings);
     gtk_widget_set_size_request (webview, -1, 50);
-    g_object_connect (webview,
+    g_object_connect (midori_tab_get_web_view (MIDORI_TAB (webview)),
+                      #ifndef HAVE_WEBKIT2
                       "signal::navigation-policy-decision-requested",
                       webview_navigation_request_cb, panel,
+                      #endif
                       "signal::button-press-event",
                       webview_button_press_event_cb, NULL,
                       "signal::button-release-event",
@@ -871,13 +846,10 @@ feed_panel_init (FeedPanel* panel)
 
     paned = gtk_vpaned_new ();
     gtk_paned_pack1 (GTK_PANED (paned), treewin, TRUE, FALSE);
-    gtk_paned_pack2 (GTK_PANED (paned), webview, TRUE, FALSE);
+    gtk_paned_pack2 (GTK_PANED (paned), webview, TRUE, TRUE);
     gtk_box_pack_start (GTK_BOX (panel), paned, TRUE, TRUE, 0);
     gtk_widget_show (webview);
     gtk_widget_show (paned);
-
-    panel->pixbuf = gtk_widget_render_icon (treeview,
-                     STOCK_NEWS_FEED, GTK_ICON_SIZE_MENU, NULL);
 }
 
 GtkWidget*

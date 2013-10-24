@@ -1,5 +1,260 @@
 This file is licensed under the terms of the expat license, see the file EXPAT.
 
+v0.5.2:
+ Re-release with a proper version number and changelog
+
+v0.5.1:
+ Fix mouse gesture regression breaking context menu
+ Fix --run command line switch by midori_paths_init
+ Fix bug in size calculation for the history list popup
+ Handle diagnostic dialog argument in running instance
+ Fix feed panel default value crash
+ Ensure existence of the applications directory
+ Fix download tooltip crash and extend test case
+ Integrate user interaction exploit demo in about:
+ Don't convey loading or progress on special pages
+ Address missing NULL checks and dead code found by clang
+ No security window for blank pages, but a search icon
+ Introduce UI for created apps/ launchers: Web App Manager
+ Add custom-title setting to override browser title
+ Add a Gtk.Entry to --plain mode for entering URLs
+ Deprecate middle_click_opens_selection in favour of gtk-enable-primary-paste
+
+ Webkit2:
+ Require 1.11.91 aka 2.0.0 for WebKit2
+ Delayed load, clear favicons, clear HTTP cache, tab favicons
+ Navigation policy, mouse buttons, security details
+ basic cookies, download dialog, res://, stock://, print
+ Zoom, default-charset, view-source, spell-check, prefetch
+ Back/ forward, enable-java, plugin listing, web inspector
+v0.5.0:
+ Store --execute arguments in string array
+ Prevent overlay frame from being caught by show_all
+ Unconditionally show Toolbar Style preference
+ Duplicate current URI when reloading Midori.View
+ Update tabs being closable on setting change in Granite
+ Check default_search before setting SearchAction default
+ Populate application chooser button in idle
+ Bail out of completion resizing if cell height is 0
+ Pass proxy to bookmark dialog when editing via menu
+ Tweak bookmark dialog, button to buttons, toggles side by side
+ Move 'Flash windows' option into History List
+ Use light window for Clear Private Data with Granite
+ Use GtkFontButton with filter func with GTK+ 3.2
+ Implement 'Run in debugger' button in diagnostic dialog
+ Add Win32 work-around to History List for modifiers
+ Make toolbar drag/ drop work in GTK+3
+ Check if active form element is input before getting search text
+ Implement direction-based mouse gesture configuration
+ Implement mouse movement, load-failed, crashed, search in WebKit2
+ Add 'Show last crash log' button to diagnostic dialog
+ Make invalid actions fail; exit on error in new process only
+ Accept setting=value and extension=true/ false in --execute
+ Merged cookie permissions as of 2013-03-08
+ Gray out webGL preference if context is unavailable
+ Use browser API to Close Other in view menu item
+ Fix periods to ellipsis in Custom/ Customize Shortcuts
+ Support Colorful Tabs in History List
+ Add Midori.Tab.fg/ bg_color and Midori.View.set_colors
+ Fix word-wrap, #decription and #message in about.css
+ Set view scroll policy to Never to avoid flickering
+ Use XDG_RUNTIME_DIR for temporary files
+ Build Vala and C parts of core separately
+ Don't provide default value for enable-scripts
+ Respect Open new pages: window for Web Search and Open Image
+ enable-javascript in WebKit1/ 2, macro for (Web)Settings
+ Fix MIDORI_*_VERSION to be integers
+ Fix .desktop file validation unit test and fix errors
+ 'New tab behavior' preference: about:dial/ new/ search/ home alias URLs
+ Use stripped down XBEL variant for session and trash
+ Allow any proxies supported by libproxy; list supported types in preferences
+
+v0.4.9:
+ Let non-Granite security window behave like a window
+ Disable Contractor support in Granite for now
+ Use cache_dir_for_reading in about:paths
+ Strip LRE to prevent it from begin saved to disk
+ Enable stripping 'referer' by default
+ Fix crash on closing Adlock preferences dialog
+ Bail on unset title in completion, fixing strchr urlbar crash
+ Manage cookies accept policy per domain - not installed by default
+ Don't store/ load stock:// icons for special pages
+ Drop KatzeScrolled in favour of GTK+ 3.4 touchscreen support
+ Write XBEL safely to prevent loss on eg. full disk
+ Omit nspluginwrapper Netscape plugins from extensions
+ Add --debug/ -g switch to run Midori in gdb
+ List versions from about:version in --version
+ Work in progress --enable-webkit2 option enabling WebKit2/ GTK+3
+ Rename menu _Window to _Tabs
+ Update Easylist subscription URL for Adblock
+ Stop redundant tab numbering when adding
+ Allow feed panel webview widget to shrink.
+ Don't search for place holder text on cookie list rebuild
+ Add 'Google Translate (gt)' as a search engine
+ Default external Download Manager to "fetch" on FreeBSD
+ Drop GCC-version specific -Wno-unused-but-set-variable
+ Change X-Ayatana-Desktop-Shortcuts to Actions
+
+v0.4.8:
+ Fix un-delaying of tabs
+ Support downloads with FlashGet on Win32
+ Fix compilation with GLib 2.30
+ Fix error handling in extensions
+ Retain selection in urlbar when switching tabs
+ Fix missing right-click menu on NextForward button
+ Hide error page button if buttons have no images
+ Rework URL completion: suggest open tabs
+ Always highlight matches in inline search
+ Pantheon: Only show private launcher in search
+ Granite: Fix notebook, require 0.2, drop _about_dialog_new
+ Don't include http(s), file or www. in page title
+ Autodetect Twitter RSS feeds
+ Adblock: Improve date parsing
+ Unit test rework: backtraces, regardless of debugging, wine
+ More accurate version numbers in about:version
+ Drop obsolete --log-file command line switch
+ Emit inspector attach-window with correct signature
+ Fix Netscape plugins opening download dialogs
+ Rework path handling and setup in different modes (fix segfaults)
+ Manage Netscape plugins are individual extensions
+ Address gtk_icon_set_render_icon_pixbuf assertions
+ Fix renaming in speed dial with spaces in title
+ Render completion title/ URL side by side with Granite
+ Transparently use Favicon-/ IconDatabase/ file store per WebKit
+ Add TabMoveFirst/ Last hotkeys (without defaults)
+ Drop Hildon support
+ Show URI in 'not responding' dialog
+ Query search engine icons when loading, rather than stupid guesses
+
+v0.4.7:
+ Unify download behavior: link fingerprints, space check, clearing, tooltips
+ GIO-based check for enough space and permissions, GIO-based themed icons
+ Show opener/ tab domain in download dialog:
+  http://lcamtuf.coredump.cx/fldl/ http://lcamtuf.coredump.cx/switch/
+ Extension to download with a specific command line
+ Size in download dialog and fallback filename heuristic
+
+ Windows: GTK+3, Faenza icons, gdb helper, Netscape plugins,
+  ship CA bundle, fix View source, --portable/ -P on Windows
+ Granite (Beta): about dialog, static notebook, no "New Tab" in toolbar, Print → Share
+ Support building with Wayland-enabled GTK+3
+ Theming: content view, secondary toolbar class, drop old icon names, bigger error icon
+ Introduce --plain mode equivalent to GtkLauncher, lazy URLs for --snapshot/ -s
+ Log bookmarks, history and downloads to zeitgeist
+
+ Show security details and export certificates with GCR, error out instead of colored urlbar
+ Only allow data: URLs in urlbar for images
+ Recognize and cache HSTS, system-wide /etc/xdg/midori/hsts
+ Strip HTTP Host to outsmart some filter proxies
+
+ Completion: Fix PageUp/Down, Shift+Tab and wrap: This is consistent with GTK+ (excluding Tab) and Firefox
+ Change Focus Current Tab to Ctrl+Alt+Home
+ Fix Shift+Space for scrolling upwards
+ Control+Alt+R: Readable mode
+ Handle access key in link hints
+ Drop speed dial keyboard access in favour of "." link hints
+
+ No Open, Bookmark bar, Customize toolbar, Inspect page in app menu; split panel menu
+ Use ellipsises instead of period thresomes
+ Hinted text in bookmarks, history and cookie manager
+ Ellipsize panels (except for Transfers)
+ Add icon to bookmark dialog and remove labels
+ Validate proxy server IP and render invalid URLs in GTK+3
+ Rename "Toplevel" folder to "Bookmarks"
+
+ Chrome identification option; "Automatic" user agent is Chrome-based
+ Search: Create engines from search forms, remove "icon" field
+ Copy Image s/Address// always copy both URL and data
+ Rework debugging by introducing MIDORI_DEBUG; about:paths
+ Adblock: Refresh filters based on file time and meta data, abp: links
+ Optionally save website including resources
+ Merged NextForward akin to StopReload
+ PanedAction, Viewable, SpeedDial, (most of) Settings, Paths in Vala
+ Improved database: requires sqlite 3.6.19 and 0.2.6 in import dialog
+
+ Confirm Caret Browsing before enabling it
+ Support for custom items in Statusbar Features (see FAQ)
+ Draggable favicon as URL or text, URL icon for URL entries
+ Remember if inspector was attached
+ Open tabs in the background by default
+ RTL support in special/ error pages
+ Fix progressbar text with GTK+3
+ Build fix: More robust GTK+2 version check
+ Ensure progress in urlbar and tab match
+ Zoom text and images by default
+ Don't mixup tokens starting with the same letters
+ Seemless running out of build folder
+ No speed dial in --app/ --private, fix layout with many tiles
+ Add X-GNOME-Fullname to .desktop and translate desktop shortcuts
+ Delayed Load extension
+
+v0.4.6:
+ + Fix crasher in geolocation infobar
+ + Fix crasher in about:version on some systems
+ + Fix crasher opening bookmarks from Unity global menu
+ + Use WebKitFaviconDatabase as of WebKit 1.8.0
+ + Use midori-prefixed temp folder in midori_view_save_source
+ + Fix cancelling downloads with SteadyFlow or Aria2
+ + Fix crash dialog instead of opening tab in a running window
+ + Fix page icons in multi-frame sites (gmail, tumbler)
+ + Distinguish Simplified and Traditional Chinese
+ + Support go-jump-symbolic
+ + Handle empty tabs due to download links with a target
+ + Handle frame load interrupted in the unholy trinity
+ + Fix libsoup version check and wrong SSL status in location
+
+v0.4.5:
+ + Work around black border around widgets on Win32
+ + Whitelist direct/ re-directed navigation requests in adblock
+ + Require Vala 0.14
+ + Provide geolocation diagnostics in about:geolocation
+ + List available about: URLs and app instance name in about:version
+ + Replace illegal characters in download filenames
+ + Tweak app options on Win32 and use ShellExecuteEx in sokoke_show_uri
+ + Use sokoke_show_uri in midori_browser_download_status_cb
+ + External Download manager Steadyflow and Aria2 (with cookies)
+ + Ensure adblock config folder when blocking images
+ + Use sqlite WAL mode for history if available
+ + Allow relative -c/ --config path
+ + Context menus on Back and Forward toolbar items
+ + Always show the tabbar by default
+ + Use ubuntu-bug if it exists
+ + Show inline find while typing and statusbar text in overlay with GTK+ 3.2
+ + Esc/ closing "downloads still active" should cancel, not continue
+ + Optional Granite support for notebook and bookmark dialog as pop-over
+ + Ctrl+j to toggle statusbar aka downloads
+ + Show at most 3 search engines in completion
+ + Don't replace existing onclick/ blur with autosuggest
+ + Implement low_memory_profile for FreeBSD and Win32
+ + Use var in internal javascript, to fix Google apps
+ + Handle download requests in frames
+
+v0.4.4:
+ + Disable page cache with < 352 MB RAM
+ + Display filename in download dialog
+ + Fix box packing in GTK+3 (in most cases)
+ + Enable experimental HTML5 fullscreen API
+ + Harden IPv6 address recognition in location
+ + Experimental site data policy support (see FAQ)
+ + Close tabs by middle clicking close button
+ + Merge cookies and other data in Clear Private Data
+ + Improve KatzeArrayAction for Unity menuproxy compatibility
+ + Use GDateTime for history to avoid broken C runtimes
+ + Add Midori tag to DuckDuckGo default URI
+ + Rewrite completion popup resizing
+ + Streamline page icon loading stages and fallbacks
+ + Disable clipboard work-around for WebKit >= 1.4.3
+ + Re-word .desktop entry as an action
+ + Display informative text in private browsing
+ + Consistent clear icons in entries
+ + Revised download filename generation
+ + Add 'Open in Image Viewer' menu item
+ + Formhistory 2.0 with GDOM support
+ + Handle javascript: and mailto: links better
+ + Handle = key in Ukrainian layout better
+ + Fix bookmark export and deletion of bookmark folders
+ + Speed dial shortcut re-reordering by DND
+
 v0.4.3:
  + Implement about:widgets to test rendering
  + Fix resizing of inspector by applying a minimum size

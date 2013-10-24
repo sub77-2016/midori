@@ -12,11 +12,6 @@
 #ifndef __MIDORI_BROWSER_H__
 #define __MIDORI_BROWSER_H__
 
-#include <webkit/webkit.h>
-#if defined(HAVE_HILDON) && HAVE_HILDON
-    #include <hildon/hildon.h>
-#endif
-
 #include <katze/katze.h>
 #include "midori-view.h"
 
@@ -40,16 +35,16 @@ typedef struct _MidoriBrowserClass           MidoriBrowserClass;
 
 struct _MidoriBrowserClass
 {
-    #if defined(HAVE_HILDON) && HAVE_HILDON
-    HildonWindowClass parent_class;
-    #else
     GtkWindowClass parent_class;
-    #endif
 
     /* Signals */
     void
     (*window_object_cleared)   (MidoriBrowser*       browser,
+#ifndef HAVE_WEBKIT2
                                 WebKitWebFrame*      web_frame,
+#else
+                                void*                web_frame,
+#endif
                                 JSContextRef*        context,
                                 JSObjectRef*         window_object);
     void
@@ -81,29 +76,28 @@ midori_browser_get_type               (void) G_GNUC_CONST;
 MidoriBrowser*
 midori_browser_new                    (void);
 
-gint
+void
 midori_browser_add_tab                (MidoriBrowser*     browser,
                                        GtkWidget*         widget);
 
 void
-midori_browser_remove_tab             (MidoriBrowser*     browser,
+midori_browser_close_tab              (MidoriBrowser*     browser,
                                        GtkWidget*         widget);
 
-void
-midori_browser_foreach                (MidoriBrowser*     browser,
-                                       GtkCallback        callback,
-                                       gpointer           callback_data);
-
-gint
+GtkWidget*
 midori_browser_add_item               (MidoriBrowser*     browser,
                                        KatzeItem*         item);
 
-gint
+GtkWidget*
 midori_browser_add_uri                (MidoriBrowser*     browser,
                                        const gchar*       uri);
 
 void
 midori_browser_activate_action        (MidoriBrowser*     browser,
+                                       const gchar*       name);
+
+void
+midori_browser_assert_action          (MidoriBrowser*     browser,
                                        const gchar*       name);
 
 void
@@ -132,12 +126,21 @@ midori_browser_get_current_uri        (MidoriBrowser*     browser);
 void
 midori_browser_set_current_page_smartly (MidoriBrowser* browser,
                                          gint           n);
+
+void
+midori_browser_set_current_tab_smartly (MidoriBrowser* browser,
+                                        GtkWidget*     view);
+
 void
 midori_browser_set_current_page       (MidoriBrowser*     browser,
                                        gint               n);
 
 gint
 midori_browser_get_current_page       (MidoriBrowser*     browser);
+
+void
+midori_browser_set_current_item       (MidoriBrowser* browser,
+                                       KatzeItem*     item);
 
 GtkWidget*
 midori_browser_get_nth_tab            (MidoriBrowser*     browser,
@@ -152,11 +155,15 @@ GtkWidget*
 midori_browser_get_current_tab        (MidoriBrowser*     browser);
 #define midori_browser_get_tab midori_browser_get_current_tab
 
+gint
+midori_browser_page_num               (MidoriBrowser*     browser,
+                                       GtkWidget*         view);
+
 GList*
 midori_browser_get_tabs               (MidoriBrowser*     browser);
 
-KatzeArray*
-midori_browser_get_proxy_items        (MidoriBrowser*     browser);
+gint
+midori_browser_get_n_pages            (MidoriBrowser*     browser);
 
 KatzeArray*
 midori_browser_get_proxy_array        (MidoriBrowser*     browser);
@@ -172,6 +179,20 @@ midori_browser_get_toolbar_actions    (MidoriBrowser*     browser);
 
 MidoriWebSettings*
 midori_browser_get_settings           (MidoriBrowser*     browser);
+
+void
+midori_browser_update_history         (KatzeItem*         item,
+                                       const gchar*       type,
+                                       const gchar*       event);
+
+void
+midori_browser_save_uri               (MidoriBrowser*     browser,
+                                       MidoriView*        view,
+                                       const gchar*       uri);
+
+void
+midori_browser_set_inactivity_reset   (MidoriBrowser*     browser,
+                                       gint               inactivity_reset);
 
 G_END_DECLS
 
