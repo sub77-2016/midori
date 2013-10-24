@@ -1,8 +1,8 @@
-diff --git a/midori/main.c b/midori/main.c
-index 2ec5599..af3cc71 100644
---- a/midori/main.c
-+++ b/midori/main.c
-@@ -1019,7 +1019,7 @@ midori_load_soup_session (gpointer settings)
+Index: midori/midori/midori-session.c
+===================================================================
+--- midori.orig/midori/midori-session.c	2013-10-23 20:49:21.000000000 -0700
++++ midori/midori/midori-session.c	2013-10-23 20:49:48.000000000 -0700
+@@ -172,7 +172,7 @@
      #if defined (HAVE_LIBSOUP_2_37_1)
      g_object_set (session,
                    "ssl-use-system-ca-file", TRUE,
@@ -11,7 +11,7 @@ index 2ec5599..af3cc71 100644
                    NULL);
      #elif defined (HAVE_LIBSOUP_2_29_91)
      const gchar* certificate_files[] =
-@@ -1038,7 +1038,7 @@ midori_load_soup_session (gpointer settings)
+@@ -191,7 +191,7 @@
          {
              g_object_set (session,
                  "ssl-ca-file", certificate_files[i],
@@ -20,3 +20,12 @@ index 2ec5599..af3cc71 100644
                  NULL);
              break;
          }
+@@ -206,7 +206,7 @@
+     gchar* certificate_file = midori_paths_get_res_filename ("ca-bundle.crt");
+     g_object_set (session,
+                   "ssl-ca-file", certificate_file,
+-                  "ssl-strict", FALSE,
++                  "ssl-strict", TRUE,
+                   NULL);
+     g_free (certificate_file);
+     #endif

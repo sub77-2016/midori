@@ -18,6 +18,7 @@ midori (0.5.2+dfsg-1) UNRELEASED; urgency=low
   [ Ryan Niebur ]
   * new upstream version, including the waf unpack changes made thanks
     to the NMU by Koichi Akabe
+    - refreshed patches
 
  -- Ryan Niebur <ryan@debian.org>  Wed, 23 Oct 2013 20:46:22 -0700
 
