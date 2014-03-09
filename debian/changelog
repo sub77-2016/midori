@@ -7,6 +7,7 @@ midori (0.5.2+dfsg-1) UNRELEASED; urgency=low
   * debian/control:
     - update standards version to 3.9.3.
     - update homepage address.
+    - remove myself from uploaders.
   * debian/midori.maintscript:
     - handle the /etc/xdg/midori/extensions/libadblock.so removal there.
                                                                 closes: #660303

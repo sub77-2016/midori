@@ -2,7 +2,6 @@ Source: midori
 Section: web
 Priority: optional
 Maintainer: Ryan Niebur <ryan@debian.org>
-Uploaders: Yves-Alexis Perez <corsac@debian.org>
 Build-Depends: debhelper (>= 8.1.0~),
  lsb-release,
  libgtk2.0-dev (>= 2.10),
