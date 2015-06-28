@@ -1,7 +1,0 @@
-Sometimes a problem in Midori is caused by a bug in the rendering
-engine, Webkit.  Please take a moment to try to reproduce bugs with
-the Webkit test browser, %GTKLAUNCHER%.
-If you are able to reproduce your bug in the Webkit test browser,
-report the bug against %LIBWEBKIT_PKG% instead. You may also wish
-to see if your bug has already been reported as a webkit bug:
-http://bugs.debian.org/src:webkit

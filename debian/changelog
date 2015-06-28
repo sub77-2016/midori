@@ -26,6 +26,14 @@ midori (0.5.2+dfsg-1) UNRELEASED; urgency=low
 
  -- Ryan Niebur <ryan@debian.org>  Wed, 23 Oct 2013 21:04:40 -0700
 
+midori (0.4.3+dfsg-0.2) unstable; urgency=medium
+
+  * Non-maintainer upload.
+  * Drop debian/presubj.in as the webkit text browser
+    GtkLauncher is no longer packaged. (Closes: #759959)
+
+ -- Neil Williams <codehelp@debian.org>  Thu, 06 Nov 2014 14:04:07 +0000
+
 midori (0.4.3+dfsg-0.1) unstable; urgency=low
 
   * Non-maintainer upload
