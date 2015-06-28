@@ -12,8 +12,6 @@ export DEB_BUILD_HARDENING=1
 
 CMD=$(shell echo $@ | sed 's/override_//')
 
-LIBWEBKIT_PKG=$(shell dpkg-query -p libwebkitgtk-dev | grep Depends | sed -r 's/.*(libwebkitgtk[^ ]+).*/\1/')
-GTKLAUNCHER=$(shell dpkg-query -L $(LIBWEBKIT_PKG) | grep GtkLauncher)
 DISTRO=$(shell lsb_release -is)
 CONFIG_FILE=debian/config/$(DISTRO).h
 ifneq (0, $(shell test -e $(CONFIG_FILE); echo "$$?"))
@@ -39,18 +37,6 @@ get-orig-source:
 	rm -r $(pkg)_$(dfsg_version).orig
 
 WAF=WAFDIR=waf-modules ./waf-unpacked
-
-debian/presubj: debian/presubj.in
-	@echo "presubj parameters:"
-	@echo "Replacing %LIBWEBKIT_PKG% with $(LIBWEBKIT_PKG)"
-	@echo "Replacing %GTKLAUNCHER% with $(GTKLAUNCHER)"
-	test -f "/var/lib/dpkg/info/$(LIBWEBKIT_PKG).list"
-	test -f "$(GTKLAUNCHER)"
-	test -n "$(GTKLAUNCHER)"
-	sed -e "s,%LIBWEBKIT_PKG%,$(LIBWEBKIT_PKG),g" -e "s,%GTKLAUNCHER%,$(GTKLAUNCHER),g" $@.in > $@
-
-override_dh_install: debian/presubj
-	$(CMD) --fail-missing
 
 override_dh_auto_clean:
 	$(WAF) --nocache distclean
