@@ -1,0 +1,9 @@
+# This file is just used for testing, and is not installed with the
+# package.  Moreover, it is generated from a PNG image, using the
+# following command:
+#
+#   png2swf -z -j 1 -o data/midori.swf ./icons/16x16/midori.png
+#
+# Which means that it can be easily verified.  The png2swf command can
+# be found in the swftools package.
+midori source: source-is-missing data/midori.swf

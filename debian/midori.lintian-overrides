@@ -1,0 +1,37 @@
+# Overrides the warnings given by the following shlibs.  These
+# warnings are wrong because these shlibs are private to the project;
+# they are actually plugins that Midori offers.  For the rationale
+# behind these overrides, see Debian Policy, section 10.2.
+unused-shlib-entry-in-control-file libabout 1
+unused-shlib-entry-in-control-file libadblock 1
+unused-shlib-entry-in-control-file libaddons 1
+unused-shlib-entry-in-control-file libapps 1
+unused-shlib-entry-in-control-file libcolorful-tabs 1
+unused-shlib-entry-in-control-file libcookie-manager 1
+unused-shlib-entry-in-control-file libcookie-permissions 1
+unused-shlib-entry-in-control-file libcopy-tabs 1
+unused-shlib-entry-in-control-file libdelayed-load 1
+unused-shlib-entry-in-control-file libdevpet 1
+unused-shlib-entry-in-control-file libdomain-keys 1
+unused-shlib-entry-in-control-file libexternal-download-manager 1
+unused-shlib-entry-in-control-file libfeed-panel 1
+unused-shlib-entry-in-control-file libflummi 1
+unused-shlib-entry-in-control-file libformhistory 1
+unused-shlib-entry-in-control-file libhistory-list 1
+unused-shlib-entry-in-control-file libmouse-gestures 1
+unused-shlib-entry-in-control-file libnojs 1
+unused-shlib-entry-in-control-file libnotes 1
+unused-shlib-entry-in-control-file libnsplugin-manager 1
+unused-shlib-entry-in-control-file libopen-with 1
+unused-shlib-entry-in-control-file libshortcuts 1
+unused-shlib-entry-in-control-file libstatusbar-features 1
+unused-shlib-entry-in-control-file libstatus-clock 1
+unused-shlib-entry-in-control-file libtabby 1
+unused-shlib-entry-in-control-file libtab-panel 1
+unused-shlib-entry-in-control-file libtabs-minimized 1
+unused-shlib-entry-in-control-file libtoolbar-editor 1
+unused-shlib-entry-in-control-file libtransfers 1
+unused-shlib-entry-in-control-file libwebmedia-now-playing 1
+
+package-name-doesnt-match-sonames libmidori-core1
+non-dev-pkg-with-shlib-symlink usr/lib/libmidori-core.so.0.0.0 usr/lib/libmidori-core.so
