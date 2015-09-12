@@ -4,21 +4,20 @@
   <meta charset="utf-8" />
   <title>midori:faq</title>
 <meta name="generator" content="DokuWiki"/>
-<meta name="robots" content="noindex,nofollow"/>
-<meta name="date" content="2013-05-13T12:47:33+0200"/>
+<meta name="robots" content="index,follow"/>
 <meta name="keywords" content="midori,faq"/>
 <link rel="search" type="application/opensearchdescription+xml" href="/lib/exe/opensearch.php" title="Xfce Wiki"/>
 <link rel="start" href="/"/>
 <link rel="contents" href="/midori/faq?do=index" title="Sitemap"/>
-<link rel="alternate" type="application/rss+xml" title="Recent Changes" href="/feed.php"/>
-<link rel="alternate" type="application/rss+xml" title="Current Namespace" href="/feed.php?mode=list&amp;ns=midori"/>
+<link rel="alternate" type="application/rss+xml" title="Recent changes" href="/feed.php"/>
+<link rel="alternate" type="application/rss+xml" title="Current namespace" href="/feed.php?mode=list&amp;ns=midori"/>
 <link rel="alternate" type="text/html" title="Plain HTML" href="/_export/xhtml/midori/faq"/>
 <link rel="alternate" type="text/plain" title="Wiki Markup" href="/_export/raw/midori/faq"/>
 <link rel="canonical" href="http://wiki.xfce.org/midori/faq"/>
 <link rel="stylesheet" href="faq.css" />
 <script type="text/javascript">/*<![CDATA[*/var NS='midori';var JSINFO = {"id":"midori:faq","namespace":"midori"};
 /*!]]>*/</script>
-<script type="text/javascript" charset="utf-8" src="/lib/exe/js.php?tseed=1358197876"></script>
+<script type="text/javascript" charset="utf-8" src="/lib/exe/js.php?tseed=af5aadc3291d3baa2d8665b51a0cedf3"></script>
 </head>
 <body>
 <div class="dokuwiki export">
@@ -29,7 +28,7 @@
 
 <ul class="toc">
 <li class="level1"><div class="li"><a href="#midori_-_frequently_asked_questions">Midori - Frequently asked questions</a></div></li>
-<li class="level1"><div class="li"><a href="#getting_started">Getting started</a></div></li>
+<li class="level1"><div class="li"><a href="#about_midori">About Midori</a></div></li>
 <li class="level1"><div class="li"><a href="#common_problems">Common problems</a></div>
 <ul class="toc">
 <li class="level2"><div class="li"><a href="#security_features">Security features</a></div></li>
@@ -58,7 +57,14 @@
 <li class="level1"><div class="li"><a href="#user_scripts_and_styles">User scripts and styles</a></div>
 <ul class="toc">
 <li class="level2"><div class="li"><a href="#user_styles">User styles</a></div></li>
-</ul></li>
+</ul>
+</li>
+<li class="level1"><div class="li"><a href="#midori_architecture">Midori Architecture</a></div>
+<ul class="toc">
+<li class="level2"><div class="li"><a href="#webkit_version_numbers">WebKit Version Numbers</a></div></li>
+</ul>
+</li>
+<li class="level1"><div class="li"><a href="#midori_and_mediaherald">Midori and mediaHerald</a></div></li>
 </ul>
 </div>
 </div>
@@ -72,12 +78,12 @@
 </p>
 
 <p>
-This is <a href="http://wiki.xfce.org/midori/faq">a snapshot of the online FAQ</a> about the Midori Web Browser. Anyone feel free to improve and/ or extend this page, but keep it clean and easy to read for other Xfce users.
+This is <a href="http://wiki.xfce.org/midori/faq">a snapshot of the online FAQ</a> about the Midori Web Browser. Anyone should feel free to improve or extend this page, but keep it clean and easy to read for other users.
 </p>
 
 </div>
-<!-- EDIT1 SECTION "Midori - Frequently asked questions" [1-289] -->
-<h1 class="sectionedit2" id="getting_started">Getting started</h1>
+<!-- EDIT1 SECTION "Midori - Frequently asked questions" [1-286] -->
+<h1 class="sectionedit2" id="about_midori">About Midori</h1>
 <div class="level1">
 
 </div>
@@ -86,7 +92,7 @@ This is <a href="http://wiki.xfce.org/midori/faq">a snapshot of the online FAQ</
 <div class="level4">
 
 <p>
-Midori is a Web Browser, that aims to be lightweight and fast. It aligns well with the Xfce philosophy of making the most out of available resources.
+Midori is a Web browser that aims to be lightweight and fast. It aligns well with the Xfce philosophy of making the most out of available resources. It has a customizable interface using the GTK+ toolkit.
 </p>
 
 </div>
@@ -113,7 +119,7 @@ The paw of a green cat. Obviously. Also it resembles the letter “M” in “Mi
 <div class="level4">
 
 <p>
-Midori is basically very portable and should run on all platforms that its dependencies support.
+Midori is portable and should run on all platforms that its dependencies support. Releases exist on various Linux distributions, for Windows versions prior to 8.1 (for now), and BSD.
 </p>
 
 </div>
@@ -126,7 +132,7 @@ Midori and all delivered artwork are licensed under the LGPL2.
 </p>
 
 </div>
-<!-- EDIT2 SECTION "Getting started" [290-1188] -->
+<!-- EDIT2 SECTION "About Midori" [287-1323] -->
 <h1 class="sectionedit3" id="common_problems">Common problems</h1>
 <div class="level1">
 
@@ -136,19 +142,15 @@ Midori and all delivered artwork are licensed under the LGPL2.
 <div class="level4">
 
 <p>
-Some websites discriminate against your browser.
+Some websites give up if they don&#039;t recognize your browser as Chrome, Firefox, <abbr title="Internet Explorer">IE</abbr>, etc.
 </p>
 
 <p>
-If you have Midori older than 0.3.5, go to Preferences &gt; Network &gt; Identify As, and choose Custom. Paste this into the entry:
+You can change the browser name sent to web sites at Preferences &gt; Network &gt; Identify As
 </p>
 
 <p>
-Mozilla/5.0 (X11; Linux) AppleWebKit/531.2+ Midori/0.3
-</p>
-
-<p>
-If this doesn&#039;t do the trick, try choosing Safari or Firefox.
+Either choose a predefined user-agent or choose Custom and find a suitable string in <a href="http://useragentstring.com/pages/useragentstring.php" class="urlextern" title="http://useragentstring.com/pages/useragentstring.php"  rel="nofollow">a list</a>.
 </p>
 
 <p>
@@ -156,7 +158,7 @@ Many other websites use similar means of detecting the browser.
 </p>
 
 <p>
-Ideally Google would follow <a href="http://code.google.com/p/doctype/wiki/ArticleGoogleChromeCompatFAQ#UserAgent_Detection" class="urlextern" title="http://code.google.com/p/doctype/wiki/ArticleGoogleChromeCompatFAQ#UserAgent_Detection"  rel="nofollow">their own recommendation</a> at some point.
+Google <a href="http://web.archive.org/web/20100625211333/http://code.google.com/p/doctype/wiki/ArticleGoogleChromeCompatFAQ" class="urlextern" title="http://web.archive.org/web/20100625211333/http://code.google.com/p/doctype/wiki/ArticleGoogleChromeCompatFAQ"  rel="nofollow">previously recommended</a> the superior practice for website creators of checking which features are present rather than browser name/version, but has since weakened this stance with their browser&#039;s growing market share.
 </p>
 
 </div>
@@ -165,7 +167,28 @@ Ideally Google would follow <a href="http://code.google.com/p/doctype/wiki/Artic
 <div class="level4">
 
 <p>
-The set of themed icons Midori can use is very limited. For instance icons for a new tab or the throbber are not guaranteed to be available. To fix this, install a Freedesktop.org <abbr title="specification">spec</abbr> compliant icon theme, such as Elementary, Faenza, Buuf or GNOME.
+Midori uses a wide variety of icons which may not be present in all themes. For instance icons for a new tab, to represent scripts, or the throbber may not available. To fix this, install a Freedesktop.org <abbr title="specification">spec</abbr> compliant icon theme, such as Elementary, Faenza, Buuf or GNOME.
+</p>
+
+<p>
+if you need to set a custom path for these to be “searched in” (Kiosks and embedded devices for example):
+</p>
+
+<p>
+XDG_DATA_HOME=/path/to/location  
+</p>
+
+<p>
+will add an extra path for the icons/… directory
+</p>
+
+<p>
+In addition, GTK3 may remove icons from menus. This may be changed by placing 
+</p>
+<pre class="code">gtk-menu-images=true</pre>
+
+<p>
+ in the file ~/.config/gtk-3.0/settings.ini
 </p>
 
 </div>
@@ -201,6 +224,21 @@ Enable changing hotkeys while hovering menu items:
 
 </div>
 
+<h4 id="disable_middle_click_pasting">Disable middle click pasting</h4>
+<div class="level4">
+
+<p>
+As of GTK+ &gt;= 3.4 one can disable it globally in ~/.gtkrc-2.0
+</p>
+<pre class="code">gtk-enable-primary-paste = 0</pre>
+
+<p>
+Otherwise by adding a line to ~/.config/midori/config
+</p>
+<pre class="code">middle-click-opens-selection=false</pre>
+
+</div>
+
 <h4 id="midori_crashes_shortly_before_pages_are_loaded">Midori crashes shortly before pages are loaded</h4>
 <div class="level4">
 
@@ -222,7 +260,7 @@ export XDG_CACHE_HOME=/dev/shm
 </p>
 
 </div>
-<!-- EDIT3 SECTION "Common problems" [1189-3300] -->
+<!-- EDIT3 SECTION "Common problems" [1324-4267] -->
 <h2 class="sectionedit4" id="security_features">Security features</h2>
 <div class="level2">
 
@@ -241,6 +279,10 @@ Midori &gt;= 0.4.7 automatically picks up the Strict-Transport-Security header a
 <div class="level4">
 
 <p>
+Midori uses the system&#039;s ca-certificates, the exact locations depend on the distribution.
+</p>
+
+<p>
 Midori &gt;= 0.4.7 supports <a href="http://git.gnome.org/browse/gcr/tree/gcr" class="urlextern" title="http://git.gnome.org/browse/gcr/tree/gcr"  rel="nofollow">gcr</a> for certificate display and management, you can click the lock in the urlbar to see detailed information. Earlier versions, or one without gcr will not handle certificates beyond the lock icon in the urlbar.
 </p>
 
@@ -250,7 +292,7 @@ Midori &gt;= 0.4.7 supports <a href="http://git.gnome.org/browse/gcr/tree/gcr" c
 <div class="level5">
 
 <p>
-No key store is available or it&#039;s incorrectly setup. By default GNOME keyring can do this. Under Xfce it is recommended to enable “GNOME services” under “Session and Startup settings”. Otherwise this can occur if a script doesn&#039;t correctly send the output of “gnome-keyring –startup” to the environment.
+No key store is available or it&#039;s incorrectly setup. By default GNOME keyring can do this. Under Xfce it is recommended to enable “GNOME services” under “Session and Startup settings”. To make sure, that the output of “gnome-keyring –startup” is correctly sent to the environment, you can add “export `gnome-keyring-daemon –start`” to .xinitrc.
 </p>
 
 </div>
@@ -263,7 +305,7 @@ No key store is available or it&#039;s incorrectly setup. By default GNOME keyri
 </p>
 
 </div>
-<!-- EDIT4 SECTION "Security features" [3301-4386] -->
+<!-- EDIT4 SECTION "Security features" [4268-5485] -->
 <h2 class="sectionedit5" id="flash_doesn_t_work">Flash doesn&#039;t work</h2>
 <div class="level2">
 
@@ -302,10 +344,15 @@ You can either run that above line and run Midori in the same terminal afterward
 <p>
 nspluginwrapper is a program that runs Flash and other Netscape plugins in a separate process. So a crash can&#039;t crash the whole browser and Flash, which is GTK+2 can run in GTK+3.
 </p>
-<pre class="code bash"><span class="kw2">sudo</span> <span class="kw2">apt-get install</span> flashplugin-installer
-<span class="kw2">sudo</span> <span class="kw2">apt-get install</span> nspluginwrapper
-<span class="kw2">sudo</span> nspluginwrapper <span class="re5">-i</span> <span class="sy0">/</span>usr<span class="sy0">/</span>lib<span class="sy0">/</span>flashplugin-installer<span class="sy0">/</span>libflashplayer.so
-nspluginwrapper <span class="re5">-v</span> <span class="re5">-a</span> <span class="re5">-n</span> <span class="re5">-i</span></pre>
+<pre class="code bash"><span class="kw2">sudo</span> <span class="kw2">apt-get install</span> nspluginwrapper
+<span class="co0"># On Debian/ Ubuntu - on other systems http://get.adobe.com/de/flashplayer/</span>
+<span class="kw2">sudo</span> <span class="kw2">apt-get install</span> flashplugin-installer
+<span class="co0"># cd into the folder where the plugin was installed</span>
+nspluginwrapper <span class="re5">-v</span> <span class="re5">-a</span> <span class="re5">-n</span> <span class="re5">-i</span> libflashplayer.so</pre>
+
+<p>
+~/.mozilla can also be used with Adobe&#039;s tarball if system-wide install is not an option. The approach is confirmed to work with x86-64 as well.
+</p>
 
 <p>
 Another remedy is using WebKit2 - starting with Midori 0.4.9 experimental support is available, <a href="https://trac.webkit.org/wiki/WebKitGTK/WebKit2Roadmap" class="urlextern" title="https://trac.webkit.org/wiki/WebKitGTK/WebKit2Roadmap"  rel="nofollow">progress on WebKit2GTK+ can be seen in the WebKit wiki</a>.
@@ -336,6 +383,10 @@ There&#039;s no official support right now. It&#039;s possible to <a href="https
 <div class="level4">
 
 <p>
+Windows-style middle-click behavior is 
+</p>
+
+<p>
 <a href="http://ubuntuforums.org/showthread.php?t=478418" class="urlextern" title="http://ubuntuforums.org/showthread.php?t=478418"  rel="nofollow">http://ubuntuforums.org/showthread.php?t=478418</a>
 </p>
 
@@ -347,24 +398,24 @@ Upstream Bug: <a href="https://bugs.webkit.org/show_bug.cgi?id=50561" class="url
 
 </div>
 
-<h4 id="html5_video_doesn_t_play">HTML5 Video doesn&#039;t play</h4>
+<h4 id="html5_videoaudio_doesn_t_play">HTML5 Video/ Audio doesn&#039;t play</h4>
 <div class="level4">
 
 <p>
-You need to have GStreamer plugins installed which implement the codecs.
+<a href="#midori_architecture" title="midori:faq ↵" class="wikilink1">Midori uses GStreamer</a> for HTML5 audio and video support. Codecs, which handle particular formats of audio or video, are provided by GStreamer plugins which may need to be installed separately. Midori may be built with GTK+2 or GTK+3 (visit about:version to check), which correspond to GStreamer versions of 0.10 or 1.0 respectively.
 </p>
 <ol>
-<li class="level1"><div class="li"> You need gstreamer0.10-pulse if you&#039;re using PulseAudio.</div>
+<li class="level1"><div class="li"> You need gstreamer(0.10/1.0)-pulse if you&#039;re using PulseAudio.</div>
 </li>
-<li class="level1"><div class="li"> You may need gstreamer0.10-alsa for ALSA, depending on your distribution.</div>
+<li class="level1"><div class="li"> You may need gstreamer(0.10/1.0)-alsa for ALSA, depending on your distribution.</div>
 </li>
-<li class="level1"><div class="li"> You need plugins for Theora, gstreamer0.10-base and <abbr title="Motion Picture Experts Group">MPEG</abbr>-4 incluing aac (e.g. gst-plugins-faad), gstreamer0.10-bad. For WebM, you&#039;ll need plugins for vorbis (-base), matroska (-good), and vp8 (-bad). Have a look at <a href="http://www.gstreamer.net/documentation/plugins.html" class="urlextern" title="http://www.gstreamer.net/documentation/plugins.html"  rel="nofollow">http://www.gstreamer.net/documentation/plugins.html</a> for details.</div>
+<li class="level1"><div class="li"> You need plugins for Theora, gstreamer(0.10/1.0)-base and MPEG-4 incluing aac (e.g. gst-plugins-faad), gstreamer(0.10/1.0)-bad. For WebM, you&#039;ll need plugins for vorbis (-base), matroska (-good), and vp8 (-bad). Have a look at <a href="http://www.gstreamer.net/documentation/plugins.html" class="urlextern" title="http://www.gstreamer.net/documentation/plugins.html"  rel="nofollow">http://www.gstreamer.net/documentation/plugins.html</a> for details.</div>
 </li>
 <li class="level1"><div class="li"> For Youtube or Vimeo, you need WebKitGTK+ 1.1.20 or newer.</div>
 </li>
 <li class="level1"><div class="li"> You can <a href="http://ie.microsoft.com/testdrive/Graphics/VideoFormatSupport/Default.html" class="urlextern" title="http://ie.microsoft.com/testdrive/Graphics/VideoFormatSupport/Default.html"  rel="nofollow">test your installed codecs here</a>..</div>
 </li>
-<li class="level1"><div class="li"> Since Midori 0.3.5 you can look at “about:version” to see which video codecs you have installed.</div>
+<li class="level1"><div class="li"> You can look at about:version to see which video codecs you have installed.</div>
 </li>
 </ol>
 
@@ -472,7 +523,7 @@ Place the following in ~/.mutt/mailcap or ~/.mailcap:
 <div class="level4">
 
 <p>
-Midori opens files with GIO, and falls back to xdg-open, exo-open or gnome-open if these are available. All of this relies on freedesktop.org <abbr title="Multipurpose Internet Mail Extension">MIME</abbr> configuration. To tweak this there are multiple options:
+Midori opens files with GIO, and falls back to xdg-open, exo-open or gnome-open if these are available. All of this relies on freedesktop.org MIME configuration. To tweak this there are multiple options:
 </p>
 <ol>
 <li class="level1"><div class="li"> Use &#039;Open With&#039; with a graphical file manager</div>
@@ -589,12 +640,12 @@ Most settings listed at <a href="http://webkitgtk.org/reference/webkitgtk/stable
 </p>
 
 </div>
-<!-- EDIT5 SECTION "Flash doesn't work" [4387-12724] -->
+<!-- EDIT5 SECTION "Flash doesn't work" [5486-14378] -->
 <h1 class="sectionedit6" id="privacy">Privacy</h1>
 <div class="level1">
 
 </div>
-<!-- EDIT6 SECTION "Privacy" [12725-12747] -->
+<!-- EDIT6 SECTION "Privacy" [14379-14401] -->
 <h2 class="sectionedit7" id="blacklist_cookies">Blacklist cookies</h2>
 <div class="level2">
 
@@ -603,11 +654,11 @@ As of Midori 0.4.4 you can add a hidden option to ~/.config/midori/config like s
 </p>
 <pre class="code">site-data-rules=-google.com,-facebook.com,!bugzilla.gnome.org,+bugs.launchpad.net</pre>
 <ol>
-<li class="level1"><div class="li"> Values prefixed with ”-” are always blocked</div>
+<li class="level1"><div class="li"> Values prefixed with “-” are always blocked</div>
 </li>
-<li class="level1"><div class="li"> Values prefixed with ”+” are always accepted</div>
+<li class="level1"><div class="li"> Values prefixed with “+” are always accepted</div>
 </li>
-<li class="level1"><div class="li"> Values prefixed with ”!” are not cleared in Clear Private Data</div>
+<li class="level1"><div class="li"> Values prefixed with “!” are not cleared in Clear Private Data</div>
 </li>
 <li class="level1"><div class="li"> No wildcards.</div>
 </li>
@@ -620,7 +671,7 @@ The feature is currently experimental and will change in future versions.
 </p>
 
 </div>
-<!-- EDIT7 SECTION "Blacklist cookies" [12748-13284] -->
+<!-- EDIT7 SECTION "Blacklist cookies" [14402-14938] -->
 <h2 class="sectionedit8" id="adblock">Adblock</h2>
 <div class="level2">
 
@@ -629,12 +680,12 @@ The Advertisement Blocker can be activated under Extensions. It uses the same li
 </p>
 
 </div>
-<!-- EDIT8 SECTION "Adblock" [13285-13540] -->
+<!-- EDIT8 SECTION "Adblock" [14939-15194] -->
 <h1 class="sectionedit9" id="modes">Modes</h1>
 <div class="level1">
 
 </div>
-<!-- EDIT9 SECTION "Modes" [13541-13561] -->
+<!-- EDIT9 SECTION "Modes" [15195-15215] -->
 <h2 class="sectionedit10" id="web_applications">Web Applications</h2>
 <div class="level2">
 
@@ -655,7 +706,7 @@ There are two closely related features to open websites as dedicated windows of 
 </p>
 
 </div>
-<!-- EDIT10 SECTION "Web Applications" [13562-14078] -->
+<!-- EDIT10 SECTION "Web Applications" [15216-15732] -->
 <h2 class="sectionedit11" id="private_browsing">Private Browsing</h2>
 <div class="level2">
 
@@ -668,7 +719,7 @@ A private window is a separate process, so crashes don&#039;t affect the normal 
 </p>
 
 <p>
-As of Midori 0.2.9 Private Browsing uses preferences, cookies, keyboard shortcuts and search engines from the normal session, but it won&#039;t save any changes. This behaviour can be emulated from the command line with ”-a” and ”-c”.
+As of Midori 0.2.9 Private Browsing uses preferences, cookies, keyboard shortcuts and search engines from the normal session, but it won&#039;t save any changes. This behaviour can be emulated from the command line with “-a” and “-c”.
 </p>
 
 <p>
@@ -681,7 +732,7 @@ The same options available to -a/ –app can be used for private browsing mode.
 </p>
 
 </div>
-<!-- EDIT11 SECTION "Private Browsing" [14079-14998] -->
+<!-- EDIT11 SECTION "Private Browsing" [15733-16652] -->
 <h2 class="sectionedit12" id="portable_modewin32">Portable mode/ Win32</h2>
 <div class="level2">
 
@@ -690,7 +741,7 @@ On Windows builds, -P/ –portable causes all data to be written to the “profi
 </p>
 
 </div>
-<!-- EDIT12 SECTION "Portable mode/ Win32" [14999-15312] -->
+<!-- EDIT12 SECTION "Portable mode/ Win32" [16653-16966] -->
 <h2 class="sectionedit13" id="kiosk_mode">Kiosk mode</h2>
 <div class="level2">
 
@@ -704,7 +755,7 @@ Available commands for -e can be listed with “midori –help-execute”.
 </p>
 
 <p>
-If needed, a customized profile can be created with “midori -c /path/to/folder”. Using the shortcut editor extension, keyboard shortcuts can be removed as needed. Afterwards just append ”-c /path/to/folder” to the kiosk mode command line.
+If needed, a customized profile can be created with “midori -c /path/to/folder”. Using the shortcut editor extension, keyboard shortcuts can be removed as needed. Afterwards just append “-c /path/to/folder” to the kiosk mode command line.
 </p>
 
 <p>
@@ -722,7 +773,7 @@ Any links outside end up in an error page. All images and other files won&#039;t
 </p>
 
 </div>
-<!-- EDIT13 SECTION "Kiosk mode" [15313-16350] -->
+<!-- EDIT13 SECTION "Kiosk mode" [16967-18004] -->
 <h2 class="sectionedit14" id="always_open_midori_in_fullscreen">Always open Midori in Fullscreen</h2>
 <div class="level2">
 
@@ -755,7 +806,7 @@ If for whatever reason this isn&#039;t enough, <a href="https://live.gnome.org/D
 </p>
 
 </div>
-<!-- EDIT14 SECTION "Always open Midori in Fullscreen" [16351-16878] -->
+<!-- EDIT14 SECTION "Always open Midori in Fullscreen" [18005-18532] -->
 <h2 class="sectionedit15" id="overriding_settings_and_loading_extensions">Overriding settings and loading extensions</h2>
 <div class="level2">
 
@@ -772,7 +823,7 @@ As of Midori 0.5.0 the –execute command line switch got more powerful:
 </p>
 
 </div>
-<!-- EDIT15 SECTION "Overriding settings and loading extensions" [16879-17086] -->
+<!-- EDIT15 SECTION "Overriding settings and loading extensions" [18533-18740] -->
 <h1 class="sectionedit16" id="proxy_servers">Proxy servers</h1>
 <div class="level1">
 
@@ -831,7 +882,7 @@ As of Midori 0.5.0 and libSoup 2.40 SOCKS proxies can be used, the Preferences d
 </p>
 
 <p>
-libSoup &lt; 2.40 only supports <abbr title="Hyper Text Transfer Protocol">HTTP</abbr> proxy servers directly. A way to use SOCKS on Unix is to use tsocks with <abbr title="Secure Shell">SSH</abbr> as follows:
+libSoup &lt; 2.40 only supports HTTP proxy servers directly. A way to use SOCKS on Unix is to use tsocks with SSH as follows:
 </p>
 <ol>
 <li class="level1"><div class="li"> Install &#039;tsocks&#039;</div>
@@ -843,20 +894,20 @@ server_type = 5
 server_port = 5555</pre>
 </div>
 </li>
-<li class="level1"><div class="li"> Open an <abbr title="Secure Shell">SSH</abbr> connection with the same port: <pre class="code"> ssh -D localhost:5555 myhost.com </pre>
+<li class="level1"><div class="li"> Open an SSH connection with the same port: <pre class="code"> ssh -D localhost:5555 myhost.com </pre>
 </div>
 </li>
 <li class="level1"><div class="li"> Run Midori with “tsocks” in front of it: <pre class="code"> tsocks midori </pre>
 </div>
 </li>
-<li class="level1"><div class="li"> Now you can use for example <a href="http://www.whatsmyip.org/" class="urlextern" title="http://www.whatsmyip.org/"  rel="nofollow">http://www.whatsmyip.org/</a> to verify that you are using a SOCKS connection. The IP address should match the one of your <abbr title="Secure Shell">SSH</abbr> host. Remember to keep the <abbr title="Secure Shell">SSH</abbr> login running, and don&#039;t suspend it, otherwise it won&#039;t work.</div>
+<li class="level1"><div class="li"> Now you can use for example <a href="http://www.whatsmyip.org/" class="urlextern" title="http://www.whatsmyip.org/"  rel="nofollow">http://www.whatsmyip.org/</a> to verify that you are using a SOCKS connection. The IP address should match the one of your SSH host. Remember to keep the SSH login running, and don&#039;t suspend it, otherwise it won&#039;t work.</div>
 </li>
 <li class="level1"><div class="li"> If the connection fails for some reason, you should see a connection error.</div>
 </li>
 </ol>
 
 </div>
-<!-- EDIT16 SECTION "Proxy servers" [17087-18908] -->
+<!-- EDIT16 SECTION "Proxy servers" [18741-20562] -->
 <h1 class="sectionedit17" id="keyboard_hotkeys">Keyboard Hotkeys</h1>
 <div class="level1">
 
@@ -921,7 +972,7 @@ Default shortcuts for Find are:
 </p>
 
 <p>
-Find:         Ctrl+f ”/” and ”,”<br/>
+Find:         Ctrl+f “/” and “,”<br/>
 
 FindNext:     Ctrl+g and Enter<br/>
 
@@ -934,11 +985,11 @@ Dismissing Find:
 </p>
 
 <p>
-When using Ctrl+f to bring up Find, use Ctrl+f again or ESC. When using ”/” or ”,” to bring up Find, the previous works here as well and by simply moving focus away from the Find box. For example: a Tab or a mouse click anywhere[besides links of course].
+When using Ctrl+f to bring up Find, use Ctrl+f again or ESC. When using “/” or “,” to bring up Find, the previous works here as well and by simply moving focus away from the Find box. For example: a Tab or a mouse click anywhere[besides links of course].
 </p>
 
 </div>
-<!-- EDIT17 SECTION "Keyboard Hotkeys" [18909-20241] -->
+<!-- EDIT17 SECTION "Keyboard Hotkeys" [20563-21895] -->
 <h1 class="sectionedit18" id="mouse_gestures">Mouse Gestures</h1>
 <div class="level1">
 
@@ -947,10 +998,10 @@ By default the right mouse button initiates gestures.
 </p>
 
 <p>
-You can change the button using a hidden option:
+You can change the button (for example, to the middle mouse button) using a hidden option:
 </p>
 <ol>
-<li class="level1"><div class="li"> Create a text file ~/.config/midori/extensions/libmouse-gestures.so/config .</div>
+<li class="level1"><div class="li"> Create a text file ~/.config/midori/extensions/libmouse-gestures.so/<strong>config</strong> .</div>
 </li>
 <li class="level1"><div class="li"> Type the following in there:</div>
 </li>
@@ -959,7 +1010,8 @@ You can change the button using a hidden option:
   button=2</pre>
 
 <p>
-As of Midori 0.5.0 individual gestures can be configured freely, consult “midori –help-execute” for a list of available left-hand actions:
+As of Midori 0.5.0 individual gestures can be configured freely in the file ~/.config/midori/extensions/libmouse-gestures.so/<strong>gestures</strong> .
+Consult “midori –help-execute” for a list of available actions, which are placed on the left of the equals sign. On the right goes a sequence of directions, (W)est, (E)east, (N)orth, (S)outh, (S)outh(W)est, etc., with a semicolon (;) after each, as shown below:
 </p>
 <pre class="code">  [gestures]
   Quit=W;E;
@@ -967,15 +1019,11 @@ As of Midori 0.5.0 individual gestures can be configured freely, consult “mido
   TabNext=SE;</pre>
 
 <p>
-Separated by ; the right-hand values are cardinal directions, (W)est, (E)east, (N)orth, (S)outh. You can also combine eg. WE for West East.
-</p>
-
-<p>
 Additionally, there are programs allowing mouse gestures system-wide, for example <a href="http://easystroke.wiki.sourceforge.net/" class="urlextern" title="http://easystroke.wiki.sourceforge.net/"  rel="nofollow">EasyStroke</a>.
 </p>
 
 </div>
-<!-- EDIT18 SECTION "Mouse Gestures" [20242-21006] -->
+<!-- EDIT18 SECTION "Mouse Gestures" [21896-22828] -->
 <h1 class="sectionedit19" id="user_scripts_and_styles">User scripts and styles</h1>
 <div class="level1">
 
@@ -1005,7 +1053,7 @@ To manually install a userscript, you have to download the script as a file, and
 </p>
 
 <p>
-If the script is only shown as source code on the page, you first have to create a new text file in a text editor, copy the source code into the new file, and save it as my-user-script.js where ”.js” is the extension.
+If the script is only shown as source code on the page, you first have to create a new text file in a text editor, copy the source code into the new file, and save it as my-user-script.js where “.js” is the extension.
 </p>
 
 </div>
@@ -1036,7 +1084,7 @@ You can also use <a href="http://rightfootin.blogspot.com/2009/04/flashblock-wan
 </p>
 
 </div>
-<!-- EDIT19 SECTION "User scripts and styles" [21007-23561] -->
+<!-- EDIT19 SECTION "User scripts and styles" [22829-25383] -->
 <h2 class="sectionedit20" id="user_styles">User styles</h2>
 <div class="level2">
 
@@ -1058,7 +1106,7 @@ To install a user style, you have to download the style as a file, and put it in
 </p>
 
 <p>
-Note, if the style is only shown as source code on the page, you first have to create a new text file in a text editor, copy the source code into the new file, and save it as my-user-style.css where ”.css” is the extension.
+Note, if the style is only shown as source code on the page, you first have to create a new text file in a text editor, copy the source code into the new file, and save it as my-user-style.css where “.css” is the extension.
 </p>
 
 </div>
@@ -1082,22 +1130,127 @@ This user css is used to display the corresponding url when a link is hovered. T
 <p>
 Customize as needed:
 </p>
-<pre class="code">a[href]:hover {
-            text-decoration: none !important;
-        }
-        a[href]:hover:after {
-            content: attr(href);
-            position: fixed; left: 4px; bottom: 4px;
-            padding: 0 6px !important;
-            max-width: 95%; overflow: hidden;
-            white-space: nowrap; text-overflow: ellipsis;
-            font:10pt sans-serif !important; text-shadow: 0 0 12px white;
-            background-color: ButtonFace !important; color: ButtonText !important;
-            opacity: 0.8; outline: ButtonFace solid thick;
-            z-index: 9999;
-        }</pre>
+<pre class="code css">a<span class="br0">&#91;</span>href<span class="br0">&#93;</span><span class="re2">:hover </span><span class="br0">&#123;</span>
+            <span class="kw1">text-decoration</span><span class="sy0">:</span> <span class="kw2">none</span> !important<span class="sy0">;</span>
+        <span class="br0">&#125;</span>
+        a<span class="br0">&#91;</span>href<span class="br0">&#93;</span><span class="re2">:hover</span><span class="re2">:after </span><span class="br0">&#123;</span>
+            <span class="kw1">content</span><span class="sy0">:</span> attr<span class="br0">&#40;</span>href<span class="br0">&#41;</span><span class="sy0">;</span>
+            <span class="kw1">position</span><span class="sy0">:</span> <span class="kw2">fixed</span><span class="sy0">;</span> <span class="kw1">left</span><span class="sy0">:</span> <span class="re3">4px</span><span class="sy0">;</span> <span class="kw1">bottom</span><span class="sy0">:</span> <span class="re3">4px</span><span class="sy0">;</span>
+            <span class="kw1">padding</span><span class="sy0">:</span> <span class="nu0">0</span> <span class="re3">6px</span> !important<span class="sy0">;</span>
+            <span class="kw1">max-width</span><span class="sy0">:</span> <span class="re3">95%</span><span class="sy0">;</span> <span class="kw1">overflow</span><span class="sy0">:</span> <span class="kw2">hidden</span><span class="sy0">;</span>
+            <span class="kw1">white-space</span><span class="sy0">:</span> <span class="kw2">nowrap</span><span class="sy0">;</span> text-overflow<span class="sy0">:</span> ellipsis<span class="sy0">;</span>
+            <span class="kw1">font</span><span class="sy0">:</span><span class="re3">10pt</span> <span class="kw2">sans-serif</span> !important<span class="sy0">;</span> <span class="kw1">text-shadow</span><span class="sy0">:</span> <span class="nu0">0</span> <span class="nu0">0</span> <span class="re3">12px</span> <span class="kw2">white</span><span class="sy0">;</span>
+            <span class="kw1">background-color</span><span class="sy0">:</span> ButtonFace !important<span class="sy0">;</span> <span class="kw1">color</span><span class="sy0">:</span> ButtonText !important<span class="sy0">;</span>
+            opacity<span class="sy0">:</span> <span class="nu0">0.8</span><span class="sy0">;</span> <span class="kw1">outline</span><span class="sy0">:</span> ButtonFace <span class="kw2">solid</span> <span class="kw2">thick</span><span class="sy0">;</span>
+            <span class="kw1">z-index</span><span class="sy0">:</span> <span class="nu0">9999</span><span class="sy0">;</span>
+        <span class="br0">&#125;</span></pre>
 
 </div>
-<!-- EDIT20 SECTION "User styles" [23562-] --></div>
+
+<h4 id="tweaking_fonts_via_css">Tweaking fonts via CSS</h4>
+<div class="level4">
+
+<p>
+If changing system-wide font settings isn&#039;t bringing the desired results or rendering should be tweaked only for websites <abbr title="Cascading Style Sheets">CSS</abbr> can be an alternative. Add the following to <strong>~/.local/share/midori/styles</strong>, then restart Midori and make sure that it is enabled Tools → Userstyles.
+</p>
+
+<p>
+Customize as needed:
+</p>
+<pre class="code css"><span class="sy0">*</span> <span class="br0">&#123;</span>
+    font-smooth<span class="sy0">:</span><span class="kw2">always</span><span class="sy0">;</span>
+    -webkit-font-smoothing<span class="sy0">:</span> antialiased<span class="sy0">;</span>
+    text-rendering<span class="sy0">:</span> optimizeLegibility
+<span class="br0">&#125;</span></pre>
+
+</div>
+<!-- EDIT20 SECTION "User styles" [25384-28087] -->
+<h1 class="sectionedit21" id="midori_architecture">Midori Architecture</h1>
+<div class="level1">
+
+<p>
+Midori stands on the shoulders of three giants in particular: the software libraries <a href="http://www.gtk.org/" class="urlextern" title="http://www.gtk.org/"  rel="nofollow">GTK+</a>, <a href="http://webkitgtk.org/" class="urlextern" title="http://webkitgtk.org/"  rel="nofollow">WebKitGTK+</a>, and <a href="https://developer.gnome.org/libsoup/" class="urlextern" title="https://developer.gnome.org/libsoup/"  rel="nofollow">libsoup</a>. GTK+ provides the buttons, windows and menus, WebKitGTK+ draws and controls web pages, and libsoup downloads those pages.
+</p>
+
+<p>
+WebKitGTK+ itself uses two other important libraries: <a href="https://www.webkit.org/projects/javascript/index.html" class="urlextern" title="https://www.webkit.org/projects/javascript/index.html"  rel="nofollow">JavaScriptCore</a>, a WebKit project which runs scripts on web pages; and <a href="http://gstreamer.freedesktop.org/" class="urlextern" title="http://gstreamer.freedesktop.org/"  rel="nofollow">GStreamer</a>, which plays HTML5 video and audio.
+</p>
+
+</div>
+<!-- EDIT21 SECTION "Midori Architecture" [28088-28718] -->
+<h2 class="sectionedit22" id="webkit_version_numbers">WebKit Version Numbers</h2>
+<div class="level2">
+
+<p>
+WebKit is the core of the Midori browser, and it determines how web pages are rendered. Because WebKit is a complex piece of software and compatible with various libraries, its version numbers and naming schemes can at times be confusing.
+</p>
+
+<p>
+WebKit itself is a library which works in many environments, such as Windows, <abbr title="Operating System">OS</abbr> X, and various Linux DE. There are different “ports”, one of which corresponds to each of these environments, and each of which is slightly different in bugs and features at any given time. The WebKit port used by Midori (because Midori is built with GTK+) is WebKitGTK+.
+</p>
+
+<p>
+WebKitGTK+ can be compiled against either GTK+2 or GTK+3. This will result in library filenames like libwebkitgtk-1.0.so or libwebkitgtk-3.0.so, respectively. This has nothing to do with the version of WebKit itself.
+</p>
+
+<p>
+WebKit has a “new <abbr title="Application Programming Interface">API</abbr> layer … designed from the ground up to support a split process model”–so pages can crash without the entire browser crashing. This layer is called WebKit2, and for WebKitGTK+ it requires building against GTK+3, producing a library file called libwebkit2gtk-3.0.so.
+</p>
+
+<p>
+To find out the version of WebKitGTK+ your build of Midori is using, visit about:version.
+</p>
+
+</div>
+
+<h4 id="version_number_interactions">Version Number Interactions</h4>
+<div class="level4">
+
+<p>
+The WebKit2 <abbr title="Application Programming Interface">API</abbr> layer is available from fairly old WebKit versions through the present, but Midori&#039;s WebKit2 support requires version 2.0.0 or newer of WebKitGTK+. Current versions of WebKitGTK+ continue to support GTK+2 and GTK+3 (the latter since 1.4.x or so). As stated above, the WebKit2 <abbr title="Application Programming Interface">API</abbr> layer is only available with GTK+3.
+</p>
+
+<p>
+Midori&#039;s support for WebKit2 is still provisional, and likely unsuitable for real-world daily usage; much work is being done in this area so that Midori can use WebKit2 by default at some point in the future.
+</p>
+
+</div>
+<!-- EDIT22 SECTION "WebKit Version Numbers" [28719-30528] -->
+<h1 class="sectionedit23" id="midori_and_mediaherald">Midori and mediaHerald</h1>
+<div class="level1">
+
+<p>
+mediaHerald is a dbus service (/org/midori/mediaHeraldallow) users to connect to dbus and check the titme and url of the video that midori plays in <strong>YOUTUBE</strong>, <strong>VIMEO</strong> or <strong>DAILYMOTION</strong>, the extension which does the work is called webmedia-now-playing.
+</p>
+
+<p>
+If you want to get the video title and the uri is easy more than easy <img src="/lib/images/smileys/icon_smile.gif" class="icon" alt=":-)" /> .
+</p>
+<pre class="code bash"><span class="co0">#!/bin/sh</span>
+&nbsp;
+<span class="kw3">eval</span> $<span class="br0">&#40;</span>dbus-send <span class="re5">--session</span> <span class="re5">--print-reply</span> <span class="re5">--dest</span>=org.midori.mediaHerald <span class="sy0">/</span>org<span class="sy0">/</span>midori<span class="sy0">/</span>mediaHerald org.freedesktop.DBus.Properties.GetAll string:<span class="st0">&quot;org.midori.mediaHerald&quot;</span> <span class="sy0">|</span> <span class="kw2">awk</span> <span class="st_h">'
+    /string  *&quot;VideoTitle/{
+        while (1) {
+            getline line
+            if (line ~ /string &quot;/)
+                sub(/.*string /, &quot;TITLE=&quot;, line)
+                print line
+                break
+            }
+        }
+        /string  *&quot;VideoUri/{
+        while (1) {
+            getline line
+            if (line ~ /string &quot;/)
+                sub(/.*string /, &quot;URI=&quot;, line)
+                print line
+                break
+            }
+        }
+    '</span><span class="br0">&#41;</span>
+<span class="kw3">echo</span> <span class="st0">&quot;Midori is now playing: <span class="es2">$TITLE</span> ,the uri is: <span class="es2">$URI</span>&quot;</span></pre>
+
+</div>
+<!-- EDIT23 SECTION "Midori and mediaHerald" [30529-] --></div>
 </body>
 </html>

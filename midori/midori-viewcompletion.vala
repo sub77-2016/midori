@@ -1,5 +1,5 @@
 /*
- Copyright (C) 2012 Christian Dywan <christian@twotoasts.de>
+ Copyright (C) 2012-2013 Christian Dywan <christian@twotoasts.de>
 
  This library is free software; you can redistribute it and/or
  modify it under the terms of the GNU Lesser General Public
@@ -28,7 +28,7 @@ namespace Midori {
         }
 
         public override bool can_action (string action) {
-            return action == "about:views";
+            return action == "complete:more/views";
         }
 
         public override async List<Suggestion>? complete (string text, string? action, Cancellable cancellable) {
@@ -53,6 +53,11 @@ namespace Midori {
                     string? uri, title;
                     item.get ("uri", out uri);
                     item.get ("name", out title);
+
+                    /* Omit speed dial and blank pages */
+                    if (uri == "about:dial" || uri == "about:blank")
+                        continue;
+
                     if (uri == null) {
                         warning ("item.uri != null");
                         continue;
@@ -67,12 +72,12 @@ namespace Midori {
                     Gdk.Pixbuf? icon = Midori.Paths.get_icon (uri, null);
                     /* FIXME: Theming? Win32? */
                     string background = "gray";
-                    var suggestion = new Suggestion (uri, title + "\n" + uri, false, background, icon);
+                    var suggestion = new Suggestion (uri, title, true, background, icon, this.position);
                     suggestions.append (suggestion);
 
                     n++;
                     if (n == 3 && action == null) {
-                        suggestion = new Suggestion ("about:views", _("More open tabs…"), false, background);
+                        suggestion = new Suggestion ("complete:more/views", _("More open tabs…"), false, background);
                         suggestion.action = true;
                         suggestions.append (suggestion);
                         break;

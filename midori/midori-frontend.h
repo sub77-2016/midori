@@ -1,5 +1,5 @@
 /*
- Copyright (C) 2012 Christian Dywan <christian@twotoasts.de>
+ Copyright (C) 2012-2013 Christian Dywan <christian@twotoasts.de>
 
  This library is free software; you can redistribute it and/or
  modify it under the terms of the GNU Lesser General Public
@@ -15,8 +15,7 @@
 #include "midori/midori-app.h"
 
 MidoriBrowser*
-midori_web_app_new (const gchar* config,
-                    const gchar* webapp,
+midori_web_app_new (const gchar* webapp,
                     gchar**      open_uris,
                     gchar**      execute_commands,
                     gint         inactivity_reset,
@@ -34,7 +33,6 @@ MidoriApp*
 midori_normal_app_new (const gchar* config,
                        gchar*       nickname,
                        gboolean     diagnostic_dialog,
-                       const gchar* webapp,
                        gchar**      open_uris,
                        gchar**      execute_commands,
                        gint         inactivity_reset,

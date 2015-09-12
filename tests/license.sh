@@ -6,8 +6,8 @@
 # License as published by the Free Software Foundation; either
 # version 2.1 of the License, or (at your option) any later version.
 echo Running 'licensecheck'
-test -z $(which licensecheck) && echo ...SKIPPED: not installed && return 0
+test -z $(which licensecheck) && echo ...SKIPPED: not installed && exit 0
 test -n "$SRCDIR" && cd $SRCDIR
 test -z "$BLDDIR" && BLDDIR=_build
-find . \! -path './.*/*' -a \! -path "./$BLDDIR/*" -a \! -path "./debian/*" | xargs licensecheck | grep UNKNOWN && exit 1
+find . \! -path './.*/*' -a \! -path "./$BLDDIR/*" -a \! -path "./_*/*" -a \! -path "./debian/*" | xargs licensecheck | grep UNKNOWN && exit 1
 echo ...OK

@@ -31,7 +31,7 @@ enum
 
 	PROP_DATABASE,
 	PROP_DATABASE_FILENAME,
-	PROP_ASK_FOR_UNKNOWN_POLICY,
+	PROP_UNKNOWN_POLICY,
 
 	PROP_LAST
 };
@@ -49,7 +49,7 @@ struct _CookiePermissionManagerPrivate
 	MidoriApp						*application;
 	sqlite3							*database;
 	gchar							*databaseFilename;
-	gboolean						askForUnknownPolicy;
+	CookiePermissionManagerPolicy	unknownPolicy;
 
 	/* Cookie jar related */
 	SoupSession						*session;
@@ -224,8 +224,9 @@ static void _cookie_permission_manager_open_database(CookiePermissionManager *se
 
 			uri=soup_uri_new(NULL);
 			soup_uri_set_host(uri, domain);
+			soup_uri_set_path(uri, "/");
 			cookies=soup_cookie_jar_get_cookie_list(priv->cookieJar, uri, TRUE);
-			for(cookie=cookies; cookie; cookie->next)
+			for(cookie=cookies; cookie; cookie=cookie->next)
 			{
 				soup_cookie_jar_delete_cookie(priv->cookieJar, (SoupCookie*)cookie->data);
 			}
@@ -294,24 +295,23 @@ static gint _cookie_permission_manager_get_policy(CookiePermissionManager *self,
 	sqlite3_finalize(statement);
 
 	/* Check if policy is undetermined. If it is then check if this policy was set by user.
-	 * If it was not set by user check if we should ask user for his decision
+	 * If it was not set by user, check what to do.
 	 */
-	if(!priv->askForUnknownPolicy && !foundPolicy)
+	if(!foundPolicy)
 	{
-		switch(soup_cookie_jar_get_accept_policy(priv->cookieJar))
+		/* A SoupCookieJar that doesn't want to accept any cookies should override the user's
+		 * choice, in case of e.g. private mode, to err on the side of caution. */
+		SoupCookieJarAcceptPolicy soup_policy=soup_cookie_jar_get_accept_policy(priv->cookieJar);
+
+		if(soup_policy==SOUP_COOKIE_JAR_ACCEPT_ALWAYS || soup_policy==SOUP_COOKIE_JAR_ACCEPT_NO_THIRD_PARTY)
 		{
-			case SOUP_COOKIE_JAR_ACCEPT_ALWAYS:
-			case SOUP_COOKIE_JAR_ACCEPT_NO_THIRD_PARTY:
-				policy=COOKIE_PERMISSION_MANAGER_POLICY_ACCEPT;
-				break;
-
-			case SOUP_COOKIE_JAR_ACCEPT_NEVER:
-				policy=COOKIE_PERMISSION_MANAGER_POLICY_BLOCK;
-				break;
-
-			default:
+			policy=priv->unknownPolicy;
+		}
+		else
+		{
+			if(soup_policy!=SOUP_COOKIE_JAR_ACCEPT_NEVER)
 				g_critical(_("Could not determine global cookie policy to set for domain: %s"), domain);
-				break;
+			policy=COOKIE_PERMISSION_MANAGER_POLICY_BLOCK;
 		}
 	}
 
@@ -458,10 +458,11 @@ static gint _cookie_permission_manager_ask_for_policy(CookiePermissionManager *s
 	gint									numberDomains, numberCookies;
 	GSList									*sortedCookies, *cookies;
 	WebKitWebView							*webkitView;
-	CookiePermissionManagerModalInfobar		modalInfo;
+	CookiePermissionManagerModalInfobar		*modalInfo;
 
 	/* Get webkit view of midori view */
 	webkitView=WEBKIT_WEB_VIEW(midori_view_get_web_view(inView));
+	modalInfo=g_new0(CookiePermissionManagerModalInfobar, 1);
 
 	/* Create a copy of cookies and sort them */
 	sortedCookies=_cookie_permission_manager_get_number_domains_and_cookies(self,
@@ -535,16 +536,12 @@ static gint _cookie_permission_manager_ask_for_policy(CookiePermissionManager *s
 	 * but I don't want to create an GObject just for a simple struct. So set object
 	 * data by our own
 	 */
-	g_object_set_data(G_OBJECT(infobar), "cookie-permission-manager-infobar-data", &modalInfo);
+	g_object_set_data_full(G_OBJECT(infobar), "cookie-permission-manager-infobar-data", modalInfo, (GDestroyNotify)g_free);
 
 /* FIXME: Find a way to add "details" widget */
 #ifndef NO_INFOBAR_DETAILS
 	/* Get content area of infobar */
-#if HAVE_GTK_INFO_BAR
 	contentArea=gtk_info_bar_get_content_area(GTK_INFO_BAR(infobar));
-#else
-	contentArea=infobar;
-#endif
 
 	/* Create list and set up columns of list */
 	list=gtk_tree_view_new_with_model(GTK_TREE_MODEL(listStore));
@@ -614,19 +611,19 @@ static gint _cookie_permission_manager_ask_for_policy(CookiePermissionManager *s
 
 	/* Connect signals to quit main loop */
 	g_signal_connect(webkitView, "navigation-policy-decision-requested", G_CALLBACK(_cookie_permission_manager_on_infobar_webview_navigate), infobar);
-	g_signal_connect(infobar, "destroy", G_CALLBACK(_cookie_permission_manager_on_infobar_destroy), &modalInfo);
+	g_signal_connect(infobar, "destroy", G_CALLBACK(_cookie_permission_manager_on_infobar_destroy), modalInfo);
 
 	/* Let info bar be modal and set response to default */
-	modalInfo.response=COOKIE_PERMISSION_MANAGER_POLICY_UNDETERMINED;
-	modalInfo.mainLoop=g_main_loop_new(NULL, FALSE);
+	modalInfo->response=COOKIE_PERMISSION_MANAGER_POLICY_UNDETERMINED;
+	modalInfo->mainLoop=g_main_loop_new(NULL, FALSE);
 
 	GDK_THREADS_LEAVE();
-	g_main_loop_run(modalInfo.mainLoop);
+	g_main_loop_run(modalInfo->mainLoop);
 	GDK_THREADS_ENTER();
 
-	g_main_loop_unref(modalInfo.mainLoop);
+	g_main_loop_unref(modalInfo->mainLoop);
 
-	modalInfo.mainLoop=NULL;
+	modalInfo->mainLoop=NULL;
 
 	/* Disconnect signal handler to webkit's web view  */
 	g_signal_handlers_disconnect_by_func(webkitView, G_CALLBACK(_cookie_permission_manager_on_infobar_webview_navigate), infobar);
@@ -636,7 +633,7 @@ static gint _cookie_permission_manager_ask_for_policy(CookiePermissionManager *s
 	 * updates of database for the same domain. This sorted list is a copy
 	 * to avoid a reorder of cookies
 	 */
-	if(modalInfo.response!=COOKIE_PERMISSION_MANAGER_POLICY_UNDETERMINED)
+	if(modalInfo->response!=COOKIE_PERMISSION_MANAGER_POLICY_UNDETERMINED)
 	{
 		const gchar					*lastDomain=NULL;
 
@@ -657,7 +654,7 @@ static gint _cookie_permission_manager_ask_for_policy(CookiePermissionManager *s
 
 				sql=sqlite3_mprintf("INSERT OR REPLACE INTO policies (domain, value) VALUES ('%q', %d);",
 										cookieDomain,
-										modalInfo.response);
+										modalInfo->response);
 				success=sqlite3_exec(priv->database, sql, NULL, NULL, &error);
 				if(success!=SQLITE_OK) g_warning(_("SQL fails: %s"), error);
 				if(error) sqlite3_free(error);
@@ -672,8 +669,8 @@ static gint _cookie_permission_manager_ask_for_policy(CookiePermissionManager *s
 	g_slist_free(sortedCookies);
 
 	/* Return response */
-	return(modalInfo.response==COOKIE_PERMISSION_MANAGER_POLICY_UNDETERMINED ?
-			COOKIE_PERMISSION_MANAGER_POLICY_BLOCK : modalInfo.response);
+	return(modalInfo->response==COOKIE_PERMISSION_MANAGER_POLICY_UNDETERMINED ?
+			COOKIE_PERMISSION_MANAGER_POLICY_BLOCK : modalInfo->response);
 }
 
 /* A cookie was changed outside a request (e.g. Javascript) */
@@ -945,8 +942,8 @@ static void cookie_permission_manager_set_property(GObject *inObject,
 			_cookie_permission_manager_on_application_changed(self);
 			break;
 
-		case PROP_ASK_FOR_UNKNOWN_POLICY:
-			cookie_permission_manager_set_ask_for_unknown_policy(self, g_value_get_boolean(inValue));
+		case PROP_UNKNOWN_POLICY:
+			cookie_permission_manager_set_unknown_policy(self, g_value_get_int(inValue));
 			break;
 
 		default:
@@ -980,8 +977,8 @@ static void cookie_permission_manager_get_property(GObject *inObject,
 			g_value_set_string(outValue, self->priv->databaseFilename);
 			break;
 
-		case PROP_ASK_FOR_UNKNOWN_POLICY:
-			g_value_set_boolean(outValue, self->priv->askForUnknownPolicy);
+		case PROP_UNKNOWN_POLICY:
+			g_value_set_int(outValue, self->priv->unknownPolicy);
 			break;
 
 		default:
@@ -1033,12 +1030,14 @@ static void cookie_permission_manager_class_init(CookiePermissionManagerClass *k
 								NULL,
 								G_PARAM_READABLE);
 
-	CookiePermissionManagerProperties[PROP_ASK_FOR_UNKNOWN_POLICY]=
-		g_param_spec_boolean("ask-for-unknown-policy",
-								_("Ask for unknown policy"),
-								_("If true this extension ask for policy for every unknown domain."
-								  "If false this extension uses the global cookie policy set in Midori settings."),
-								TRUE,
+	CookiePermissionManagerProperties[PROP_UNKNOWN_POLICY]=
+		g_param_spec_int("unknown-policy",
+								_("Unknown domain policy"),
+								_("The policy to use for domains not individually configured."
+								  " This only acts to further restrict the global cookie policy set in Midori settings."),
+								COOKIE_PERMISSION_MANAGER_POLICY_UNDETERMINED,
+								COOKIE_PERMISSION_MANAGER_POLICY_BLOCK,
+								COOKIE_PERMISSION_MANAGER_POLICY_UNDETERMINED,
 								G_PARAM_READWRITE | G_PARAM_CONSTRUCT);
 
 	g_object_class_install_properties(gobjectClass, PROP_LAST, CookiePermissionManagerProperties);
@@ -1056,7 +1055,7 @@ static void cookie_permission_manager_init(CookiePermissionManager *self)
 	/* Set up default values */
 	priv->database=NULL;
 	priv->databaseFilename=NULL;
-	priv->askForUnknownPolicy=TRUE;
+	priv->unknownPolicy=COOKIE_PERMISSION_MANAGER_POLICY_UNDETERMINED;
 
 	/* Hijack session's cookie jar to handle cookies requests on our own in HTTP streams
 	 * but remember old handlers to restore them on deactivation
@@ -1082,22 +1081,22 @@ CookiePermissionManager* cookie_permission_manager_new(MidoriExtension *inExtens
 }
 
 /* Get/set policy to ask for policy if unknown for a domain */
-gboolean cookie_permission_manager_get_ask_for_unknown_policy(CookiePermissionManager *self)
+CookiePermissionManagerPolicy cookie_permission_manager_get_unknown_policy(CookiePermissionManager *self)
 {
-	g_return_val_if_fail(IS_COOKIE_PERMISSION_MANAGER(self), FALSE);
+	g_return_val_if_fail(IS_COOKIE_PERMISSION_MANAGER(self), COOKIE_PERMISSION_MANAGER_POLICY_UNDETERMINED);
 
-	return(self->priv->askForUnknownPolicy);
+	return(self->priv->unknownPolicy);
 }
 
-void cookie_permission_manager_set_ask_for_unknown_policy(CookiePermissionManager *self, gboolean inDoAsk)
+void cookie_permission_manager_set_unknown_policy(CookiePermissionManager *self, CookiePermissionManagerPolicy inPolicy)
 {
 	g_return_if_fail(IS_COOKIE_PERMISSION_MANAGER(self));
 
-	if(inDoAsk!=self->priv->askForUnknownPolicy)
+	if(inPolicy!=self->priv->unknownPolicy)
 	{
-		self->priv->askForUnknownPolicy=inDoAsk;
-		midori_extension_set_boolean(self->priv->extension, "ask-for-unknown-policy", inDoAsk);
-		g_object_notify_by_pspec(G_OBJECT(self), CookiePermissionManagerProperties[PROP_ASK_FOR_UNKNOWN_POLICY]);
+		self->priv->unknownPolicy=inPolicy;
+		midori_extension_set_integer(self->priv->extension, "unknown-policy", inPolicy);
+		g_object_notify_by_pspec(G_OBJECT(self), CookiePermissionManagerProperties[PROP_UNKNOWN_POLICY]);
 	}
 }
 

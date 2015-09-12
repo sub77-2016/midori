@@ -8,14 +8,12 @@
 
  See the file COPYING for the full license text.
 */
-
+ 
 #include "katze-item.h"
 #include "katze-utils.h"
 #include "midori/midori-core.h"
 
 #include <glib/gi18n.h>
-
-#include "katze/katze.h"
 
 /**
  * SECTION:katze-item
@@ -277,7 +275,7 @@ katze_item_get_property (GObject*    object,
  *
  * Creates a new #KatzeItem.
  *
- * Return value: a new #KatzeItem
+ * Return value: (transfer full): a new #KatzeItem
  **/
 KatzeItem*
 katze_item_new (void)
@@ -316,6 +314,9 @@ katze_item_set_name (KatzeItem*   item,
 {
     g_return_if_fail (KATZE_IS_ITEM (item));
 
+    if (!g_strcmp0 (item->name, name))
+        return;
+
     katze_assign (item->name, g_strdup (name));
     if (item->parent)
         katze_array_update ((KatzeArray*)item->parent);
@@ -341,7 +342,7 @@ katze_item_get_text (KatzeItem* item)
 /**
  * katze_item_set_text:
  * @item: a #KatzeItem
- * @description: a string
+ * @text: a string
  *
  * Sets the descriptive text of @item.
  **/
@@ -420,6 +421,9 @@ katze_item_set_icon (KatzeItem*   item,
 {
     g_return_if_fail (KATZE_IS_ITEM (item));
 
+    if (!g_strcmp0 (katze_item_get_meta_string (item, "icon"), icon))
+        return;
+
     katze_item_set_meta_string (item, "icon", icon);
     if (item->parent)
         katze_array_update ((KatzeArray*)item->parent);
@@ -431,9 +435,9 @@ katze_item_set_icon (KatzeItem*   item,
  * @item: a #KatzeItem
  * @widget: a #GtkWidget, or %NULL
  *
- * Retrieves a #GdkPixbuf fit to display @item.
+ * Creates a #GdkPixbuf fit to display @item.
  *
- * Return value: the icon of the item
+ * Return value: (transfer full): the icon of the item, or %NULL
  *
  * Since: 0.4.6
  **/
@@ -447,8 +451,6 @@ katze_item_get_pixbuf (KatzeItem* item,
 
     if (widget && KATZE_ITEM_IS_FOLDER (item))
         return gtk_widget_render_icon (widget, GTK_STOCK_DIRECTORY, GTK_ICON_SIZE_MENU, NULL);
-    if ((pixbuf = midori_paths_get_icon (katze_item_get_icon (item), NULL)))
-        return pixbuf;
     if ((pixbuf = midori_paths_get_icon (item->uri, widget)))
         return pixbuf;
     return NULL;
@@ -458,20 +460,14 @@ static void
 katze_item_image_destroyed_cb (GtkWidget* image,
                                KatzeItem* item);
 #ifndef HAVE_WEBKIT2
-#if WEBKIT_CHECK_VERSION (1, 3, 13)
 static void
-#if WEBKIT_CHECK_VERSION (1, 8, 0)
 katze_item_icon_loaded_cb (WebKitFaviconDatabase* database,
-#elif WEBKIT_CHECK_VERSION (1, 3, 13)
-katze_item_icon_loaded_cb (WebKitIconDatabase*    database,
-                           WebKitWebFrame*        web_frame,
-#endif
                            const gchar*           frame_uri,
                            GtkWidget*             image)
 {
     KatzeItem* item = g_object_get_data (G_OBJECT (image), "KatzeItem");
     GdkPixbuf* pixbuf;
-    if (!strcmp (frame_uri, item->uri)
+    if (!g_strcmp0 (frame_uri, item->uri)
       && (pixbuf = midori_paths_get_icon (frame_uri, image)))
     {
         gtk_image_set_from_pixbuf (GTK_IMAGE (image), pixbuf);
@@ -482,20 +478,14 @@ katze_item_icon_loaded_cb (WebKitIconDatabase*    database,
     }
 }
 #endif
-#endif
 
 static void
 katze_item_image_destroyed_cb (GtkWidget* image,
                                KatzeItem* item)
 {
 #ifndef HAVE_WEBKIT2
-    #if WEBKIT_CHECK_VERSION (1, 8, 0)
     g_signal_handlers_disconnect_by_func (webkit_get_favicon_database (),
         katze_item_icon_loaded_cb, image);
-    #elif WEBKIT_CHECK_VERSION (1, 3, 13)
-    g_signal_handlers_disconnect_by_func (webkit_get_icon_database (),
-        katze_item_icon_loaded_cb, image);
-    #endif
 #endif
     g_object_unref (item);
 }
@@ -505,12 +495,12 @@ katze_item_image_destroyed_cb (GtkWidget* image,
  * @item: a #KatzeItem
  * @widget: a #GtkWidget, or %NULL
  *
- * Retrieves a #GtkImage fit to display @item.
+ * Creates a #GtkImage fit to display @item.
  *
- * Return value: the icon of the item
+ * Return value: (transfer floating): the icon of the item
  *
  * Since: 0.4.4
- * Since 0.4.8 a @widget was added and the image is visible.
+ * Since 0.4.8 a @widget was added and the image is set visible.
  **/
 GtkWidget*
 katze_item_get_image (KatzeItem* item,
@@ -532,13 +522,8 @@ katze_item_get_image (KatzeItem* item,
     g_signal_connect (image, "destroy",
         G_CALLBACK (katze_item_image_destroyed_cb), item);
 #ifndef HAVE_WEBKIT2
-    #if WEBKIT_CHECK_VERSION (1, 8, 0)
     g_signal_connect (webkit_get_favicon_database (), "icon-loaded",
         G_CALLBACK (katze_item_icon_loaded_cb), image);
-    #elif WEBKIT_CHECK_VERSION (1, 3, 13)
-    g_signal_connect (webkit_get_icon_database (), "icon-loaded",
-        G_CALLBACK (katze_item_icon_loaded_cb), image);
-    #endif
 #endif
     return image;
 }
@@ -615,7 +600,7 @@ katze_item_set_added (KatzeItem* item,
  *
  * Retrieves a list of all meta keys.
  *
- * Return value: a newly allocated #GList of constant strings
+ * Return value: (element-type utf8) (transfer container): a newly allocated #GList of constant strings
  *
  * Since: 0.1.8
  **/
@@ -793,7 +778,7 @@ katze_item_set_meta_integer (KatzeItem*   item,
  *
  * Since 0.1.2 you can monitor the "parent" property.
  *
- * Return value: the parent of the item
+ * Return value: (type GObject) (transfer none): the parent of the item
  **/
 gpointer
 katze_item_get_parent (KatzeItem* item)
@@ -840,7 +825,7 @@ katze_item_set_parent (KatzeItem* item,
  *
  * Since 0.4.3 meta data is copied.
  *
- * Return value: a new #KatzeItem
+ * Return value: (transfer full): a new #KatzeItem
  *
  * Since: 0.1.3
  **/

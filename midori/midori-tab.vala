@@ -1,5 +1,5 @@
 /*
- Copyright (C) 2007-2012 Christian Dywan <christian@twotoasts.de>
+ Copyright (C) 2007-2013 Christian Dywan <christian@twotoasts.de>
  Copyright (C) 2009 Jean-François Guchens <zcx000@gmail.com>
  Copyright (C) 2011 Peter Hatina <phatina@redhat.com>
 
@@ -33,12 +33,18 @@ namespace Midori {
         PROVISIONAL /* A new URI was scheduled. */
     }
 
-    public class Tab : Gtk.VBox {
-        public WebKit.WebView web_view { get; private set; }
+    [CCode (cprefix = "MIDORI_LOAD_ERROR_")]
+    public enum LoadError {
+        NONE,
+        DELAYED,
+        SECURITY,
+        CRASH,
+        NETWORK
+    }
 
-        #if HAVE_GRANITE_CLUTTER
-        public Granite.Widgets.NavigationBox navigation_box { get; private set; }
-        #endif
+    public class Tab : Gtk.VBox {
+        public Tab related { get; set construct; }
+        public WebKit.WebView web_view { get; private set; }
 
         private string current_uri = "about:blank";
         public string uri { get {
@@ -51,15 +57,29 @@ namespace Midori {
 
         /* Special is an error, blank or delayed page */
         public bool special { get; protected set; default = false; }
+        /* Minimizing a tab indicates that only the icon should be shown.
+           Since: 0.1.8 */
+        public bool minimized { get; set; default = false; }
         /* Since: 0.4.8 */
         public string mime_type { get; protected set; default = "text/plain"; }
         /* Since: 0.1.2 */
         public Security security { get; protected set; default = Security.NONE; }
         public LoadStatus load_status { get; protected set; default = LoadStatus.FINISHED; }
+        public LoadError load_error { get; protected set; default = LoadError.NONE; }
         public string? statusbar_text { get; protected set; default = null; }
         /* Since: 0.5.0 */
+
         public Gdk.Color? fg_color { get; protected set; default = null; }
-        public Gdk.Color? bg_color { get; protected set; default = null; }
+        private Gdk.Color? bg_color_ = null;
+        public Gdk.Color? bg_color { get {
+            return bg_color_;
+        } protected set {
+            bg_color_ = value;
+            colors_changed ();
+        } }
+        /* After fg_color and bg_color have changed.
+           Since: 0.5.7 */
+        public signal void colors_changed ();
 
         /* Special pages don't convey progress */
         private double current_progress = 0.0;
@@ -79,6 +99,14 @@ namespace Midori {
         }
         }
 
+        /* Emitted when a uri is attempted to be loaded.
+           Returns FALSE if the URI could not be handled by Midori or any
+           external application.
+           Since: 0.5.8
+         */
+        public signal bool open_uri (string uri);
+        /* Since: 0.5.8 */
+        public signal bool navigation_requested (string uri);
         public signal void console_message (string message, int line, string source_id);
         public signal void attach_inspector (WebKit.WebView inspector_view);
         /* Emitted when an open inspector that was previously
@@ -89,6 +117,13 @@ namespace Midori {
         /* Allow the browser to provide the find bar */
         public signal void search_text (bool found, string typing);
 
+       /* Since: 0.5.5 */
+        public signal void context_menu (WebKit.HitTestResult hit_test_result, ContextAction menu);
+
+        /* A dialog tab has a fixed size, limited GUI and is transient.
+           Since: 0.5.6 */
+        public bool is_dialog { get; protected set; }
+
         public bool is_blank () {
             return URI.is_blank (uri);
         }
@@ -98,67 +133,39 @@ namespace Midori {
             orientation = Gtk.Orientation.VERTICAL;
             #endif
 
-            #if HAVE_GRANITE_CLUTTER
-            navigation_box = new Granite.Widgets.NavigationBox ();
-            #endif
-
+#if HAVE_WEBKIT2_3_91
+            web_view = related != null ?
+              new WebKit.WebView.with_related_view (related.web_view) : new WebKit.WebView ();
+#else
             web_view = new WebKit.WebView ();
+#endif
             /* Load something to avoid a bug where WebKit might not set a main frame */
             web_view.load_uri ("");
         }
 
         public void inject_stylesheet (string stylesheet) {
 #if !HAVE_WEBKIT2
-            #if HAVE_DOM
             var dom = web_view.get_dom_document ();
+            return_if_fail (dom.head != null);
             try {
                 var style = dom.create_element ("style");
                 style.set_attribute ("type", "text/css");
                 style.append_child (dom.create_text_node (stylesheet));
-                return_if_fail (dom.head != null);
                 dom.head.append_child (style);
             }
             catch (Error error) {
                 critical (_("Failed to inject stylesheet: %s"), error.message);
             }
-            #else
-            web_view.execute_script ("""
-                (function () {
-                var style = document.createElement ('style');
-                style.setAttribute ('type', 'text/css');
-                style.appendChild (document.createTextNode ('%s'));
-                var head = document.getElementsByTagName ('head')[0];
-                if (head) head.appendChild (style);
-                else document.documentElement.insertBefore
-                (style, document.documentElement.firstChild);
-                }) ();
-                """.printf (stylesheet));
-            #endif
 #endif
         }
 
-#if HAVE_WEBKIT2
-        /* Since: 0.5.1 */
-        public bool view_source { get {
-            return web_view.view_mode == WebKit.ViewMode.SOURCE;
-        }
-        set {
-            web_view.view_mode = value ? WebKit.ViewMode.SOURCE : WebKit.ViewMode.WEB;
-        }
-        }
-#else
-        /* Since: 0.5.1 */
-        public bool view_source { get {
-            return web_view.get_view_source_mode ();
-        }
-        set {
-            web_view.set_view_source_mode (value);
-        }
-        }
-#endif
+        /* Since: 0.5.1
+           Deprecated: 0.6.0: The feature is no longer provided by WebKit.
+         */
+        public bool view_source { get; private set; default = false; }
 
         public bool can_view_source () {
-            if (is_blank () || special || view_source)
+            if (view_source)
                 return false;
             string content_type = ContentType.from_mime_type (mime_type);
 #if HAVE_WIN32
@@ -228,9 +235,6 @@ namespace Midori {
         }
 
         public void go_forward () {
-            #if HAVE_GRANITE_CLUTTER
-            navigation_box.forward ();
-            #endif
             web_view.go_forward ();
         }
 
@@ -257,6 +261,35 @@ namespace Midori {
             web_view.mark_text_matches (text, case_sensitive, 0);
             web_view.set_highlight_text_matches (true);
             return found;
+#endif
+        }
+
+        /*
+          Updates all editing actions with regard to text selection.
+
+          Since: 0.5.8
+         */
+        public async void update_actions (Gtk.ActionGroup actions) {
+#if HAVE_WEBKIT2
+            try {
+                actions.get_action ("Undo").sensitive = yield web_view.can_execute_editing_command ("Undo", null);
+                actions.get_action ("Redo").sensitive = yield web_view.can_execute_editing_command ("Redo", null);
+                actions.get_action ("Cut").sensitive = yield web_view.can_execute_editing_command ("Cut", null);
+                actions.get_action ("Copy").sensitive = yield web_view.can_execute_editing_command ("Copy", null);
+                actions.get_action ("Paste").sensitive = yield web_view.can_execute_editing_command ("Paste", null);
+                actions.get_action ("Delete").sensitive = yield web_view.can_execute_editing_command ("Cut", null);
+                actions.get_action ("SelectAll").sensitive = yield web_view.can_execute_editing_command ("SelectAll", null);
+            } catch (Error error) {
+                critical ("Failed to update actions: %s", error.message);
+            }
+#else
+            actions.get_action ("Undo").sensitive = web_view.can_undo ();
+            actions.get_action ("Redo").sensitive = web_view.can_redo ();
+            actions.get_action ("Cut").sensitive = web_view.can_cut_clipboard ();
+            actions.get_action ("Copy").sensitive = web_view.can_copy_clipboard ();
+            actions.get_action ("Paste").sensitive = web_view.can_paste_clipboard ();
+            actions.get_action ("Delete").sensitive = web_view.can_cut_clipboard ();
+            actions.get_action ("SelectAll").sensitive = true;
 #endif
         }
     }

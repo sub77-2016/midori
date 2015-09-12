@@ -32,6 +32,12 @@ typedef struct
 	MidoriBrowser *browser;
 } TBEditorWidget;
 
+typedef struct
+{
+	GSList *used_items, *all_items;
+	TBEditorWidget *tbw;
+} TBEditorWindow;
+
 enum
 {
 	TB_EDITOR_COL_ACTION,
@@ -39,6 +45,8 @@ enum
 	TB_EDITOR_COL_ICON,
 	TB_EDITOR_COLS_MAX
 };
+
+static TBEditorWindow	*tbe_window=NULL;
 
 static const GtkTargetEntry tb_editor_dnd_targets[] =
 {
@@ -104,12 +112,8 @@ static GSList *tb_editor_array_to_list(const gchar **items)
 	name = items;
 	while (*name != NULL)
 	{
-		#ifdef HAVE_GRANITE
 		/* A "new tab" button is already part of the notebook */
 		if (*name[0] != '\0' && strcmp (*name, "TabNew"))
-		#else
-		if (*name[0] != '\0')
-		#endif
 			list = g_slist_append(list, g_strdup(*name));
 		name++;
 	}
@@ -177,7 +181,6 @@ static void tb_editor_btn_remove_clicked_cb(GtkWidget *button, TBEditorWidget *t
 	if (gtk_tree_selection_get_selected(selection_used, &model_used, &iter_used))
 	{
 		gtk_tree_model_get(model_used, &iter_used, TB_EDITOR_COL_ACTION, &action_name, -1);
-		if (g_strcmp0(action_name, "Location") != 0)
 		{
 			if (gtk_list_store_remove(tbw->store_used, &iter_used))
 				gtk_tree_selection_select_iter(selection_used, &iter_used);
@@ -285,10 +288,6 @@ static void tb_editor_drag_data_rcvd_cb(GtkWidget *widget, GdkDragContext *conte
 		gchar *text = NULL;
 
 		text = (gchar*) gtk_selection_data_get_data (data);
-
-		/* We allow re-ordering the Location item but not removing it from the list. */
-		if (g_strcmp0(text, "Location") == 0 && widget != tbw->drag_source)
-			return;
 
 		is_sep = (g_strcmp0(text, "Separator") == 0);
 		/* If the source of the action is equal to the target, we do just re-order and so need
@@ -514,64 +513,81 @@ static TBEditorWidget *tb_editor_create_dialog(MidoriBrowser *parent)
 	return tbw;
 }
 
+static void tb_editor_response_cb(GtkWidget* inDialog,
+									gint inResponse,
+									gpointer inUserData)
+{
+	gtk_widget_destroy(tbe_window->tbw->dialog);
+
+	g_slist_foreach(tbe_window->used_items, (GFunc) g_free, NULL);
+	g_slist_foreach(tbe_window->all_items, (GFunc) g_free, NULL);
+	g_slist_free(tbe_window->used_items);
+	g_slist_free(tbe_window->all_items);
+	tb_editor_free_path(tbe_window->tbw);
+	g_free(tbe_window->tbw);
+
+	g_free(tbe_window);
+	tbe_window=NULL;
+}
 
 static void tb_editor_menu_configure_toolbar_activate_cb(GtkWidget *menuitem, MidoriBrowser *browser)
 {
-	GSList *node, *used_items, *all_items;
-	GtkTreeIter iter;
-	GtkTreePath *path;
-	TBEditorWidget *tbw;
-
-	/* read the current active toolbar items */
-	used_items = tb_editor_parse_active_items(browser);
-
-	/* get all available actions */
-	all_items = tb_editor_get_available_actions(browser);
-
-	/* create the GUI */
-	tbw = tb_editor_create_dialog(browser);
-
-	/* cache some pointers, this is safe enough since the dialog is run modally */
-	tbw->action_group = midori_browser_get_action_group(browser);
-	tbw->browser = browser;
-
-	/* fill the stores */
-	for (node = all_items; node != NULL; node = node->next)
+	/* create toolbar-editor window if not available */
+	if(tbe_window==NULL)
 	{
-		if (strcmp(node->data, "Separator") == 0 ||
-			g_slist_find_custom(used_items, node->data, (GCompareFunc) strcmp) == NULL)
+		GSList *node;
+		GtkTreeIter iter;
+		GtkTreePath *path;
+
+		/* create storage for window data */
+		tbe_window=g_new0(TBEditorWindow, 1);
+
+		/* read the current active toolbar items */
+		tbe_window->used_items = tb_editor_parse_active_items(browser);
+
+		/* get all available actions */
+		tbe_window->all_items = tb_editor_get_available_actions(browser);
+
+		/* create the GUI */
+		tbe_window->tbw = tb_editor_create_dialog(browser);
+
+		/* cache some pointers, this is safe enough since the dialog is run modally */
+		tbe_window->tbw->action_group = midori_browser_get_action_group(browser);
+		tbe_window->tbw->browser = browser;
+
+		/* fill the stores */
+		for (node = tbe_window->all_items; node != NULL; node = node->next)
 		{
-			gtk_list_store_append(tbw->store_available, &iter);
-			tb_editor_set_item_values(tbw, node->data, tbw->store_available, &iter);
+			if (strcmp(node->data, "Separator") == 0 ||
+				g_slist_find_custom(tbe_window->used_items, node->data, (GCompareFunc) strcmp) == NULL)
+			{
+				gtk_list_store_append(tbe_window->tbw->store_available, &iter);
+				tb_editor_set_item_values(tbe_window->tbw, node->data, tbe_window->tbw->store_available, &iter);
+			}
 		}
+		for (node = tbe_window->used_items; node != NULL; node = node->next)
+		{
+			gtk_list_store_append(tbe_window->tbw->store_used, &iter);
+			tb_editor_set_item_values(tbe_window->tbw, node->data, tbe_window->tbw->store_used, &iter);
+		}
+		/* select first item */
+		path = gtk_tree_path_new_from_string("0");
+		gtk_tree_selection_select_path(gtk_tree_view_get_selection(tbe_window->tbw->tree_used), path);
+		gtk_tree_path_free(path);
+
+		/* connect the changed signals after populating the store */
+		g_signal_connect(tbe_window->tbw->store_used, "row-changed",
+			G_CALLBACK(tb_editor_available_items_changed_cb), tbe_window->tbw);
+		g_signal_connect(tbe_window->tbw->store_used, "row-deleted",
+			G_CALLBACK(tb_editor_available_items_deleted_cb), tbe_window->tbw);
+
+		/* connect signal for detecting window close */
+		g_signal_connect(tbe_window->tbw->dialog, "response", G_CALLBACK (tb_editor_response_cb), NULL);
 	}
-	for (node = used_items; node != NULL; node = node->next)
-	{
-		gtk_list_store_append(tbw->store_used, &iter);
-		tb_editor_set_item_values(tbw, node->data, tbw->store_used, &iter);
-	}
-	/* select first item */
-	path = gtk_tree_path_new_from_string("0");
-	gtk_tree_selection_select_path(gtk_tree_view_get_selection(tbw->tree_used), path);
-	gtk_tree_path_free(path);
 
-	/* connect the changed signals after populating the store */
-	g_signal_connect(tbw->store_used, "row-changed",
-		G_CALLBACK(tb_editor_available_items_changed_cb), tbw);
-	g_signal_connect(tbw->store_used, "row-deleted",
-		G_CALLBACK(tb_editor_available_items_deleted_cb), tbw);
-
-	/* run it */
-	gtk_dialog_run(GTK_DIALOG(tbw->dialog));
-
-	gtk_widget_destroy(tbw->dialog);
-
-	g_slist_foreach(used_items, (GFunc) g_free, NULL);
-	g_slist_foreach(all_items, (GFunc) g_free, NULL);
-	g_slist_free(used_items);
-	g_slist_free(all_items);
-	tb_editor_free_path(tbw);
-	g_free(tbw);
+	/* show dialog and make it modal */
+	gtk_window_set_modal(GTK_WINDOW(tbe_window->tbw->dialog), TRUE);
+	gtk_widget_show_all(tbe_window->tbw->dialog);
 }
 
 static void tb_editor_browser_populate_toolbar_menu_cb(MidoriBrowser *browser, GtkWidget *menu,

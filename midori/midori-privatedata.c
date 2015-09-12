@@ -1,5 +1,5 @@
 /*
- Copyright (C) 2008-2012 Christian Dywan <christian@twotoasts.de>
+ Copyright (C) 2008-2013 Christian Dywan <christian@twotoasts.de>
 
  This library is free software; you can redistribute it and/or
  modify it under the terms of the GNU Lesser General Public
@@ -22,24 +22,14 @@
 #include <gdk/gdkkeysyms.h>
 #include <sqlite3.h>
 
-#if WEBKIT_CHECK_VERSION (1, 3, 11)
     #define LIBSOUP_USE_UNSTABLE_REQUEST_API
     #include <libsoup/soup-cache.h>
-#endif
 
 static void
-#ifdef HAVE_GRANITE
-midori_private_data_dialog_response_cb (GtkWidget*    button,
-#else
 midori_private_data_dialog_response_cb (GtkWidget*     dialog,
                                         gint           response_id,
-#endif
                                         MidoriBrowser* browser)
 {
-    #ifdef HAVE_GRANITE
-    GtkWidget* dialog = gtk_widget_get_toplevel (button);
-    gint response_id = GTK_RESPONSE_ACCEPT;
-    #endif
     if (response_id == GTK_RESPONSE_ACCEPT)
     {
         GtkToggleButton* button;
@@ -105,6 +95,80 @@ midori_private_data_clear_on_quit_toggled_cb (GtkToggleButton*   button,
     g_object_set (settings, "clear-private-data", clear_prefs, NULL);
 }
 
+/**
+ * midori_private_data_dialog_is_empty:
+ * @dialog: the dialog
+ *
+ * The dialog is "empty" when none of the relevant checkboxes are activated.
+ *
+ * This function returns true if the dialog is empty.
+ **/
+static bool
+midori_private_data_dialog_is_empty (GtkDialog* dialog)
+{
+    GtkToggleButton* button;
+    gint count = 0; // Counts the total number of checked boxes
+    GList* data_items = midori_private_data_register_item (NULL, NULL, NULL);
+
+    // Count these first two special ones
+    button = g_object_get_data (G_OBJECT (dialog), "session");
+    if (gtk_toggle_button_get_active (button))
+        count++;
+    button = g_object_get_data (G_OBJECT (dialog), "history");
+    if (gtk_toggle_button_get_active (button))
+        count++;
+
+    // Count each other one
+    for (; data_items != NULL; data_items = g_list_next (data_items))
+    {
+        MidoriPrivateDataItem* privacy = data_items->data;
+        button = g_object_get_data (G_OBJECT (dialog), privacy->name);
+        g_return_val_if_fail (button != NULL && GTK_IS_TOGGLE_BUTTON (button), false);
+        if (gtk_toggle_button_get_active (button))
+            count++;
+    }
+
+    // No checked boxes means the dialog is empty
+    if (count == 0)
+        return true;
+    return false;
+}
+
+/**
+ * midori_private_data_clear_button_check_sensitive:
+ * @dialog: the dialog to clear
+ * 
+ * When called, sets the sensitivity of the clear private data button depending
+ * on whether the dialog is empty (see: midori_private_data_dialog_is_empty())
+ **/
+static void
+midori_private_data_clear_button_check_sensitive (GtkDialog* dialog)
+{
+    GtkWidget* clear_button;
+    clear_button = gtk_dialog_get_widget_for_response (dialog, GTK_RESPONSE_ACCEPT);
+    if (midori_private_data_dialog_is_empty (dialog))
+        gtk_widget_set_sensitive (clear_button, FALSE);
+    else
+        gtk_widget_set_sensitive (clear_button, TRUE);
+}
+
+static void
+midori_private_data_checkbox_toggled_cb (GtkToggleButton*   button,
+                                              GtkWidget* dialog)
+{
+    // This is a separate function so I can invoke it on start too
+    midori_private_data_clear_button_check_sensitive (GTK_DIALOG (dialog));
+}
+
+/**
+ * midori_private_data_get_dialog:
+ * @browser: the browser for which to create a dialog
+ *
+ * Shows a dialog for the user to configure private data settings 
+ * and clear some items.
+ *
+ * Return value: (transfer full): the dialog
+ **/
 GtkWidget*
 midori_private_data_get_dialog (MidoriBrowser* browser)
 {
@@ -124,18 +188,6 @@ midori_private_data_get_dialog (MidoriBrowser* browser)
     gint clear_prefs = MIDORI_CLEAR_NONE;
     g_object_get (settings, "clear-private-data", &clear_prefs, NULL);
 
-    #ifdef HAVE_GRANITE
-    /* FIXME: granite: should return GtkWidget* like GTK+ */
-    dialog = (GtkWidget*)granite_widgets_light_window_new (_("Clear Private Data"));
-    /* FIXME: granite: should return GtkWidget* like GTK+ */
-    content_area = (GtkWidget*)granite_widgets_decorated_window_get_box (GRANITE_WIDGETS_DECORATED_WINDOW (dialog));
-    hbox = gtk_hbox_new (FALSE, 4);
-    gtk_box_pack_end (GTK_BOX (content_area), hbox, FALSE, FALSE, 4);
-    button = gtk_button_new_with_mnemonic (_("_Clear private data"));
-    gtk_box_pack_end (GTK_BOX (hbox), button, FALSE, FALSE, 4);
-    g_signal_connect (button, "clicked",
-        G_CALLBACK (midori_private_data_dialog_response_cb), browser);
-    #else
     /* i18n: Dialog: Clear Private Data, in the Tools menu */
     dialog = gtk_dialog_new_with_buttons (_("Clear Private Data"),
         GTK_WINDOW (browser),
@@ -148,14 +200,13 @@ midori_private_data_get_dialog (MidoriBrowser* browser)
     g_signal_connect (dialog, "response",
         G_CALLBACK (midori_private_data_dialog_response_cb), browser);
     gtk_dialog_set_default_response (GTK_DIALOG (dialog), GTK_RESPONSE_ACCEPT);
-    #endif
-    katze_widget_add_class (button, "noundo");
+    katze_widget_add_class (button, "destructive-action");
     screen = gtk_widget_get_screen (GTK_WIDGET (browser));
     if (screen)
         gtk_window_set_icon_name (GTK_WINDOW (dialog), GTK_STOCK_CLEAR);
     sizegroup = gtk_size_group_new (GTK_SIZE_GROUP_HORIZONTAL);
     hbox = gtk_hbox_new (FALSE, 4);
-    icon = gtk_image_new_from_stock (GTK_STOCK_CLEAR, GTK_ICON_SIZE_DIALOG);
+    icon = gtk_image_new_from_icon_name ("edit-clear", GTK_ICON_SIZE_DIALOG);
     gtk_size_group_add_widget (sizegroup, icon);
     gtk_box_pack_start (GTK_BOX (hbox), icon, FALSE, FALSE, 0);
     label = gtk_label_new (_("Clear the following data:"));
@@ -173,12 +224,16 @@ midori_private_data_get_dialog (MidoriBrowser* browser)
         gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (button), TRUE);
     g_object_set_data (G_OBJECT (dialog), "session", button);
     gtk_box_pack_start (GTK_BOX (vbox), button, TRUE, TRUE, 0);
+    g_signal_connect (button, "toggled",
+            G_CALLBACK (midori_private_data_checkbox_toggled_cb), dialog);
     /* i18n: Browsing history, visited web pages, closed tabs */
     button = gtk_check_button_new_with_mnemonic (_("_History"));
     if ((clear_prefs & MIDORI_CLEAR_HISTORY) == MIDORI_CLEAR_HISTORY)
         gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (button), TRUE);
     g_object_set_data (G_OBJECT (dialog), "history", button);
     gtk_box_pack_start (GTK_BOX (vbox), button, TRUE, TRUE, 0);
+    g_signal_connect (button, "toggled",
+            G_CALLBACK (midori_private_data_checkbox_toggled_cb), dialog);
 
     data_items = midori_private_data_register_item (NULL, NULL, NULL);
     for (; data_items != NULL; data_items = g_list_next (data_items))
@@ -189,7 +244,10 @@ midori_private_data_get_dialog (MidoriBrowser* browser)
         g_object_set_data (G_OBJECT (dialog), privacy->name, button);
         if (clear_data && strstr (clear_data, privacy->name))
             gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (button), TRUE);
+        g_signal_connect (button, "toggled",
+            G_CALLBACK (midori_private_data_checkbox_toggled_cb), dialog);
     }
+    midori_private_data_clear_button_check_sensitive (GTK_DIALOG (dialog));
     g_free (clear_data);
     gtk_container_add (GTK_CONTAINER (alignment), vbox);
     gtk_box_pack_start (GTK_BOX (hbox), alignment, TRUE, TRUE, 4);
@@ -223,13 +281,16 @@ midori_remove_config_file (gint         clear_prefs,
 static void
 midori_clear_web_cookies_cb (void)
 {
-#ifndef HAVE_WEBKIT2
+#ifdef HAVE_WEBKIT2
+    WebKitWebContext* context = webkit_web_context_get_default ();
+    WebKitCookieManager* cookie_manager = webkit_web_context_get_cookie_manager (context);
+    webkit_cookie_manager_delete_all_cookies (cookie_manager);
+    /* FIXME: site data policy */
+#else
     SoupSession* session = webkit_get_default_session ();
     MidoriWebSettings* settings = g_object_get_data (G_OBJECT (session), "midori-settings");
     SoupSessionFeature* jar = soup_session_get_feature (session, SOUP_TYPE_COOKIE_JAR);
     GSList* cookies = soup_cookie_jar_all_cookies (SOUP_COOKIE_JAR (jar));
-    SoupSessionFeature* feature;
-    gchar* cache;
 
     /* HTTP Cookies/ Web Cookies */
     for (; cookies != NULL; cookies = g_slist_next (cookies))
@@ -241,18 +302,12 @@ midori_clear_web_cookies_cb (void)
         soup_cookie_jar_delete_cookie ((SoupCookieJar*)jar, cookies->data);
     }
     soup_cookies_free (cookies);
-    /* Removing KatzeHttpCookies makes it save outstanding changes */
-    if ((feature = soup_session_get_feature (session, KATZE_TYPE_HTTP_COOKIES)))
-    {
-        g_object_ref (feature);
-        soup_session_remove_feature (session, feature);
-        soup_session_add_feature (session, feature);
-        g_object_unref (feature);
-    }
+#endif
 
     /* Local shared objects/ Flash cookies */
     if (midori_web_settings_has_plugin_support ())
     {
+    gchar* cache;
     #ifdef GDK_WINDOWING_X11
     cache = g_build_filename (g_get_home_dir (), ".macromedia", "Flash_Player", NULL);
     midori_paths_remove_path (cache);
@@ -269,15 +324,16 @@ midori_clear_web_cookies_cb (void)
     #endif
     }
 
+#ifdef HAVE_WEBKIT2
+    /* TODO: clear databases and offline app caches */
+#else
     /* HTML5 databases */
     webkit_remove_all_web_databases ();
 
     /* HTML5 offline application caches */
-    #if WEBKIT_CHECK_VERSION (1, 3, 13)
     /* Changing the size implies clearing the cache */
     webkit_application_cache_set_maximum_size (
         webkit_application_cache_get_maximum_size () - 1);
-    #endif
 #endif
 }
 
@@ -299,7 +355,6 @@ midori_clear_saved_logins_cb (void)
     g_free (filename);
 }
 
-#if WEBKIT_CHECK_VERSION (1, 3, 11)
 static void
 midori_clear_web_cache_cb (void)
 {
@@ -315,7 +370,6 @@ midori_clear_web_cache_cb (void)
     g_free (cache);
 #endif
 }
-#endif
 
 void
 midori_private_data_register_built_ins ()
@@ -325,11 +379,9 @@ midori_private_data_register_built_ins ()
         G_CALLBACK (midori_clear_saved_logins_cb));
     midori_private_data_register_item ("web-cookies", _("Cookies and Website data"),
         G_CALLBACK (midori_clear_web_cookies_cb));
-    #if WEBKIT_CHECK_VERSION (1, 3, 11)
     /* TODO: Preserve page icons of search engines and merge privacy items */
     midori_private_data_register_item ("web-cache", _("Web Cache"),
         G_CALLBACK (midori_clear_web_cache_cb));
-    #endif
     midori_private_data_register_item ("page-icons", _("Website icons"),
         G_CALLBACK (midori_paths_clear_icons));
 }
@@ -383,12 +435,14 @@ midori_private_data_on_quit (MidoriWebSettings* settings)
  * midori_private_data_register_item:
  * @name: the name of the privacy item
  * @label: a user visible, localized label
- * @clear: a callback clearing data
+ * @clear: (scope async): a callback clearing data
  *
  * Registers an item to clear data, either via the
  * Clear Private Data dialogue or when Midori quits.
  *
- * Return value: a #GList if all arguments are %NULL
+ * Return value: (element-type MidoriPrivateDataItem) (transfer none):
+ *     a #GList of all previously-registered items if all arguments are
+ *     given as %NULL, %NULL otherwise
  **/
 GList*
 midori_private_data_register_item (const gchar* name,
@@ -412,4 +466,3 @@ midori_private_data_register_item (const gchar* name,
     items = g_list_append (items, item);
     return NULL;
 }
-

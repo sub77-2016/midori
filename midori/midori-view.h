@@ -17,10 +17,6 @@
 
 #include <katze/katze.h>
 
-#ifdef HAVE_GRANITE
-    #include <granite/granite.h>
-#endif
-
 G_BEGIN_DECLS
 
 typedef enum
@@ -66,6 +62,11 @@ midori_view_new_with_title             (const gchar*       title,
 
 GtkWidget*
 midori_view_new_with_item              (KatzeItem*         item,
+                                        MidoriWebSettings* settings);
+
+GtkWidget*
+midori_view_new_from_view              (MidoriView*        view,
+                                        KatzeItem*         item,
                                         MidoriWebSettings* settings);
 
 void
@@ -128,15 +129,6 @@ midori_view_duplicate                  (MidoriView*        view);
 PangoEllipsizeMode
 midori_view_get_label_ellipsize        (MidoriView*        view);
 
-#ifdef HAVE_GRANITE
-GraniteWidgetsTab*
-midori_view_get_tab                    (MidoriView*        view);
-
-void
-midori_view_set_tab                    (MidoriView*        view,
-                                        GraniteWidgetsTab* tab);
-#endif
-
 GtkWidget*
 midori_view_get_proxy_tab_label        (MidoriView*        view);
 
@@ -195,7 +187,8 @@ midori_view_can_view_source            (MidoriView*        view);
 gchar*
 midori_view_save_source                (MidoriView*        view,
                                         const gchar*       uri,
-                                        const gchar*       outfile);
+                                        const gchar*       outfile,
+                                        gboolean           use_dom);
 
 void
 midori_view_search_text                (MidoriView*        view,
@@ -250,6 +243,11 @@ midori_view_list_plugins               (MidoriView*        view,
                                         gboolean           html);
 
 void
+midori_view_list_video_formats         (MidoriView*        view,
+                                        GString*           formats,
+                                        gboolean           html);
+
+void
 midori_view_set_colors                 (MidoriView*        view,
                                         GdkColor*          fg_color,
                                         GdkColor*          bg_color);
@@ -260,6 +258,10 @@ midori_view_get_tls_info               (MidoriView*        view,
                                         GTlsCertificate**     tls_cert,
                                         GTlsCertificateFlags* tls_flags,
                                         gchar**               hostname);
+
+MidoriContextAction*
+midori_view_get_page_context_action (MidoriView*          view,
+                                     WebKitHitTestResult* hit_test_result);
 
 G_END_DECLS
 

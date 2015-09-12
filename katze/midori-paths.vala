@@ -113,7 +113,17 @@ namespace Midori {
                 tmp_dir = Path.build_path (Path.DIR_SEPARATOR_S,
                     exec_path, "profile", "tmp");
             }
-            else if (mode == RuntimeMode.PRIVATE || mode == RuntimeMode.APP) {
+            else if (mode == RuntimeMode.APP) {
+                config_dir = Path.build_path (Path.DIR_SEPARATOR_S,
+                    Environment.get_user_data_dir (), PACKAGE_NAME, "apps",
+                    Checksum.compute_for_string (ChecksumType.MD5, config, -1));
+                cache_dir = Path.build_path (Path.DIR_SEPARATOR_S,
+                    Environment.get_user_cache_dir (), PACKAGE_NAME);
+                user_data_dir = Environment.get_user_data_dir ();
+                user_data_dir_for_reading = Environment.get_user_data_dir ();
+                tmp_dir = get_runtime_dir ();
+            }
+            else if (mode == RuntimeMode.PRIVATE) {
                 string? real_config = config != null && !Path.is_absolute (config)
                     ? Path.build_filename (Environment.get_current_dir (), config) : config;
                 readonly_dir = real_config ?? Path.build_path (Path.DIR_SEPARATOR_S,
@@ -124,6 +134,11 @@ namespace Midori {
                 tmp_dir = get_runtime_dir ();
             }
             else {
+#if HAVE_WEBKIT2_3_91
+                /* Allow WebKit to spawn more than one rendering process */
+                if (!("wk2:no-multi-render-process" in (Environment.get_variable ("MIDORI_DEBUG") ?? "")))
+                    WebKit.WebContext.get_default ().set_process_model (WebKit.ProcessModel.MULTIPLE_SECONDARY_PROCESSES);
+#endif
                 string? real_config = config != null && !Path.is_absolute (config)
                     ? Path.build_filename (Environment.get_current_dir (), config) : config;
                 config_dir = real_config ?? Path.build_path (Path.DIR_SEPARATOR_S,
@@ -131,29 +146,48 @@ namespace Midori {
                 cache_dir = Path.build_path (Path.DIR_SEPARATOR_S,
                     Environment.get_user_cache_dir (), PACKAGE_NAME);
                 user_data_dir = Environment.get_user_data_dir ();
-#if HAVE_WEBKIT2_A
-                WebKit.WebContext.get_default ().set_disk_cache_directory (
-                    Path.build_path (Path.DIR_SEPARATOR_S, cache_dir, "web"));
-#endif
-#if HAVE_WEBKIT2
-                var cookie_manager = WebKit.WebContext.get_default ().get_cookie_manager ();
-                cookie_manager.set_persistent_storage (Path.build_filename (config, "cookies.db"),
-                    WebKit.CookiePersistentStorage.SQLITE);
-#endif
                 tmp_dir = get_runtime_dir ();
             }
-#if HAVE_WEBKIT_1_3_13
+#if HAVE_WEBKIT2
+            if (cache_dir != null) {
+                /* Cache and extension dir MUST be set no later than here to work */
+                WebKit.WebContext.get_default ().set_web_extensions_directory (
+                    Path.build_path (Path.DIR_SEPARATOR_S, cache_dir, "wk2ext"));
+                WebKit.WebContext.get_default ().set_disk_cache_directory (
+                    Path.build_path (Path.DIR_SEPARATOR_S, cache_dir, "web"));
+            }
+
+            if (config_dir != null) {
+                var cookie_manager = WebKit.WebContext.get_default ().get_cookie_manager ();
+                cookie_manager.set_persistent_storage (Path.build_filename (config_dir, "cookies.db"),
+                    WebKit.CookiePersistentStorage.SQLITE);
+            }
+#endif
             if (user_data_dir != null) {
                 string folder = Path.build_filename (user_data_dir, "webkit", "icondatabase");
 #if HAVE_WEBKIT2
                 WebKit.WebContext.get_default ().set_favicon_database_directory (folder);
-#elif HAVE_WEBKIT_1_8_0
+#else
                 WebKit.get_favicon_database ().set_path (folder);
-#elif HAVE_WEBKIT_1_3_13
-                WebKit.get_icon_database ().set_path (folder);
 #endif
             }
+            else
+            {
+#if HAVE_WEBKIT2
+                /* with wk2 set_favicon_database_directory can only be called once and actually
+                initializes and enables the favicon database, so we do not call it in this case */
+#else
+                /* wk1 documentation claims that the favicon database is not enabled unless
+                a call to favicon_database.set_path is made, but in fact it must be explicitly
+                disabled by setting to null (verified as of webkitgtk 2.3.1) */
+                WebKit.get_favicon_database ().set_path (null);
 #endif
+            }
+
+            #if !HAVE_WIN32
+            Gtk.IconTheme.get_default ().append_search_path (exec_path);
+            #endif
+
             if (strcmp (Environment.get_variable ("MIDORI_DEBUG"), "paths") == 0) {
                 stdout.printf ("config: %s\ncache: %s\nuser_data: %s\ntmp: %s\n",
                                config_dir, cache_dir, user_data_dir, tmp_dir);
@@ -267,18 +301,13 @@ namespace Midori {
 
         public static string make_tmp_dir (string tmpl) {
             assert (tmp_dir != null);
-#if HAVE_GLIB_2_30
             try {
+                mkdir_with_parents (GLib.Environment.get_tmp_dir ());
                 return DirUtils.make_tmp (tmpl);
             }
             catch (Error error) {
                 GLib.error (error.message);
             }
-#else
-            string folder = Path.build_path (Path.DIR_SEPARATOR_S, Environment.get_tmp_dir (), tmpl);
-            DirUtils.mkdtemp (folder);
-            return folder;
-#endif
         }
 
         public static void init_exec_path (string[] new_command_line) {
@@ -309,7 +338,7 @@ namespace Midori {
             if (strcmp (Environment.get_variable ("MIDORI_DEBUG"), "paths") == 0) {
                 stdout.printf ("command_line: %s\nexec_path: %s\nres: %s\nlib: %s\n",
                                get_command_line_str (true), exec_path,
-                               get_res_filename (""), get_lib_path (PACKAGE_NAME));
+                               get_res_filename ("about.css"), get_lib_path (PACKAGE_NAME));
             }
         }
 
@@ -348,6 +377,7 @@ namespace Midori {
 
         public static string get_res_filename (string filename) {
             assert (command_line != null);
+            assert (filename != "");
             #if HAVE_WIN32
             return Path.build_filename (exec_path, "share", PACKAGE_NAME, "res", filename);
             #else
@@ -355,15 +385,27 @@ namespace Midori {
             if (Posix.access (path, Posix.F_OK) == 0)
                 return path;
 
-            /* Fallback to build folder */
-            path = Path.build_filename ((File.new_for_path (exec_path)
-                .get_parent ().get_parent ().get_path ()), "data", filename);
-            if (Posix.access (path, Posix.F_OK) == 0)
-                return path;
-
-            return Path.build_filename (MDATADIR, PACKAGE_NAME, "res", filename);
+            return build_folder ("data", null, filename) ??
+              Path.build_filename (MDATADIR, PACKAGE_NAME, "res", filename);
             #endif
         }
+
+        #if !HAVE_WIN32
+        string? build_folder (string folder, string? middle, string filename) {
+            /* Fallback to build folder */
+            File? parent = File.new_for_path (exec_path);
+            while (parent != null) {
+                var data = parent.get_child (folder);
+                if (middle != null)
+                    data = data.get_child (middle);
+                var child = data.get_child (filename);
+                if (child.query_exists ())
+                    return child.get_path ();
+                parent = parent.get_parent ();
+            }
+            return null;
+        }
+        #endif
 
         /* returns the path to a file containing read-only data installed with the application
         if @res is true, looks in the midori resource folder specifically */
@@ -379,7 +421,7 @@ namespace Midori {
             if (Posix.access (path, Posix.F_OK) == 0)
                 return path;
 
-            foreach (string data_dir in Environment.get_system_data_dirs ()) {
+            foreach (unowned string data_dir in Environment.get_system_data_dirs ()) {
                 path = Path.build_filename (data_dir, res1, res2, filename);
                 if (Posix.access (path, Posix.F_OK) == 0)
                     return path;
@@ -396,13 +438,14 @@ namespace Midori {
             #if HAVE_WIN32
             return Path.build_filename (exec_path, "etc", "xdg", PACKAGE_NAME, folder ?? "", filename);
             #else
-            foreach (string config_dir in Environment.get_system_config_dirs ()) {
+            foreach (unowned string config_dir in Environment.get_system_config_dirs ()) {
                 string path = Path.build_filename (config_dir, PACKAGE_NAME, folder ?? "", filename);
                 if (Posix.access (path, Posix.F_OK) == 0)
                     return path;
             }
 
-            return Path.build_filename (SYSCONFDIR, "xdg", PACKAGE_NAME, folder ?? "", filename);
+            return build_folder ("config", folder, filename) ??
+              Path.build_filename (SYSCONFDIR, "xdg", PACKAGE_NAME, folder ?? "", filename);
             #endif
         }
 
@@ -411,16 +454,19 @@ namespace Midori {
             assert (user_data_dir != null);
 #if HAVE_WEBKIT2
             WebKit.WebContext.get_default ().get_favicon_database ().clear ();
-#elif HAVE_WEBKIT_1_8_0
+#else
             WebKit.get_favicon_database ().clear ();
-#elif HAVE_WEBKIT_1_3_13
-            WebKit.get_icon_database ().clear ();
 #endif
             /* FIXME: Exclude search engine icons */
-            remove_path (Path.build_filename (cache_dir, "icons"));
             remove_path (Path.build_filename (user_data_dir, "webkit", "icondatabase"));
         }
 
+        /**
+         * Looks up a pixbuf for the given @uri. If @widget is given a generic
+         * file icon is used in case there's no icon.
+         *
+         * Deprecated: 0.5.8: Use Midori.URI.Icon or Midori.URI.get_icon instead.
+         **/
         public static Gdk.Pixbuf? get_icon (string? uri, Gtk.Widget? widget) {
             if (!Midori.URI.is_resource (uri))
                 return null;
@@ -428,37 +474,15 @@ namespace Midori {
             if (widget != null)
                 Gtk.icon_size_lookup_for_settings (widget.get_settings (),
                     Gtk.IconSize.MENU, out icon_width, out icon_height);
+            else
+                icon_width = icon_height = 0 /* maximum size */;
 #if HAVE_WEBKIT2
-            /* TODO async
-            var database = WebKit.WebContext.get_default ().get_favicon_database ();
-            database.get_favicon.begin (uri, null); */
-#elif HAVE_WEBKIT_1_8_0
+            /* There is no sync API for WebKit2 */
+#else
             Gdk.Pixbuf? pixbuf = WebKit.get_favicon_database ()
                 .try_get_favicon_pixbuf (uri, icon_width, icon_height);
             if (pixbuf != null)
                 return pixbuf;
-#elif HAVE_WEBKIT_1_3_13
-            Gdk.Pixbuf? pixbuf = WebKit.get_icon_database ().get_icon_pixbuf (uri);
-            if (pixbuf != null)
-                return pixbuf.scale_simple (icon_width, icon_height, Gdk.InterpType.BILINEAR);
-#else
-            if (Midori.URI.is_http (uri)) {
-                try {
-                    uint i = 8;
-                    while (uri[i] != '\0' && uri[i] != '/')
-                        i++;
-                    string icon_uri = (uri[i] == '/')
-                        ? uri.substring (0, i) + "/favicon.ico"
-                        : uri + "/favicon.ico";
-                    string checksum = Checksum.compute_for_string (ChecksumType.MD5, icon_uri, -1);
-                    string filename = checksum + Midori.Download.get_extension_for_uri (icon_uri) ?? "";
-                    string path = Path.build_filename (get_cache_dir_for_reading (), "icons", filename);
-                    Gdk.Pixbuf? pixbuf = new Gdk.Pixbuf.from_file_at_size (path, icon_width, icon_height);
-                    if (pixbuf != null)
-                        return pixbuf;
-                }
-                catch (GLib.Error error) { }
-            }
 #endif
             if (widget != null)
                 return widget.render_icon (Gtk.STOCK_FILE, Gtk.IconSize.MENU, null);

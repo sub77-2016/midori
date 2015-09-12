@@ -21,15 +21,10 @@
 #include <glib/gi18n.h>
 #include <libsoup/soup.h>
 
-#if WEBKIT_CHECK_VERSION (1, 3, 11)
     #define LIBSOUP_USE_UNSTABLE_REQUEST_API
     #include <libsoup/soup-cache.h>
-#endif
 
 #include <config.h>
-#if HAVE_LIBNOTIFY
-    #include <libnotify/notify.h>
-#endif
 
 struct _MidoriPreferences
 {
@@ -145,7 +140,7 @@ midori_preferences_get_property (GObject*    object,
  *
  * Since 0.1.2 @parent may be %NULL.
  *
- * Return value: a new #MidoriPreferences
+ * Return value: (transfer full): a new #MidoriPreferences
  **/
 GtkWidget*
 midori_preferences_new (GtkWindow*         parent,
@@ -203,24 +198,6 @@ midori_preferences_toolbutton_clicked_cb (GtkWidget* toolbutton,
 }
 #endif
 
-static inline void
-midori_preferences_add_toolbutton (GtkWidget*   toolbar,
-                                   GtkWidget**  toolbutton,
-                                   const gchar* icon,
-                                   const gchar* label,
-                                   GtkWidget*   page)
-{
-#if HAVE_OSX
-    *toolbutton = GTK_WIDGET (*toolbutton ? gtk_radio_tool_button_new_from_widget (
-        GTK_RADIO_TOOL_BUTTON (*toolbutton)) : gtk_radio_tool_button_new (NULL));
-    gtk_tool_button_set_label (GTK_TOOL_BUTTON (*toolbutton), label);
-    gtk_tool_button_set_stock_id (GTK_TOOL_BUTTON (*toolbutton), icon);
-    gtk_toolbar_insert (GTK_TOOLBAR (toolbar), GTK_TOOL_ITEM (*toolbutton), -1);
-    g_signal_connect (*toolbutton, "clicked",
-        G_CALLBACK (midori_preferences_toolbutton_clicked_cb), page);
-#endif
-}
-
 #if 0
 static void
 midori_preferences_list_dicts_cb (const gchar* lang_tag,
@@ -240,6 +217,17 @@ midori_preferences_get_spell_languages (void)
     enchant_broker_list_dicts (broker, (GCallback)midori_preferences_list_dicts_cb, &dicts);
     enchant_broker_free (broker);
     return dicts;
+}
+#endif
+
+#ifdef G_OS_WIN32
+static void
+midori_preferences_theme_changed_cb (GtkWidget* button,
+                                     gpointer   user_data)
+{
+    MidoriSettings* settings = user_data;
+    midori_settings_set_theme_name (settings,
+        gtk_combo_box_text_get_active_text (GTK_COMBO_BOX_TEXT (button)));
 }
 #endif
 
@@ -381,7 +369,6 @@ midori_preferences_set_settings (MidoriPreferences* preferences,
     button = katze_property_proxy (settings, "enable-javascript", NULL);
     gtk_button_set_label (GTK_BUTTON (button), _("Enable scripts"));
     INDENTED_ADD (button);
-    #if WEBKIT_CHECK_VERSION (1, 3, 8)
     button = katze_property_proxy (settings, "enable-webgl", NULL);
     gtk_button_set_label (GTK_BUTTON (button), _("Enable WebGL support"));
     #ifndef HAVE_WEBKIT2
@@ -394,14 +381,9 @@ midori_preferences_set_settings (MidoriPreferences* preferences,
         gchar* supports_web_gl = sokoke_js_script_eval (js_context,
             "!!window.WebGLRenderingContext", NULL);
         if (g_strcmp0 (supports_web_gl, "true"))
-            gtk_widget_set_sensitive (button, FALSE);
+            gtk_widget_hide (button);
         g_free (supports_web_gl);
     }
-    #endif
-    #else
-    button = katze_property_proxy (settings, "enable-plugins", NULL);
-    gtk_button_set_label (GTK_BUTTON (button), _("Enable Netscape plugins"));
-    gtk_widget_set_sensitive (button, midori_web_settings_has_plugin_support ());
     #endif
     SPANNED_ADD (button);
     button = katze_property_proxy (settings, "zoom-text-and-images", NULL);
@@ -410,6 +392,12 @@ midori_preferences_set_settings (MidoriPreferences* preferences,
     button = katze_property_proxy (settings, "javascript-can-open-windows-automatically", NULL);
     gtk_button_set_label (GTK_BUTTON (button), _("Allow scripts to open popups"));
     gtk_widget_set_tooltip_text (button, _("Whether scripts are allowed to open popup windows automatically"));
+    SPANNED_ADD (button);
+    label = gtk_label_new (_("Default Zoom Level"));
+    gtk_misc_set_alignment (GTK_MISC (label), 0.0, 0.5);
+    INDENTED_ADD (label);
+    button = katze_property_proxy (settings, "zoom-level", NULL);
+    gtk_widget_set_tooltip_text (button, _("Initial factor to enlarge newly opened tabs by"));
     SPANNED_ADD (button);
 
     FRAME_NEW (NULL);
@@ -427,10 +415,50 @@ midori_preferences_set_settings (MidoriPreferences* preferences,
 
     /* Page "Interface" */
     PAGE_NEW (GTK_STOCK_CONVERT, _("Browsing"));
+    gboolean has_toolbar = parent && MIDORI_IS_BROWSER (parent) && GTK_IS_TOOLBAR (katze_object_get_object (parent, "toolbar"));
+    #ifndef G_OS_WIN32
+    if (has_toolbar)
+    #endif
         FRAME_NEW (NULL);
+    #ifdef G_OS_WIN32
+    INDENTED_ADD (gtk_label_new (_("Theme:")));
+    button = gtk_combo_box_text_new ();
+    SPANNED_ADD (button);
+    guint i = 0;
+    /* On Windows the default theme may be a built-in specific to the
+       running system. So we always add the default and skip it later.
+     */
+    const gchar* default_theme = midori_settings_get_default_theme_name (MIDORI_SETTINGS (settings));
+    gtk_combo_box_text_append_text (GTK_COMBO_BOX_TEXT (button), default_theme);
+    gtk_combo_box_set_active (GTK_COMBO_BOX (button), i++);
+
+    const gchar* current_theme = midori_settings_get_theme_name (MIDORI_SETTINGS (settings));
+    gchar* theme_path = midori_paths_get_data_filename ("themes", FALSE);
+    GDir* dir;
+    if ((dir = g_dir_open (theme_path, 0, NULL)))
+    {
+        const gchar* name;
+        while ((name = g_dir_read_name (dir)))
+        {
+            if (!g_strcmp0 (name, default_theme))
+                continue;
+            gtk_combo_box_text_append_text (GTK_COMBO_BOX_TEXT (button), name);
+            if (!g_strcmp0 (name, current_theme))
+                gtk_combo_box_set_active (GTK_COMBO_BOX (button), i);
+            i++;
+        }
+        g_dir_close (dir);
+        g_signal_connect (button, "changed",
+                          G_CALLBACK (midori_preferences_theme_changed_cb), settings);
+    }
+    g_free (theme_path);
+    #endif
+    if (has_toolbar)
+    {
         INDENTED_ADD (gtk_label_new (_("Toolbar Style:")));
         button = katze_property_proxy (settings, "toolbar-style", NULL);
         SPANNED_ADD (button);
+    }
     FRAME_NEW (NULL);
     label = gtk_label_new (_("Open new pages in:"));
     INDENTED_ADD (label);
@@ -443,11 +471,6 @@ midori_preferences_set_settings (MidoriPreferences* preferences,
     button = katze_property_proxy (settings, "close-buttons-on-tabs", NULL);
     gtk_button_set_label (GTK_BUTTON (button), _("Close Buttons on Tabs"));
     INDENTED_ADD (button);
-    #ifndef HAVE_GRANITE
-    button = katze_property_proxy (settings, "always-show-tabbar", NULL);
-    gtk_button_set_label (GTK_BUTTON (button), _("Always Show Tabbar"));
-    SPANNED_ADD (button);
-    #endif
     button = katze_property_proxy (settings, "open-tabs-next-to-current", NULL);
     gtk_button_set_label (GTK_BUTTON (button), _("Open Tabs next to Current"));
     gtk_widget_set_tooltip_text (button, _("Whether to open new tabs next to the current tab or after the last one"));
@@ -455,18 +478,6 @@ midori_preferences_set_settings (MidoriPreferences* preferences,
     button = katze_property_proxy (settings, "open-tabs-in-the-background", NULL);
     gtk_button_set_label (GTK_BUTTON (button), _("Open tabs in the background"));
     SPANNED_ADD (button);
-
-    INDENTED_ADD (gtk_label_new (NULL));
-    label = gtk_label_new (_("Text Editor"));
-    gtk_misc_set_alignment (GTK_MISC (label), 0.0, 0.5);
-    INDENTED_ADD (label);
-    entry = katze_property_proxy (settings, "text-editor", "application-text/plain");
-    SPANNED_ADD (entry);
-    label = gtk_label_new (_("News Aggregator"));
-    gtk_misc_set_alignment (GTK_MISC (label), 0.0, 0.5);
-    INDENTED_ADD (label);
-    entry = katze_property_proxy (settings, "news-aggregator", "application-News");
-    SPANNED_ADD (entry);
 
     /* Page "Network" */
     PAGE_NEW (GTK_STOCK_NETWORK, _("Network"));
@@ -476,23 +487,22 @@ midori_preferences_set_settings (MidoriPreferences* preferences,
     INDENTED_ADD (label);
     button = katze_property_proxy (settings, "proxy-type", NULL);
     SPANNED_ADD (button);
-    label = gtk_label_new (_("Hostname"));
+    label = gtk_label_new (_("URI"));
     gtk_misc_set_alignment (GTK_MISC (label), 0.0, 0.5);
     INDENTED_ADD (label);
     entry = katze_property_proxy (settings, "http-proxy", "address");
     SPANNED_ADD (entry);
-    g_signal_connect (settings, "notify::proxy-type",
-        G_CALLBACK (midori_preferences_notify_proxy_type_cb), entry);
+    g_signal_connect_object (settings, "notify::proxy-type",
+        G_CALLBACK (midori_preferences_notify_proxy_type_cb), entry, 0);
     midori_preferences_notify_proxy_type_cb (settings, NULL, entry);
     label = gtk_label_new (_("Port"));
     gtk_misc_set_alignment (GTK_MISC (label), 0.0, 0.5);
     INDENTED_ADD (label);
     entry = katze_property_proxy (settings, "http-proxy-port", NULL);
     SPANNED_ADD (entry);
-    g_signal_connect (settings, "notify::proxy-type",
-        G_CALLBACK (midori_preferences_notify_proxy_type_cb), entry);
+    g_signal_connect_object (settings, "notify::proxy-type",
+        G_CALLBACK (midori_preferences_notify_proxy_type_cb), entry, 0);
     midori_preferences_notify_proxy_type_cb (settings, NULL, entry);
-    #if GLIB_CHECK_VERSION (2, 26, 0)
     INDENTED_ADD (gtk_event_box_new ());
     label = gtk_label_new (NULL);
     GString* proxy_types = g_string_new (NULL);
@@ -509,11 +519,9 @@ midori_preferences_set_settings (MidoriPreferences* preferences,
     gtk_label_set_markup (GTK_LABEL (label), proxy_types->str);
     g_string_free (proxy_types, TRUE);
     SPANNED_ADD (label);
-    g_signal_connect (settings, "notify::proxy-type",
-        G_CALLBACK (midori_preferences_notify_proxy_type_cb), label);
+    g_signal_connect_object (settings, "notify::proxy-type",
+        G_CALLBACK (midori_preferences_notify_proxy_type_cb), label, 0);
     midori_preferences_notify_proxy_type_cb (settings, NULL, label);
-    #endif
-    #if WEBKIT_CHECK_VERSION (1, 3, 11)
 #ifndef HAVE_WEBKIT2
     if (soup_session_get_feature (webkit_get_default_session (), SOUP_TYPE_CACHE))
     {
@@ -521,6 +529,7 @@ midori_preferences_set_settings (MidoriPreferences* preferences,
         gtk_widget_set_tooltip_text (label, _("The maximum size of cached pages on disk"));
         INDENTED_ADD (label);
         button = katze_property_proxy (settings, "maximum-cache-size", NULL);
+        gtk_spin_button_set_range (GTK_SPIN_BUTTON (button), 0, G_MAXINT);
         gtk_widget_set_tooltip_text (button, _("The maximum size of cached pages on disk"));
         SPANNED_ADD (button);
         label = gtk_label_new (_("MB"));
@@ -528,7 +537,6 @@ midori_preferences_set_settings (MidoriPreferences* preferences,
         SPANNED_ADD (label);
     }
 #endif
-    #endif
     /* i18n: This refers to an application, not the 'user agent' string */
     label = gtk_label_new (_("Identify as"));
     gtk_misc_set_alignment (GTK_MISC (label), 0.0, 0.5);
@@ -545,6 +553,9 @@ midori_preferences_add_privacy_category (KatzePreferences*  preferences,
     GtkWidget* label;
     gchar* markup;
 
+    g_return_if_fail (KATZE_IS_PREFERENCES (preferences));
+    g_return_if_fail (MIDORI_IS_WEB_SETTINGS (settings));
+
     katze_preferences_add_category (preferences, _("Privacy"), GTK_STOCK_INDEX);
     katze_preferences_add_group (preferences, NULL);
     button = gtk_label_new (_("Delete old Cookies after:"));
@@ -554,12 +565,10 @@ midori_preferences_add_privacy_category (KatzePreferences*  preferences,
     button = katze_property_proxy (settings, "maximum-cookie-age", "days");
     gtk_widget_set_tooltip_text (button, _("The maximum number of days to save cookies for"));
     katze_preferences_add_widget (preferences, button, "spanned");
-    #ifdef HAVE_LIBSOUP_2_29_91
     button = katze_property_proxy (settings, "first-party-cookies-only", NULL);
     gtk_button_set_label (GTK_BUTTON (button), _("Only accept Cookies from sites you visit"));
     gtk_widget_set_tooltip_text (button, _("Block cookies sent by third-party websites"));
     katze_preferences_add_widget (preferences, button, "filled");
-    #endif
 
     markup = g_strdup_printf ("<span size=\"smaller\">%s</span>",
         _("Cookies store login data, saved games, "
@@ -595,7 +604,6 @@ midori_preferences_add_extension_category (KatzePreferences*  preferences,
                                            MidoriApp*         app)
 {
     KatzeArray* array;
-    gchar* extension_path;
     GtkWidget* scrolled;
     GtkWidget* addon;
     GList* children;

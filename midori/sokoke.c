@@ -1,5 +1,5 @@
 /*
- Copyright (C) 2007-2011 Christian Dywan <christian@twotoasts.de>
+ Copyright (C) 2007-2013 Christian Dywan <christian@twotoasts.de>
  Copyright (C) 2009 Dale Whittaker <dayul@users.sf.net>
  Copyright (C) 2009 Alexander Butenko <a.butenka@gmail.com>
 
@@ -33,6 +33,12 @@
 #include <glib/gprintf.h>
 #include <glib/gstdio.h>
 #include "katze/katze.h"
+
+#ifdef G_OS_WIN32
+#include <windows.h>
+#include <shlobj.h>
+#include <gdk/gdkwin32.h>
+#endif
 
 static gchar*
 sokoke_js_string_utf8 (JSStringRef js_string)
@@ -104,39 +110,10 @@ sokoke_message_dialog (GtkMessageType message_type,
                        const gchar*   detailed_message,
                        gboolean       modal)
 {
-    GtkWidget* dialog = gtk_message_dialog_new (
-        NULL, 0, message_type, GTK_BUTTONS_OK, "%s", short_message);
-    gtk_message_dialog_format_secondary_text (GTK_MESSAGE_DIALOG (dialog),
-                                              "%s", detailed_message);
-    if (modal)
-    {
-        gtk_dialog_run (GTK_DIALOG (dialog));
-        gtk_widget_destroy (dialog);
-    }
-    else
-    {
-        g_signal_connect_swapped (dialog, "response",
-            G_CALLBACK (gtk_widget_destroy), dialog);
-        gtk_widget_show (dialog);
-    }
-
+    midori_show_message_dialog (message_type, short_message, detailed_message, modal);
 }
 
-static void
-sokoke_open_with_response_cb (GtkWidget* dialog,
-                              gint       response,
-                              GtkEntry*  entry)
-{
-    if (response == GTK_RESPONSE_ACCEPT)
-    {
-        const gchar* command = gtk_entry_get_text (entry);
-        const gchar* uri = g_object_get_data (G_OBJECT (dialog), "uri");
-        sokoke_spawn_program (command, FALSE, uri, TRUE, FALSE);
-    }
-    gtk_widget_destroy (dialog);
-}
-
-static GAppInfo*
+GAppInfo*
 sokoke_default_for_uri (const gchar* uri,
                         gchar**      scheme_ptr)
 {
@@ -148,123 +125,12 @@ sokoke_default_for_uri (const gchar* uri,
         return NULL;
 
     info = g_app_info_get_default_for_uri_scheme (scheme);
-    #if !GLIB_CHECK_VERSION (2, 28, 0)
-    if (!info)
-    {
-        gchar* type = g_strdup_printf ("x-scheme-handler/%s", scheme);
-        info = g_app_info_get_default_for_type (type, FALSE);
-        g_free (type);
-    }
-    #endif
     if (scheme_ptr != NULL)
         *scheme_ptr = scheme;
     else
         g_free (scheme);
     return info;
 
-}
-
-/**
- * sokoke_show_uri:
- * @screen: a #GdkScreen, or %NULL
- * @uri: the URI to show
- * @timestamp: the timestamp of the event
- * @error: the location of a #GError, or %NULL
- *
- * Shows the specified URI with an application or xdg-open.
- * x-scheme-handler is supported for GLib < 2.28 as of 0.3.3.
- *
- * Return value: %TRUE on success, %FALSE if an error occurred
- **/
-gboolean
-sokoke_show_uri (GdkScreen*   screen,
-                 const gchar* uri,
-                 guint32      timestamp,
-                 GError**     error)
-{
-    #ifdef G_OS_WIN32
-    CoInitializeEx (NULL, COINIT_APARTMENTTHREADED);
-    SHELLEXECUTEINFO info = { sizeof (info) };
-    info.nShow = SW_SHOWNORMAL;
-    info.lpFile = uri;
-
-    return ShellExecuteEx (&info);
-    #else
-
-    #if !GLIB_CHECK_VERSION (2, 28, 0)
-    GAppInfo* info;
-    gchar* scheme;
-    #endif
-    GtkWidget* dialog;
-    GtkWidget* box;
-    gchar* filename;
-    gchar* ms;
-    GtkWidget* entry;
-
-    g_return_val_if_fail (GDK_IS_SCREEN (screen) || !screen, FALSE);
-    g_return_val_if_fail (uri != NULL, FALSE);
-    g_return_val_if_fail (!error || !*error, FALSE);
-
-    sokoke_recursive_fork_protection (uri, TRUE);
-
-    /* g_app_info_launch_default_for_uri, gdk_display_get_app_launch_context */
-    if (gtk_show_uri (screen, uri, timestamp, error))
-        return TRUE;
-
-    #if !GLIB_CHECK_VERSION (2, 28, 0)
-    info = sokoke_default_for_uri (uri, &scheme);
-    if (info)
-    {
-        gchar* argument = g_strdup (&uri[scheme - uri]);
-        GList* uris = g_list_prepend (NULL, argument);
-        if (g_app_info_launch_uris (info, uris, NULL, NULL))
-        {
-            g_list_free (uris);
-            g_free (scheme);
-            g_object_unref (info);
-            return TRUE;
-        }
-        g_list_free (uris);
-        g_free (scheme);
-        g_object_unref (info);
-    }
-    #endif
-
-    {
-        gchar* command = g_strconcat ("xdg-open ", uri, NULL);
-        gboolean result = g_spawn_command_line_async (command, error);
-        g_free (command);
-        if (result)
-            return TRUE;
-        if (error)
-            *error = NULL;
-    }
-
-    dialog = gtk_dialog_new_with_buttons (_("Open with"), NULL, 0,
-        GTK_STOCK_CANCEL, GTK_RESPONSE_CANCEL,
-        GTK_STOCK_OPEN, GTK_RESPONSE_ACCEPT, NULL);
-    box = gtk_dialog_get_content_area (GTK_DIALOG (dialog));
-    if (g_str_has_prefix (uri, "file:///"))
-        filename = g_filename_from_uri (uri, NULL, NULL);
-    else
-        filename = g_strdup (uri);
-    ms = g_strdup_printf (_("Choose an application or command to open \"%s\":"),
-                          filename);
-    gtk_box_pack_start (GTK_BOX (box), gtk_label_new (ms), TRUE, FALSE, 4);
-    g_free (ms);
-    entry = gtk_entry_new ();
-    gtk_entry_set_activates_default (GTK_ENTRY (entry), TRUE);
-    gtk_box_pack_start (GTK_BOX (box), entry, TRUE, FALSE, 4);
-    g_signal_connect (dialog, "response",
-                      G_CALLBACK (sokoke_open_with_response_cb), entry);
-    g_object_set_data_full (G_OBJECT (dialog), "uri",
-                            filename, (GDestroyNotify)g_free);
-    gtk_widget_show_all (dialog);
-    gtk_dialog_set_default_response (GTK_DIALOG (dialog), GTK_RESPONSE_ACCEPT);
-    gtk_widget_grab_focus (entry);
-
-    return TRUE;
-    #endif
 }
 
 /**
@@ -474,10 +340,12 @@ sokoke_external_uri (const gchar* uri)
 {
     GAppInfo* info;
 
-    if (!uri || !strncmp (uri, "http", 4)
-             || !strncmp (uri, "file", 4)
-             || !strncmp (uri, "geo", 3)
-             || !strncmp (uri, "about:", 6))
+    /* URI schemes are case-insensitive, followed by ':' - rfc3986 */
+    if (!uri || !strncasecmp (uri, "http:", 5)
+             || !strncasecmp (uri, "https:", 6)
+             || !strncasecmp (uri, "file:", 5)
+             || !strncasecmp (uri, "geo:", 4)
+             || !strncasecmp (uri, "about:", 6))
         return FALSE;
 
     info = sokoke_default_for_uri (uri, NULL);
@@ -744,80 +612,6 @@ sokoke_widget_get_text_size (GtkWidget*   widget,
 }
 
 /**
- * sokoke_action_create_popup_menu_item:
- * @action: a #GtkAction
- *
- * Creates a menu item from an action, just like
- * gtk_action_create_menu_item(), but it won't
- * display an accelerator.
- *
- * Note: This menu item is not a proxy and will
- *       not reflect any changes to the action.
- *
- * Return value: a new #GtkMenuItem
- **/
-GtkWidget*
-sokoke_action_create_popup_menu_item (GtkAction* action)
-{
-    GtkWidget* menuitem;
-    GtkWidget* icon;
-    gchar* label;
-    gchar* stock_id;
-    gchar* icon_name;
-    gboolean sensitive;
-    gboolean visible;
-
-    g_return_val_if_fail (GTK_IS_ACTION (action), NULL);
-
-    if (KATZE_IS_ARRAY_ACTION (action))
-        return gtk_action_create_menu_item (action);
-
-    g_object_get (action,
-                  "label", &label,
-                  "stock-id", &stock_id,
-                  "icon-name", &icon_name,
-                  "sensitive", &sensitive,
-                  "visible", &visible,
-                  NULL);
-    if (GTK_IS_TOGGLE_ACTION (action))
-    {
-        menuitem = gtk_check_menu_item_new_with_mnemonic (label);
-        gtk_check_menu_item_set_active (GTK_CHECK_MENU_ITEM (menuitem),
-            gtk_toggle_action_get_active (GTK_TOGGLE_ACTION (action)));
-        if (GTK_IS_RADIO_ACTION (action))
-            gtk_check_menu_item_set_draw_as_radio (GTK_CHECK_MENU_ITEM (menuitem),
-                                                   TRUE);
-    }
-    else if (stock_id)
-    {
-        if (label)
-        {
-            menuitem = gtk_image_menu_item_new_with_mnemonic (label);
-            icon = gtk_action_create_icon (action, GTK_ICON_SIZE_MENU);
-            gtk_image_menu_item_set_image (GTK_IMAGE_MENU_ITEM (menuitem), icon);
-        }
-        else
-            menuitem = gtk_image_menu_item_new_from_stock (stock_id, NULL);
-    }
-    else
-    {
-        menuitem = gtk_image_menu_item_new_with_mnemonic (label);
-        if (icon_name)
-        {
-            icon = gtk_image_new_from_icon_name (icon_name, GTK_ICON_SIZE_MENU);
-            gtk_image_menu_item_set_image (GTK_IMAGE_MENU_ITEM (menuitem), icon);
-        }
-    }
-    gtk_widget_set_sensitive (menuitem, sensitive);
-    sokoke_widget_set_visible (menuitem, visible);
-    gtk_widget_set_no_show_all (menuitem, TRUE);
-    g_signal_connect_swapped (menuitem, "activate",
-                              G_CALLBACK (gtk_action_activate), action);
-
-    return menuitem;
-}
-
-/**
  * sokoke_time_t_to_julian:
  * @timestamp: a time_t timestamp value
  *
@@ -957,10 +751,15 @@ sokoke_prefetch_uri (MidoriWebSettings*  settings,
                      GCallback           callback,
                      gpointer            user_data)
 {
-    #define MAXHOSTS 50
-    static gchar* hosts = NULL;
-    static gint host_count = G_MAXINT;
     gchar* hostname;
+#ifndef HAVE_WEBKIT2
+    SoupURI* soup_uri;
+    SoupSession* session = webkit_get_default_session ();
+
+    g_object_get (G_OBJECT (session), "proxy-uri", &soup_uri, NULL);
+    if (soup_uri)
+        return FALSE;
+#endif
 
     if (settings && !katze_object_get_boolean (settings, "enable-dns-prefetching"))
         return FALSE;
@@ -979,6 +778,10 @@ sokoke_prefetch_uri (MidoriWebSettings*  settings,
     g_free (hostname);
     return FALSE;
 #else
+    #define MAXHOSTS 50
+    static gchar* hosts = NULL;
+    static gint host_count = G_MAXINT;
+
     if (!hosts ||
         !g_regex_match_simple (hostname, hosts,
                                G_REGEX_CASELESS, G_REGEX_MATCH_NOTEMPTY))
@@ -1004,36 +807,6 @@ sokoke_prefetch_uri (MidoriWebSettings*  settings,
     g_free (hostname);
     return TRUE;
 #endif
-}
-
-/**
- * sokoke_recursive_fork_protection
- * @uri: the URI to check
- * @set_uri: if TRUE the URI will be saved
- *
- * Protects against recursive invokations of the Midori executable
- * with the same URI.
- *
- * As an example, consider having an URI starting with 'tel://'. You
- * could attempt to open it with sokoke_show_uri. In turn, 'exo-open'
- * might be called. Now quite possibly 'exo-open' is unable to handle
- * 'tel://' and might well fall back to 'midori' as default browser.
- *
- * To protect against this scenario, call this function with the
- * URI and %TRUE before calling any external tool.
- * #MidoriApp calls sokoke_recursive_fork_protection() with %FALSE
- * and bails out if %FALSE is returned.
- *
- * Return value: %TRUE if @uri is new, %FALSE on recursion
- **/
-gboolean
-sokoke_recursive_fork_protection (const gchar* uri,
-                                  gboolean     set_uri)
-{
-    static gchar* fork_uri = NULL;
-    if (set_uri)
-        katze_assign (fork_uri, g_strdup (uri));
-    return g_strcmp0 (fork_uri, uri) == 0 ? FALSE : TRUE;
 }
 
 static void
@@ -1094,9 +867,8 @@ sokoke_entry_changed_cb (GtkEditable* editable,
     const gchar* text = gtk_entry_get_text (entry);
     gboolean visible = text && *text
       && ! sokoke_entry_has_placeholder_text (entry);
-    gtk_icon_entry_set_icon_from_stock (
-        GTK_ICON_ENTRY (entry),
-        GTK_ICON_ENTRY_SECONDARY,
+    gtk_entry_set_icon_from_stock (
+        entry, GTK_ENTRY_ICON_SECONDARY,
         visible ? GTK_STOCK_CLEAR : NULL);
 }
 
@@ -1111,11 +883,11 @@ sokoke_entry_focus_out_event_cb (GtkEditable*   editable,
 
 static void
 sokoke_entry_icon_released_cb (GtkEntry*            entry,
-                               GtkIconEntryPosition icon_pos,
+                               GtkEntryIconPosition icon_pos,
                                GdkEvent*            event,
                                gpointer             user_data)
 {
-    if (icon_pos != GTK_ICON_ENTRY_SECONDARY)
+    if (icon_pos != GTK_ENTRY_ICON_SECONDARY)
         return;
 
     gtk_entry_set_text (entry, "");
@@ -1129,7 +901,7 @@ sokoke_search_entry_new (const gchar* placeholder_text)
     gtk_entry_set_placeholder_text (GTK_ENTRY (entry), placeholder_text);
     gtk_entry_set_icon_from_stock (GTK_ENTRY (entry),
                                    GTK_ENTRY_ICON_PRIMARY, GTK_STOCK_FIND);
-    gtk_icon_entry_set_icon_highlight (GTK_ENTRY (entry),
+    gtk_entry_set_icon_activatable (GTK_ENTRY (entry),
         GTK_ENTRY_ICON_SECONDARY, TRUE);
     {
         g_object_connect (entry,
@@ -1146,3 +918,90 @@ sokoke_search_entry_new (const gchar* placeholder_text)
     return entry;
 }
 
+#ifdef G_OS_WIN32
+gchar*
+sokoke_get_win32_desktop_lnk_path_for_filename (gchar* filename)
+{
+    const gchar* desktop_dir;
+    gchar* lnk_path, *lnk_file;
+
+    /* CSIDL_PROGRAMS for "start menu -> programs" instead - needs saner/shorter filename */
+    desktop_dir = g_get_user_special_dir (G_USER_DIRECTORY_DESKTOP);
+
+    lnk_file = g_strconcat (filename, ".lnk", NULL);
+    lnk_path = g_build_filename (desktop_dir, lnk_file, NULL);
+
+    g_free (lnk_file);
+
+    return lnk_path;
+}
+
+void
+sokoke_create_win32_desktop_lnk (gchar* prefix, gchar* filename, gchar* uri)
+{
+    WCHAR w[MAX_PATH];
+
+    gchar* exec_dir, *exec_path, *argument;
+    gchar* lnk_path, *launcher_type;
+
+    IShellLink* pShellLink;
+    IPersistFile* pPersistFile;
+
+    exec_dir = g_win32_get_package_installation_directory_of_module (NULL);
+    exec_path = g_build_filename (exec_dir, "bin", "midori.exe", NULL);
+
+    if (g_str_has_suffix (prefix, " -a "))
+        launcher_type = "-a";
+    else if (g_str_has_suffix (prefix, " -c "))
+        launcher_type = "-c";
+    else
+        g_assert_not_reached ();
+
+    argument = g_strdup_printf ("%s \"%s\"", launcher_type, uri);
+
+    /* Create link */
+    CoCreateInstance (&CLSID_ShellLink, NULL, CLSCTX_INPROC_SERVER, &IID_IShellLink, (LPVOID *)&pShellLink);
+    pShellLink->lpVtbl->SetPath (pShellLink, exec_path);
+    pShellLink->lpVtbl->SetArguments (pShellLink, argument);
+    /* TODO: support adding site favicon as webapp icon */
+    /* pShellLink->lpVtbl->SetIconLocation (pShellLink, icon_path, icon_index); */
+
+    /* Save link */
+    lnk_path = sokoke_get_win32_desktop_lnk_path_for_filename (filename);
+    pShellLink->lpVtbl->QueryInterface (pShellLink, &IID_IPersistFile, (LPVOID *)&pPersistFile);
+    MultiByteToWideChar (CP_UTF8, 0, lnk_path, -1, w, MAX_PATH);
+    pPersistFile->lpVtbl->Save (pPersistFile, w, TRUE);
+
+    pPersistFile->lpVtbl->Release (pPersistFile);
+    pShellLink->lpVtbl->Release (pShellLink);
+
+    g_free (exec_dir);
+    g_free (exec_path);
+    g_free (argument);
+    g_free (lnk_path);
+    g_free (launcher_type);
+}
+
+GdkPixbuf*
+sokoke_get_gdk_pixbuf_from_win32_executable (gchar* path)
+{
+    if (path == NULL)
+        return NULL;
+
+    GdkPixbuf* pixbuf = NULL;
+    HICON hIcon = NULL;
+    HINSTANCE hInstance = NULL;
+    hIcon = ExtractIcon (hInstance, (LPCSTR)path, 0);
+    if (hIcon == NULL)
+        return NULL;
+
+#if GTK_CHECK_VERSION (3, 9, 12)
+    pixbuf = gdk_win32_icon_to_pixbuf_libgtk_only (hIcon, NULL, NULL);
+#else
+    pixbuf = gdk_win32_icon_to_pixbuf_libgtk_only (hIcon);
+#endif
+    DestroyIcon (hIcon);
+
+    return pixbuf;
+}
+#endif

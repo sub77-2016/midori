@@ -1,5 +1,5 @@
 /*
- Copyright (C) 2012 Christian Dywan <christian@twotoasts.de>
+ Copyright (C) 2012-2013 Christian Dywan <christian@twotoasts.de>
 
  This library is free software; you can redistribute it and/or
  modify it under the terms of the GNU Lesser General Public
@@ -10,7 +10,6 @@
 */
 
 namespace Sokoke {
-    extern static bool show_uri (Gdk.Screen screen, string uri, uint32 timestamp) throws Error;
     extern static bool message_dialog (Gtk.MessageType type, string short, string detailed, bool modal);
 }
 
@@ -27,6 +26,8 @@ namespace Midori {
                     return false;
             }
 #else
+            if (download.estimated_progress == 1)
+                return true;
             return false;
 #endif
         }
@@ -39,6 +40,14 @@ namespace Midori {
             download.set_data<int> ("midori-download-type", type);
         }
 
+#if HAVE_WEBKIT2
+        public static string get_filename (WebKit.Download download) {
+            return download.get_data<string> ("midori-download-filename");
+        }
+        public static void set_filename (WebKit.Download download, string name) {
+            download.set_data<string> ("midori-download-filename", name);
+        }
+#endif
         public static double get_progress (WebKit.Download download) {
 #if !HAVE_WEBKIT2
             /* Avoid a bug in WebKit */
@@ -46,19 +55,13 @@ namespace Midori {
                 return 0.0;
             return download.progress;
 #else
-            return 0.0;
+            return download.estimated_progress;
 #endif
         }
 
-#if !HAVE_GLIB_2_30
-        private static string format_size (uint64 size) {
-            return format_size_for_display ((int64)size);
-        }
-#endif
-
-        public static string get_tooltip (WebKit.Download download) {
+        public static string calculate_tooltip (WebKit.Download download) {
 #if !HAVE_WEBKIT2
-            string filename = Path.get_basename (download.destination_uri);
+            string filename = Midori.Download.get_basename_for_display (download.destination_uri);
             /* i18n: Download tooltip (size): 4KB of 43MB */
             string size = _("%s of %s").printf (
                 format_size (download.current_size),
@@ -99,8 +102,14 @@ namespace Midori {
             string speed = "";
             uint64? last_size = download.get_data<uint64?> ("last-size");
             if (last_size != null && elapsed != last_time) {
-                speed = format_size ((uint64)(
-                    (current_size - last_size) / (elapsed - last_time)));
+                if (current_size != last_size) {
+                    speed = format_size ((uint64)(
+                        (current_size - last_size) / (elapsed - last_time)));
+                    download.set_data ("last-speed", speed.dup ());
+                }
+                else {
+                    speed = download.get_data ("last-speed");
+                }
             }
             else
                 /* i18n: Unknown number of bytes, used for transfer rate like ?B/s */
@@ -115,39 +124,57 @@ namespace Midori {
 
             return "%s\n%s %s%s".printf (filename, size, speed, eta);
 #else
-            return "";
+            string filename = Midori.Download.get_basename_for_display (download.destination);
+
+            string size = "%s".printf (format_size (download.get_received_data_length ()));
+            string speed = "";
+            speed = format_size ((uint64)((download.get_received_data_length () * 1.0) / download.get_elapsed_time ()));
+            speed = _(" (%s/s)").printf (speed);
+            string progress = "%d%%".printf( (int) (download.get_estimated_progress ()*100));
+            if (is_finished (download))
+                return "%s\n %s".printf (filename, size);
+            return "%s\n %s - %s".printf (filename, speed, progress);
 #endif
         }
 
         public static string get_content_type (WebKit.Download download, string? mime_type) {
-#if !HAVE_WEBKIT2
+#if HAVE_WEBKIT2
+            string? content_type = ContentType.guess (download.response.suggested_filename == null ?
+                          download.destination : download.response.suggested_filename,
+                          null, null);
+#else
             string? content_type = ContentType.guess (download.suggested_filename, null, null);
+#endif
             if (content_type == null) {
                 content_type = ContentType.from_mime_type (mime_type);
                 if (content_type == null)
                     content_type = ContentType.from_mime_type ("application/octet-stream");
             }
             return content_type;
-#else
-            return ContentType.from_mime_type ("application/octet-stream");
-#endif
         }
 
         public static bool has_wrong_checksum (WebKit.Download download) {
-#if !HAVE_WEBKIT2
             int status = download.get_data<int> ("checksum-status");
             if (status == 0) {
                 /* Link Fingerprint */
+                #if HAVE_WEBKIT2
+                string? original_uri = download.get_request ().uri;
+                #else
                 string? original_uri = download.network_request.get_data<string> ("midori-original-uri");
                 if (original_uri == null)
                     original_uri = download.get_uri ();
+                #endif
                 string? fingerprint;
                 ChecksumType checksum_type = URI.get_fingerprint (original_uri, out fingerprint, null);
                 /* By default, no wrong checksum */
                 status = 2;
                 if (fingerprint != null) {
                     try {
+                        #if HAVE_WEBKIT2
+                        string filename = Filename.from_uri (download.destination);
+                        #else
                         string filename = Filename.from_uri (download.destination_uri);
+                        #endif
                         string contents;
                         size_t length;
                         bool y = FileUtils.get_contents (filename, out contents, out length);
@@ -163,9 +190,7 @@ namespace Midori {
                 download.set_data<int> ("checksum-status", status);
             }
             return status == 1;
-#else
-            return false;
-#endif
+
         }
 
         public static bool action_clear (WebKit.Download download, Gtk.Widget widget) throws Error {
@@ -185,6 +210,14 @@ namespace Midori {
                     critical ("action_clear: %d", download.status);
                     warn_if_reached ();
                     break;
+            }
+            #else
+
+            if (download.estimated_progress < 1) {
+                download.cancel ();
+            } else {
+                if (open (download, widget))
+                    return true;
             }
 #endif
             return false;
@@ -210,21 +243,34 @@ namespace Midori {
                     return Gtk.Stock.MISSING_IMAGE;
             }
 #else
-            return Gtk.Stock.MISSING_IMAGE;
+            if (download.estimated_progress == 1)
+                if (has_wrong_checksum (download))
+                    return Gtk.Stock.DIALOG_WARNING;
+                else
+                    return Gtk.Stock.OPEN;
+            return Gtk.Stock.CANCEL;
 #endif
         }
 
+        /* returns whether an application was successfully launched to handle the file */
         public static bool open (WebKit.Download download, Gtk.Widget widget) throws Error {
-#if !HAVE_WEBKIT2
-            if (!has_wrong_checksum (download))
-                return Sokoke.show_uri (widget.get_screen (),
-                    download.destination_uri, Gtk.get_current_event_time ());
-
-            Sokoke.message_dialog (Gtk.MessageType.WARNING,
-                _("The downloaded file is erroneous."),
-    _("The checksum provided with the link did not match. This means the file is probably incomplete or was modified afterwards."),
-                true);
-#endif
+            if (has_wrong_checksum (download)) {
+                Sokoke.message_dialog (Gtk.MessageType.WARNING,
+                     _("The downloaded file is erroneous."),
+                     _("The checksum provided with the link did not match. This means the file is probably incomplete or was modified afterwards."),
+                     true);
+                return true;
+            } else {
+                var browser = widget.get_toplevel ();
+                Tab? tab = null;
+                browser.get ("tab", &tab);
+                if (tab != null)
+                #if HAVE_WEBKIT2
+                    return tab.open_uri (download.destination);
+                #else
+                    return tab.open_uri (download.destination_uri);
+                #endif
+            }
             return false;
         }
 
@@ -244,9 +290,9 @@ namespace Midori {
 
         public string clean_filename (string filename) {
             #if HAVE_WIN32
-            return filename.delimit ("/\\<>:\"|?*", '_');
+            return filename.delimit ("/\\<>:\"|?* ", '_');
             #else
-            return filename.delimit ("/", '_');
+            return filename.delimit ("/ ", '_');
             #endif
         }
 
@@ -256,10 +302,17 @@ namespace Midori {
                https://d19vezwu8eufl6.cloudfront.net/nlp/slides%2F03-01-FormalizingNB.pdf */
             return clean_filename (download.get_suggested_filename ());
 #else
-            return "";
+            string name = get_filename (download);
+            if (name == null)
+                return "";
+            return name;
 #endif
         }
 
+        /**
+         * Returns a filename of the form "name.ext" to use as a suggested name for
+         * a download of the given uri
+         */
         public string get_filename_suggestion_for_uri (string mime_type, string uri) {
             return_val_if_fail (Midori.URI.is_location (uri), uri);
             string filename = File.new_for_uri (uri).get_basename ();
@@ -269,8 +322,7 @@ namespace Midori {
         }
 
         public static string? get_extension_for_uri (string uri, out string basename = null) {
-            if (&basename != null)
-                basename = null;
+            basename = null;
             /* Find the last slash and the last period *after* the last slash. */
             int last_slash = uri.last_index_of_char ('/');
             /* Huh, URI without slashes? */
@@ -283,8 +335,7 @@ namespace Midori {
             int query = uri.last_index_of_char ('?', period);
             /* The extension, or "." if it ended with a period */
             string extension = uri.substring (period, query - period);
-            if (&basename != null)
-                basename = uri.substring (0, period);
+            basename = uri.substring (0, period);
             return extension;
 
         }
@@ -303,9 +354,28 @@ namespace Midori {
             return filename;
         }
 
+        /**
+         * Returns a string showing a file:// URI's intended filename on
+         * disk, suited for displaying to a user.
+         * 
+         * The string returned is the basename (final path segment) of the
+         * filename of the uri. If the uri is invalid, not file://, or has no
+         * basename, the uri itself is returned.
+         * 
+         * Since: 0.5.7
+         **/
+        public static string get_basename_for_display (string uri) {
+            try {
+                string filename = Filename.from_uri (uri);
+                if(filename != null && filename != "")
+                    return Path.get_basename (filename);
+            } catch (Error error) { }
+            return uri;
+        }
+
         public string prepare_destination_uri (WebKit.Download download, string? folder) {
             string suggested_filename = get_suggested_filename (download);
-            string basename = File.new_for_uri (suggested_filename).get_basename ();
+            string basename = Path.get_basename (suggested_filename);
             string download_dir;
             if (folder == null) {
                 download_dir = Paths.get_tmp_dir ();
@@ -322,9 +392,13 @@ namespace Midori {
             }
         }
 
-        public static bool has_enough_space (WebKit.Download download, string uri) {
+        /**
+         * Returns whether it seems possible to save @download to the path specified by
+         * @destination_uri, considering space on disk and permissions
+         */
+        public static bool has_enough_space (WebKit.Download download, string destination_uri, bool quiet=false) {
 #if !HAVE_WEBKIT2
-            var folder = File.new_for_uri (uri).get_parent ();
+            var folder = File.new_for_uri (destination_uri).get_parent ();
             bool can_write;
             uint64 free_space;
             try {
@@ -343,18 +417,19 @@ namespace Midori {
                 string detailed_message;
                 if (!can_write) {
                     message = _("The file \"%s\" can't be saved in this folder.").printf (
-                        Path.get_basename (uri));
+                        Midori.Download.get_basename_for_display (destination_uri));
                     detailed_message = _("You don't have permission to write in this location.");
                 }
                 else if (free_space < download.total_size) {
                     message = _("There is not enough free space to download \"%s\".").printf (
-                        Path.get_basename (uri));
+                        Midori.Download.get_basename_for_display (destination_uri));
                     detailed_message = _("The file needs %s but only %s are left.").printf (
                         format_size (download.total_size), format_size (free_space));
                 }
                 else
                     assert_not_reached ();
-                Sokoke.message_dialog (Gtk.MessageType.ERROR, message, detailed_message, false);
+                if (!quiet)
+                    Sokoke.message_dialog (Gtk.MessageType.ERROR, message, detailed_message, false);
                 return false;
             }
 #endif

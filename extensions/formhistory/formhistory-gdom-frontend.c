@@ -8,7 +8,6 @@
  version 2.1 of the License, or (at your option) any later version.
 */
 #include "formhistory-frontend.h"
-#ifdef FORMHISTORY_USE_GDOM
 #define COMPLETION_DELAY 200
 
 FormHistoryPriv*
@@ -393,14 +392,12 @@ formhistory_DOMContentLoaded_cb (WebKitDOMElement* window,
     for (i = 0; i < webkit_dom_node_list_get_length (inputs); i++)
     {
         WebKitDOMNode* element = webkit_dom_node_list_item (inputs, i);
-        #if WEBKIT_CHECK_VERSION (1, 6, 1)
         gchar* autocomplete = webkit_dom_html_input_element_get_autocomplete (
             WEBKIT_DOM_HTML_INPUT_ELEMENT (element));
         gboolean off = !g_strcmp0 (autocomplete, "off");
         g_free (autocomplete);
         if (off)
             continue;
-        #endif
 
         g_object_set_data (G_OBJECT (element), "doc", doc);
         g_object_set_data (G_OBJECT (element), "webview", web_view);
@@ -460,11 +457,7 @@ formhistory_setup_suggestions (WebKitWebView*   web_view,
 void
 formhistory_private_destroy (FormHistoryPriv *priv)
 {
-    if (priv->db)
-    {
-        sqlite3_close (priv->db);
-        priv->db = NULL;
-    }
+    katze_object_assign (priv->database, NULL);
     katze_assign (priv->oldkeyword, NULL);
     gtk_widget_destroy (priv->popup);
     priv->popup = NULL;
@@ -506,9 +499,9 @@ formhistory_construct_popup_gui (FormHistoryPriv* priv)
     column = gtk_tree_view_column_new_with_attributes ("suggestions", renderer, "text", 0, NULL);
     gtk_tree_view_append_column (GTK_TREE_VIEW (treeview), column);
     priv->popup = popup;
+    priv->element = NULL;
 
     g_signal_connect (treeview, "button-press-event",
         G_CALLBACK (formhistory_suggestion_selected_cb), priv);
     return TRUE;
 }
-#endif

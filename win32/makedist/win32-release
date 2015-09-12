@@ -10,43 +10,48 @@
 # See the file COPYING for the full license text.
 
 
-version=$(git describe --abbrev=0)
-dropbox_dir=$HOME/Dropbox/Public
+SRCDIR=$PWD
+CONFIGURE_OPTIONS="-DUSE_ZEITGEIST=0 -DUSE_GTK3=1 -DCMAKE_VERBOSE_MAKEFILE=0 -DEXTRA_WARNINGS=1"
 
 # 32-bit build
 #mingw32-env
 export MINGW_PREFIX="/usr/i686-w64-mingw32/sys-root/mingw"
 eval `rpm --eval %{mingw32_env}`
 
-./configure --prefix=$MINGW_PREFIX --enable-gtk3
-make clean
-sudo make install
+rm -fr _mingw32
+mkdir _mingw32 && cd _mingw32
+mingw32-cmake -DCMAKE_INSTALL_PREFIX=$MINGW_PREFIX ${CONFIGURE_OPTIONS} $SRCDIR
+make
+sudo make install || exit
 
-rpmquery -qa mingw32* > midori-${version}-deps-i686.txt
-rm -f midori-$version.sha1
 
-MINGW_PREFIX=${MINGW_PREFIX} RELEASE=1 NSIS=1 ./win32/makedist/makedist.midori
-mv -v midori-${version}.7z $dropbox_dir
-mv -v Midori-${version}_setup.exe $dropbox_dir
+version=$(grep set\(VERSION $SRCDIR/CMakeLists.txt|head -n1|sed -e 's/^.*set(VERSION \([0-9.]*\)).*$/\1/')
 
-dropbox puburl $dropbox_dir/midori-${version}.7z >  release_links.txt
-dropbox puburl $dropbox_dir/Midori-${version}_setup.exe >> release_links.txt
+rpmquery -qa mingw32* > $SRCDIR/midori-${version}-deps-i686.txt
+rm -f $SRCDIR/midori-$version.sha1
 
-if [ "$64BIT" != "" ]; then
+MINGW_PREFIX=${MINGW_PREFIX} RELEASE=1 NSIS=1 $SRCDIR/win32/makedist/makedist.midori
+mv -v midori-${version}.7z midori_${version}_32_.7z
+mv -v Midori-${version}_setup.exe midori_${version}_32_.exe
+
+if [ "$DO_64BIT" != "" ]; then
+    cd $SRCDIR
     # 64-bit build
     #mingw64-env
     export MINGW_PREFIX="/usr/x86_64-w64-mingw32/sys-root/mingw"
     eval `rpm --eval %{mingw64_env}`
 
-    ./configure --prefix=$MINGW_PREFIX --enable-gtk3
-    make clean
-    sudo make install
+    rm -fr _mingw64
+    mkdir _mingw64 && cd _mingw64
+    mingw64-cmake -DCMAKE_INSTALL_PREFIX=$MINGW_PREFIX ${CONFIGURE_OPTIONS} $SRCDIR
+    make
+    sudo make install || exit
 
-    rpmquery -qa mingw64* > midori-${version}-deps-x86_64.txt
-    MINGW_PREFIX=${MINGW_PREFIX} RELEASE=1 sh ./win32/makedist/makedist.midori x86_64-portable
-    mv -v midori-${version}-x86_64-portable.7z $dropbox_dir
-    dropbox puburl $dropbox_dir/midori-${version}-x86_64-portable.7z >> release_links.txt
+    rpmquery -qa mingw64* > $SRCDIR/midori-${version}-deps-x86_64.txt
+    MINGW_PREFIX=${MINGW_PREFIX} RELEASE=1 sh $SRCDIR/win32/makedist/makedist.midori x86_64-portable
 fi
+
+cd $SRCDIR
 
 echo
 echo "============================="

@@ -393,6 +393,9 @@ addons_button_delete_clicked_cb (GtkWidget* toolitem,
 {
     GtkTreeModel* model;
     GtkTreeIter iter;
+    GtkTreePath* path;
+    GtkTreeRowReference* row;
+    gchar* fullpath;
 
     if (katze_tree_view_get_selected_iter (GTK_TREE_VIEW (addons->treeview),
                                                           &model, &iter))
@@ -403,6 +406,11 @@ addons_button_delete_clicked_cb (GtkWidget* toolitem,
         gchar* markup;
 
         gtk_tree_model_get (model, &iter, 0, &element, -1);
+        fullpath = g_strdup (element->fullpath);
+        
+        path = gtk_tree_model_get_path (model, &iter);
+        row = gtk_tree_row_reference_new (model, path);
+        gtk_tree_path_free (path);
         dialog = gtk_message_dialog_new (
             GTK_WINDOW (gtk_widget_get_toplevel (GTK_WIDGET (addons))),
             GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT,
@@ -424,6 +432,9 @@ addons_button_delete_clicked_cb (GtkWidget* toolitem,
             GTK_MESSAGE_DIALOG (dialog), "%s", markup);
         g_free (markup);
 
+        /* The execution of gtk_dialog_run allows the directory watcher to
+        rebuild the treeview and the element list, so our references may be
+        invalid afterward */
         delete_response = gtk_dialog_run (GTK_DIALOG (dialog));
         gtk_widget_destroy (GTK_WIDGET (dialog));
 
@@ -433,7 +444,7 @@ addons_button_delete_clicked_cb (GtkWidget* toolitem,
             GFile* file;
             gboolean result;
 
-            file = g_file_new_for_path (element->fullpath);
+            file = g_file_new_for_path (fullpath);
             result = g_file_delete (file, NULL, &error);
 
             if (!result && error)
@@ -452,11 +463,20 @@ addons_button_delete_clicked_cb (GtkWidget* toolitem,
                     g_error_free (error);
             }
 
-            if (result)
+            /* The row reference may have been invalidated if the
+            filesystem watcher deleted the row concurrently */
+            if (result && gtk_tree_row_reference_valid (row))
+            {
+                path = gtk_tree_row_reference_get_path (row);
+                gtk_tree_model_get_iter (model, &iter, path);
+                gtk_tree_path_free (path);
                 gtk_list_store_remove (GTK_LIST_STORE (model), &iter);
+            }
 
+            gtk_tree_row_reference_free (row);
             g_object_unref (file);
         }
+        g_free (fullpath);
     }
 }
 static void
@@ -485,8 +505,8 @@ addons_open_in_editor_clicked_cb (GtkWidget* toolitem,
         else
         {
             gchar* element_uri = g_filename_to_uri (element->fullpath, NULL, NULL);
-            sokoke_show_uri (NULL, element_uri,
-                             gtk_get_current_event_time (), NULL);
+            gboolean handled = FALSE;
+            g_signal_emit_by_name (midori_browser_get_current_tab (browser), "open-uri", element_uri, &handled);
             g_free (element_uri);
         }
 
@@ -522,8 +542,9 @@ addons_open_target_folder_clicked_cb (GtkWidget* toolitem,
     folder_uri = g_filename_to_uri (folder, NULL, NULL);
     g_free (folder);
 
-    sokoke_show_uri (gtk_widget_get_screen (GTK_WIDGET (addons->treeview)),
-                     folder_uri, gtk_get_current_event_time (), NULL);
+    MidoriBrowser* browser = midori_browser_get_for_widget (addons->treeview);
+    gboolean handled = FALSE;
+    g_signal_emit_by_name (midori_browser_get_current_tab (browser), "open-uri", folder_uri, &handled);
     g_free (folder_uri);
 }
 
@@ -617,7 +638,6 @@ addons_get_toolbar (MidoriViewable* viewable)
     if (!ADDONS (viewable)->toolbar)
     {
         toolbar = gtk_toolbar_new ();
-        gtk_toolbar_set_icon_size (GTK_TOOLBAR (toolbar), GTK_ICON_SIZE_BUTTON);
         toolitem = gtk_tool_item_new ();
         gtk_toolbar_insert (GTK_TOOLBAR (toolbar), toolitem, -1);
         gtk_widget_show (GTK_WIDGET (toolitem));
@@ -1044,7 +1064,7 @@ css_metadata_from_file (const gchar* filename,
                          domain = g_strndup (value + begin, end - begin * 2);
                          if (!midori_uri_is_location (domain)
                           && !g_str_has_prefix (domain, "file://"))
-                             tmp_domain = g_strdup_printf ("http://*%s/*", domain);
+                             tmp_domain = g_strdup_printf ("http*://*%s/*", domain);
                          else
                              tmp_domain = domain;
 
@@ -1448,6 +1468,12 @@ static gboolean
 addons_skip_element (struct AddonElement* element,
                      gchar* uri)
 {
+    if (midori_debug("addons:match"))
+    {
+    	g_print("%s: %s on %s matched: %d\n", G_STRFUNC,
+		element->displayname, uri, addons_may_run (uri, &element->includes, &element->excludes));
+    }
+
     if (!element->enabled || element->broken)
         return TRUE;
     if (element->includes || element->excludes)
@@ -1866,6 +1892,8 @@ test_addons_simple_regexp (void)
     { "*", "^.*" },
     { "http://", "^http://" },
     { "https://", "^https://" },
+    { "http*://", "^http://" },
+    { "http*://", "^https://" },
     { "about:blank", "^about:blank" },
     { "file://", "^file://" },
     { "ftp://", "^ftp://" },

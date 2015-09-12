@@ -1,5 +1,5 @@
 /*
- Copyright (C) 2008-2012 Christian Dywan <christian@twotoasts.de>
+ Copyright (C) 2008-2013 Christian Dywan <christian@twotoasts.de>
 
  This library is free software; you can redistribute it and/or
  modify it under the terms of the GNU Lesser General Public
@@ -10,7 +10,7 @@
 */
 
 #include "midori-array.h"
-#include "midori-bookmarks.h"
+#include "midori-bookmarks-db.h"
 #include "midori-history.h"
 #include "midori-preferences.h"
 #include "midori-privatedata.h"
@@ -36,39 +36,59 @@ midori_frontend_browser_new_window_cb (MidoriBrowser* browser,
     return new_browser;
 }
 
+static void
+midori_browser_privacy_preferences_cb (MidoriBrowser*    browser,
+                                       KatzePreferences* preferences,
+                                       gpointer          user_data)
+{
+    MidoriWebSettings* settings = midori_browser_get_settings (browser);
+    midori_preferences_add_privacy_category (preferences, settings);
+}
+
 MidoriBrowser*
-midori_web_app_new (const gchar* config,
-                    const gchar* webapp,
+midori_web_app_new (const gchar* webapp,
                     gchar**      open_uris,
                     gchar**      execute_commands,
                     gint         inactivity_reset,
                     const gchar* block_uris)
 {
     guint i;
+    g_return_val_if_fail (webapp != NULL, NULL);
 
-    midori_paths_init (MIDORI_RUNTIME_MODE_APP, config);
-#ifndef HAVE_WEBKIT2
-    g_object_set_data (G_OBJECT (webkit_get_default_session ()), "pass-through-console", (void*)1);
-#endif
+    midori_paths_init (MIDORI_RUNTIME_MODE_APP, webapp);
+    /*
+       Set sanitized URI as class name which .desktop files use as StartupWMClass
+       So dock type launchers can distinguish different apps with the same executable
+     */
+    gchar* wm_class = g_strdelimit (g_strdup (webapp), ":.\\/", '_');
+    gdk_set_program_class (wm_class);
+    g_free (wm_class);
+
     MidoriBrowser* browser = midori_browser_new ();
     g_signal_connect (browser, "new-window",
         G_CALLBACK (midori_frontend_browser_new_window_cb), NULL);
+    g_signal_connect (browser, "show-preferences",
+        G_CALLBACK (midori_browser_privacy_preferences_cb), NULL);
 
     midori_browser_set_action_visible (browser, "Menubar", FALSE);
     midori_browser_set_action_visible (browser, "CompactMenu", FALSE);
+    midori_browser_set_action_visible (browser, "AddSpeedDial", FALSE);
+    midori_browser_set_action_visible (browser, "Navigationbar", FALSE);
+    GtkActionGroup* action_group = midori_browser_get_action_group (browser);
+    GtkAction* action = gtk_action_group_get_action (action_group, "Location");
+    gtk_action_set_sensitive (action, FALSE);
 
-    MidoriWebSettings* settings = midori_browser_get_settings (browser);
+    MidoriWebSettings* settings = midori_settings_new_full (NULL);
     g_object_set (settings,
                   "show-menubar", FALSE,
-                  "show-navigationbar", FALSE,
-                  "toolbar-items", "Back,Forward,ReloadStop,Location,Homepage",
+                  "toolbar-items", "Back,Forward,ReloadStop,Location,Homepage,Preferences",
                   "show-statusbar", FALSE,
                   "show-panel", FALSE,
                   "last-window-state", MIDORI_WINDOW_NORMAL,
                   "inactivity-reset", inactivity_reset,
                   "block-uris", block_uris,
                   NULL);
-    midori_load_soup_session (settings);
+    midori_load_soup_session_full (settings);
 
     KatzeArray* search_engines = midori_search_engines_new_from_folder (NULL);
     g_object_set (browser,
@@ -101,6 +121,12 @@ midori_web_app_new (const gchar* config,
         midori_browser_assert_action (browser, execute_commands[i]);
         midori_browser_activate_action (browser, execute_commands[i]);
     }
+    midori_session_persistent_settings (settings, NULL);
+    /* FIXME need proper stock extension mechanism */
+    midori_browser_activate_action (browser, "libtransfers." G_MODULE_SUFFIX "=true");
+    midori_browser_activate_action (browser, "libabout." G_MODULE_SUFFIX "=true");
+    midori_browser_activate_action (browser, "libopen-with." G_MODULE_SUFFIX "=true");
+    g_assert (g_module_error () == NULL);
     return browser;
 }
 
@@ -164,17 +190,13 @@ midori_private_app_new (const gchar* config,
     g_object_set (settings,
                   "preferred-languages", "en",
                   "enable-private-browsing", TRUE,
-    #ifdef HAVE_LIBSOUP_2_29_91
                   "first-party-cookies-only", TRUE,
-    #endif
                   "enable-html5-database", FALSE,
                   "enable-html5-local-storage", FALSE,
                   "enable-offline-web-application-cache", FALSE,
     /* Arguably DNS prefetching is or isn't a privacy concern. For the
      * lack of more fine-grained control we'll go the safe route. */
-    #if WEBKIT_CHECK_VERSION (1, 3, 11)
                   "enable-dns-prefetching", FALSE,
-    #endif
                   "strip-referer", TRUE,
                   "show-panel", FALSE,
                   "last-window-state", MIDORI_WINDOW_NORMAL,
@@ -200,7 +222,7 @@ midori_private_app_new (const gchar* config,
 
     midori_browser_set_action_visible (browser, "Tools", FALSE);
     midori_browser_set_action_visible (browser, "ClearPrivateData", FALSE);
-    midori_browser_set_action_visible (browser, "Panel", FALSE);
+    midori_browser_set_action_visible (browser, "AddSpeedDial", FALSE);
     #if GTK_CHECK_VERSION (3, 0, 0)
     g_object_set (gtk_widget_get_settings (GTK_WIDGET (browser)),
                   "gtk-application-prefer-dark-theme", TRUE,
@@ -233,6 +255,8 @@ midori_private_app_new (const gchar* config,
 
     /* FIXME need proper stock extension mechanism */
     midori_browser_activate_action (browser, "libtransfers." G_MODULE_SUFFIX "=true");
+    midori_browser_activate_action (browser, "libabout." G_MODULE_SUFFIX "=true");
+    midori_browser_activate_action (browser, "libopen-with." G_MODULE_SUFFIX "=true");
     g_assert (g_module_error () == NULL);
 
     return browser;
@@ -244,15 +268,6 @@ midori_browser_show_preferences_cb (MidoriBrowser*    browser,
                                     MidoriApp*        app)
 {
     midori_preferences_add_extension_category (preferences, app);
-}
-
-static void
-midori_browser_privacy_preferences_cb (MidoriBrowser*    browser,
-                                       KatzePreferences* preferences,
-                                       MidoriApp*        app)
-{
-    MidoriWebSettings* settings = midori_browser_get_settings (browser);
-    midori_preferences_add_privacy_category (preferences, settings);
 }
 
 static void
@@ -273,7 +288,7 @@ midori_app_add_browser_cb (MidoriApp*     app,
 
     /* Extensions */
     g_signal_connect (browser, "show-preferences",
-        G_CALLBACK (midori_browser_privacy_preferences_cb), app);
+        G_CALLBACK (midori_browser_privacy_preferences_cb), NULL);
     g_signal_connect (browser, "show-preferences",
         G_CALLBACK (midori_browser_show_preferences_cb), app);
 
@@ -304,7 +319,7 @@ midori_frontend_crash_log_cb (GtkWidget* button,
                               gchar*     crash_log)
 {
     GError* error = NULL;
-    if (!sokoke_show_uri (gtk_widget_get_screen (button), crash_log, 0, &error))
+    if (!gtk_show_uri (gtk_widget_get_screen (button), crash_log, 0, &error))
     {
         sokoke_message_dialog (GTK_MESSAGE_ERROR,
                                _("Could not run external program."),
@@ -320,7 +335,7 @@ midori_frontend_debugger_cb (GtkWidget* button,
     gtk_dialog_response (dialog, GTK_RESPONSE_HELP);
 }
 
-static MidoriStartup
+static gint
 midori_frontend_diagnostic_dialog (MidoriApp*         app,
                                    MidoriWebSettings* settings,
                                    KatzeArray*        session)
@@ -341,7 +356,7 @@ midori_frontend_diagnostic_dialog (MidoriApp*         app,
     gtk_window_set_title (GTK_WINDOW (dialog), g_get_application_name ());
     content_area = gtk_dialog_get_content_area (GTK_DIALOG (dialog));
     align = gtk_alignment_new (0.5, 0.5, 0.5, 0.5);
-    gtk_container_add (GTK_CONTAINER (content_area), align);
+    gtk_box_pack_start (GTK_BOX (content_area), align, FALSE, TRUE, 0);
     box = gtk_hbox_new (FALSE, 0);
     gtk_container_add (GTK_CONTAINER (align), box);
     button = gtk_button_new_with_mnemonic (_("Modify _preferences"));
@@ -359,7 +374,7 @@ midori_frontend_diagnostic_dialog (MidoriApp*         app,
     button = katze_property_proxy (settings, "show-crash-dialog", NULL);
     gtk_button_set_label (GTK_BUTTON (button), _("Show a dialog after Midori crashed"));
     gtk_widget_show (button);
-    gtk_container_add (GTK_CONTAINER (content_area), button);
+    gtk_box_pack_start (GTK_BOX (content_area), button, FALSE, TRUE, 0);
     gtk_container_set_focus_child (GTK_CONTAINER (dialog), gtk_dialog_get_action_area (GTK_DIALOG (dialog)));
     gtk_dialog_add_buttons (GTK_DIALOG (dialog),
         _("Discard old tabs"), MIDORI_STARTUP_BLANK_PAGE,
@@ -370,12 +385,12 @@ midori_frontend_diagnostic_dialog (MidoriApp*         app,
     gchar* crash_log = g_build_filename (midori_paths_get_runtime_dir (), "gdb.bt", NULL);
     if (g_access (crash_log, F_OK) == 0)
     {
-        GtkWidget* button = gtk_button_new_with_mnemonic (_("Show last crash _log"));
-        g_signal_connect_data (button, "clicked",
+        GtkWidget* log_button = gtk_button_new_with_mnemonic (_("Show last crash _log"));
+        g_signal_connect_data (log_button, "clicked",
             G_CALLBACK (midori_frontend_crash_log_cb), crash_log,
             (GClosureNotify)g_free, 0);
-        gtk_widget_show (button);
-        gtk_box_pack_start (GTK_BOX (box), button, FALSE, FALSE, 4);
+        gtk_widget_show (log_button);
+        gtk_box_pack_start (GTK_BOX (box), log_button, FALSE, FALSE, 4);
     }
     else
         g_free (crash_log);
@@ -383,11 +398,11 @@ midori_frontend_diagnostic_dialog (MidoriApp*         app,
     gchar* gdb = g_find_program_in_path ("gdb");
     if (gdb != NULL)
     {
-        GtkWidget* button = gtk_button_new_with_mnemonic (_("Run in _debugger"));
+        GtkWidget* gdb_button = gtk_button_new_with_mnemonic (_("Run in _debugger"));
         g_signal_connect (button, "clicked",
             G_CALLBACK (midori_frontend_debugger_cb), dialog);
-        gtk_widget_show (button);
-        gtk_box_pack_start (GTK_BOX (box), button, FALSE, FALSE, 4);
+        gtk_widget_show (gdb_button);
+        gtk_box_pack_start (GTK_BOX (box), gdb_button, FALSE, FALSE, 4);
     }
     gtk_dialog_set_default_response (GTK_DIALOG (dialog),
         load_on_startup == MIDORI_STARTUP_HOMEPAGE
@@ -426,7 +441,6 @@ MidoriApp*
 midori_normal_app_new (const gchar* config,
                        gchar*       nickname,
                        gboolean     diagnostic_dialog,
-                       const gchar* webapp,
                        gchar**      open_uris,
                        gchar**      execute_commands,
                        gint         inactivity_reset,
@@ -442,17 +456,21 @@ midori_normal_app_new (const gchar* config,
     MidoriApp* app = midori_app_new (nickname);
     if (midori_app_instance_is_running (app))
     {
+        /* midori_debug makes no sense on a running instance */
+        if (g_getenv ("MIDORI_DEBUG"))
+            g_warning ("MIDORI_DEBUG only works for a new instance");
+
         /* It makes no sense to show a crash dialog while running */
         if (!diagnostic_dialog)
         {
-            gboolean success = FALSE;
-            if (execute_commands != NULL && midori_app_send_command (app, execute_commands))
-                success = TRUE;
-            if (open_uris != NULL && midori_app_instance_send_uris (app, open_uris))
-                success = TRUE;
-            if (!execute_commands && !open_uris && midori_app_instance_send_new_browser (app))
-                success = TRUE;
-            if (success)
+            if (execute_commands != NULL)
+                midori_app_send_command (app, execute_commands);
+            if (open_uris != NULL)
+                midori_app_instance_send_uris (app, open_uris);
+            if (!execute_commands && !open_uris)
+                midori_app_instance_send_new_browser (app);
+
+            if (g_application_get_is_registered (G_APPLICATION (app)))
                 return NULL;
         }
 
@@ -468,7 +486,11 @@ midori_normal_app_new (const gchar* config,
     gchar** extensions;
     MidoriWebSettings* settings = midori_settings_new_full (&extensions);
     g_object_set (settings,
+#ifdef G_OS_WIN32
+                  "enable-developer-extras", FALSE,
+#else
                   "enable-developer-extras", TRUE,
+#endif
                   "enable-html5-database", TRUE,
                   "block-uris", block_uris,
                   NULL);
@@ -486,9 +508,9 @@ midori_normal_app_new (const gchar* config,
     }
     g_free (uri);
 
-    KatzeArray* bookmarks;
+    MidoriBookmarksDb* bookmarks;
     gchar* errmsg = NULL;
-    if (!(bookmarks = midori_bookmarks_new (&errmsg)))
+    if (!(bookmarks = midori_bookmarks_db_new (&errmsg)))
     {
         g_string_append_printf (error_messages,
             _("Bookmarks couldn't be loaded: %s\n"), errmsg);
@@ -567,10 +589,13 @@ midori_normal_app_new (const gchar* config,
      && open_uris && !execute_commands)
      || diagnostic_dialog)
     {
-        load_on_startup = midori_frontend_diagnostic_dialog (app, settings, session);
-        if (load_on_startup == G_MAXINT)
+        gint response = midori_frontend_diagnostic_dialog (app, settings, session);
+        if (response == G_MAXINT)
             return NULL;
+        load_on_startup = response;
     }
+    katze_item_set_parent (KATZE_ITEM (session), NULL);
+    g_object_unref (session);
     g_object_set_data (G_OBJECT (settings), "load-on-startup", GINT_TO_POINTER (load_on_startup));
 
     g_object_set (app, "settings", settings,
@@ -583,9 +608,10 @@ midori_normal_app_new (const gchar* config,
     g_signal_connect (app, "add-browser",
         G_CALLBACK (midori_app_add_browser_cb), NULL);
 
+    midori_session_persistent_settings (settings, app);
+
     g_idle_add (midori_load_soup_session_full, settings);
     g_idle_add (midori_load_extensions, app);
-    g_idle_add (midori_load_session, session);
     return app;
 }
 
@@ -593,18 +619,13 @@ void
 midori_normal_app_on_quit (MidoriApp* app)
 {
     MidoriWebSettings* settings = katze_object_get_object (app, "settings");
-    KatzeArray* bookmarks = katze_object_get_object (app, "bookmarks");
+    MidoriBookmarksDb* bookmarks = katze_object_get_object (app, "bookmarks");
     KatzeArray* history = katze_object_get_object (app, "history");
 
     g_object_notify (G_OBJECT (settings), "load-on-startup");
-    midori_bookmarks_on_quit (bookmarks);
+    midori_bookmarks_db_on_quit (bookmarks);
     midori_history_on_quit (history, settings);
     midori_private_data_on_quit (settings);
-    /* Removing KatzeHttpCookies makes it save outstanding changes */
-#ifndef HAVE_WEBKIT2
-    soup_session_remove_feature_by_type (webkit_get_default_session (),
-                                         KATZE_TYPE_HTTP_COOKIES);
-#endif
 
     MidoriStartup load_on_startup = katze_object_get_int (settings, "load-on-startup");
     if (load_on_startup < MIDORI_STARTUP_LAST_OPEN_PAGES)
