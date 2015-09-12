@@ -1,5 +1,408 @@
 This file is licensed under the terms of the expat license, see the file EXPAT.
 
+v0.5.11
+ Add fake theme for built-in icons
+ * Don't truncate long speed dial titles if there's room to display them
+ Fix warnings for -Wformat-security
+ Ensure vala knows the prototypes of functions it calls, fixing pointer truncation in tests
+ Add unit test to check appmenu/menubar visibility
+ Fix last known GTK2 entry placeholder text bugs
+ Make sure that only one of appmenu and menubar are visible *initially* as well as when changed
+ Move adblock icons to hicolor
+ Limit bookmarks panel callbacks to the lifetime of the panel to fix a crash
+ Fix fallout (broken bookmarks and history panel search) from tweaks to GTK2 entry placeholder
+ fix property binding to ensure that exactly one of appmenu button and menubar is always visible
+ Skip open-with codepath with abp links, they are internal
+ Use find_file to locate execinfo.h
+ Fix middle/ctrl/normal clicking bookmarks (not folders) in the bookmarkbar.
+ Add copright header to sanitize_bar.sh
+ Adblock fixup: Escape . in filter with \
+ Don't shadow variable uri in midori_browser_save_uri
+ Switch Adblock icons to 24px color
+ Always include app menu in toolbar
+ Fix various mis[sing ]annotations and style issues in GIR
+ Compile typelib from gir
+ Fix assert when resetting webapp state after inactivity reset
+ clean up handling of double-valued db column in Tabby
+ Add a comment to explain MidoriBrowser popup callback
+ fix warnings printed when right-clicking resize grip between location and search entries
+ Win32: Use Dr. MinGW if present to preserve crash info
+ Fix menubar warning caused by direct cast instead of `as`
+ Helper script for setting up bzr with some usefull plugins and settings
+ Stop using Gtk.Entry.max_width_chars
+ avoid deprecated SoupServer API with libsoup 2.48
+ Use unowned in foreach loops in Midori.Window
+ Use unowned in foreach loops in Midori.Completion
+ Use unowned with Adblock.Subscription and Element in foreach loops
+ Use unowned strings in foreach loops
+ Enable openWith in app mode and make it work with view-new
+ Implement Midori.Window class with toolbar/ headerbar
+ Drop support for libsoup-gnome-2.4 < 2.37.1
+ Make search icons for engines work correctly
+ Move to WebKit2 4.0 which broke ABI
+ Port to zeitgeist-2.0
+ win32: Bump shipped GrayBird theme version to fix some rendering issues
+ avoid deprecated GtkDialog API with GTK+2 >= 2.22
+ Title case for "Export Certificate" button
+ fix incorrect type of MAX(sorting) in Tabby
+
+v0.5.10
+ use exit instead of return in license script
+ Fix HAVE_GCR guards after GtkPopover port
+ Remove example app and .desktop before creating it in the unit test
+ Fix cache dir path in Adblock and always mkdir tmp
+ Port location action from Granite.PopOver to Gtk.Popover
+ Match https site when user-style is using domain syntax
+ Always disable developer tools on Win32
+ Reimplement Midori.URI.unescape and add various tests
+ Make the inspector resizable with GTK3 by packing into a GtkScrolledWindow
+ Don't build tabs2one in release builds
+ Don't assume GNotification works on Win32
+ update copyright date in About dialog
+ Don't entity-escape history and bookmark results in location completion
+ Only set tabs' error state if errors come from the main frame
+ Implement Paste and Proceed as an action
+ No Gcr on Win for the moment
+ Yet another Speed Dial CSS update:
+ Port bookmark popover from Granite to Gtk.Popover
+ Make application choosers resizable with a sane default size
+ Use GNotification >= 2.40 and use Midori.App API in webmedia
+ Rework mouse button handling in KatzeArrayAction
+ Don't bind :day in HistoryDatabase.query
+ Make GCR mandatory for all builds
+ Update coub support in mediaHerald
+ history-list: Fix gtk+3 build caused by dropping "using Gtk;"
+ Drop all remaining usages of "using *;"
+ Don't open search engines menu when clearing search action
+ Only remove apps in the sidepanel when left-clicking the delete icon
+ Improve robustness of GTK3-compatibility placeholder text fallback
+ Clean up vapi dependency
+ tls_flags from webkit_web_view_get_tls_info need to be 0
+ Don't add failed pages to history
+ Throw error for wrong paramter in Statement.bind
+ Replace NoJS "allow all pages" setting with "allow local pages"
+ Avoid bugs due to race condition in addons delete dialog
+ Calculate transfer progress at regular intervals to fix 0B/s bug and recalcitrant progess bars
+ Fix warnings occurring with EXTRA_WARNINGS
+ Escape parentheses in adblock_fixup_regexp()
+ Use File.query_exist() on win32 when checking for db to attach
+ Handle _NEW_WINDOW_ACTION explicitly to make _blank targets work
+ Fix undefined behavior uint in mouse gestures
+ fix JavaScript keyup event by calling inherited key-release-event handler in MidoriBrowser
+ Inline renaming of speed dials
+ Handle current_size and last_size of Download being equal
+ Add proper copyright headers to element_hider and autosuggestcontrol
+ Add X-GNOME-UsesNotifications to indicate the use of notifications
+ Fix typo in Bookmarks menu UI definition
+
+v0.5.9
+ Remove dead code from browser and preferences
+ Build-fix: Make PanedAction's Child.widget public
+ fixes tab history undo
+ Set a placeholder text on the URL entry
+ Add "Add Bookmark" to menu
+ Show search menu upon left icon click in location bar
+ Fix crash when saving with associated resources
+ Fix webkit2 downloads based on older branch
+ don't hide window decorations for Midori-Granite
+ Connect bookmarks-db singleton correctly to fix menus
+ Fix some symbol names and transfer annotations in doc comments
+ Use correct signature for window-state-event handler
+ Do not overescape page titles in view completion
+ Make adblock skip non-standard last update metadata strings
+ Drop deprecated Granite LightWindow used for the Clear Private Data dialog
+ Keep storing the last web media tab played.
+ Allocate CookiePermissionManagerModalInfobar correctly
+ Make middle clicking reload button duplicate the current tab, similar to other browsers
+ Use network-changed of GNetworkMonitor to reload all tabs if network becomes available
+ Show different messages based on network connectivity.
+ Fix crash when activating the edit menu
+ Fix "open all in tabs" for bookmarks
+ Fix a few simple leaks
+ Don't focus the locationaction when leaving blank pages
+ Fix leaks of two references to the MidoriApp in Tabby
+ Compile with valac 0.16 again
+ Never display about:new in the urlbar
+ fix crash right-clicking forms on local pages
+ Share 'youtube, vimeo, dailymotion' that you are playing in Midori using org.midori.mediaHerald
+ Give the SoupURI a path when checking cookie relevance
+ Resolve ellipsis and title stripping in completion
+ Add www. and .com/.country_domain and proceed with Ctrl+Enter/Shift+Enter with (readable code)
+ Clean up browser tab/ uri/ title notify
+ Drop pseudo Granite distinction in completion layout
+ Fix visibility of SpeedDial, Toolbar, Bookmarkbar context menu items
+ Distinguish between desc file missing and other parsing issues
+ Use dependencies to clear test folders before execution
+ win32: Drop dropbox usage from win release script, rename resulting output files
+
+v0.5.8
+ Use png icon instead of svg in set_status
+ We must not pass a Cancellable to FaviconDatabase.get_favicon_pixbuf
+ Retain spelling suggestion menu items from WebKit
+ Properly guard usage of gtk3 get_style_context
+ Mimic the look of Granite.DynamicNotebook when compiled with --enable-granite.
+ Fix X11 lib underlink in midori-core
+ Fix bookmarkbar bookmark click not opening links
+ Use sanitized app URI as wm_classname/ StartupWMClass
+ Make trunk build with WebKit2 again
+ Fix for incorrect tstamp for background tabs
+ Don't declare sorting doubles are nullable and print values when database tracing is enabled
+ Correctly apply saved entry state and treat urlbar as a regular editable item
+ Add missing conditional includes for granite flavoured build
+ Open URIs dragged on tab label or new tab button
+ Small adblock bugfixes
+ Work around GTK3's hard-coded minimum stackswitcher button width
+ Fix building with mingw packages from fedora 18
+ Set page title as basis for print filename
+ Rename notes inline
+ Use EXTRA_WARNINGS option when building for windows
+ Drop forgotten clutter init and obsolete header declarations
+ Rework history-step handling and make it work again
+ Port Tabby to DatabaseStatement API
+ Replace bookmark stracing with generic profiling in Midori.Database
+ Port autocompleter test to async job
+ Finishing touches for Adblock
+ Add filters and defaults
+ Implement and use ContextAction.escaped
+ printf URI in show_message_dialog for download error
+ Improve docs and GIR annotations for KatzeItem, KatzeArray, and MidoriWebSettings
+ Drop redundant TabNew from compact menu and put button in Tab Panel
+ Fix loading file:// pages
+ Implement Send Page Link by Email
+ Use GtkStackSwitcher with GTK+ >= 3.10
+ Implements context popup menu on menu entries of bookmark bar and bookmark menu.
+ Fix building with newer mingw versions
+ Display locationbar suggestions in the correct order
+ Don't bother adblocking internal pages and favicons
+ Don't use trailing comma on last list element in Adblock tests
+ Rewrite Adblock more modularly, add Whitelist support
+ Add support of DragonFlyBSD
+ Change tooltips of Reload and ReloadStop actions while shift modifier is pressed
+ Implement Midori.Database.attach method
+ Allow :memory: as folder to make schema detection work
+ More robust app/ profile creation
+ Add helper callbacks to modify bookmark's tree store with unneded access to bookmarks db
+ Implement more flexible fallback behavior for Cookie Permissions
+
+v0.5.7:
+ Modify actions and internal items in browser without changing settings
+ Delay tab loading after Midori crashed
+ Uncomment failing assertions about view_source in tab test
+ Fallback to about:home if startup is anything but blank
+ Don't try to create formhistory database if config_dir is NULL
+ Handle url arguments for blank sessions
+ Execute commands given at start time
+ Introduce high-level prepare/ DatabaseStatement API
+ Drop unused GraniteClutter-based animation support
+ Drop uncommented contractor support
+ Drop deprecated StaticNotebook used in KatzePreferences
+ Introduce notebook class converging separate implementations
+ Work around symbol relocation issue old version of gcc present on Ubuntu LTS
+ NULL-check treeview in midori_search_action_get_editor
+ Adjust CMakeList .ico check to not skip nojs icons
+ Enable sidepanel in private mode
+ Move Preferences menu entry above About
+ Set minimum value of 0 on spin button for maximum cache size
+ Give NextForward its own label for toolbar editor
+ Correctly disable favicon database in app and private mode
+ Change preferences to refer to proxy address as a "URI" (not "hostname")
+ Add close tabs to right feature
+ Allow printing without confirmation dialog on kiosk setups
+
+v0.5.6:
+ instead of creating devpet status icon on extension load, create it only to show new messages
+ Open speed dial or homepage according to preference
+ handle tab duplication
+ Add copyright note to appdata file
+ Tweak searching for resources when running from build folder
+ Swap NULL-check with main frame check
+ Use correct signal when clearing the trash
+ Hide WEbGL preference if it is unavailable
+ Remove stored popup sessions from the database
+ Check all browsers for opened sessions and whether they're popups
+ removed unused preference dialog and related code
+ Fix check for found valac and mention VALAC variable
+ Fix autoscrolling if page contains a frame with our custom error page
+ Don't use context-menu signal in WebKitGTK+ < 1.10.0
+ Fix building on Ubuntu 12.04
+ Reset item ids when re-importing bookmarks
+ Check path being NULL in export before trying to inspect it
+ restore the last closed sessions if no session is opened
+ Cast WebKitDOMHtmlElement for getting source content
+ Use font-set signal and font family for GTK+ 3.2 font chooser
+ add function to view dom source
+ remove unused variable
+ Resolve compiler warnings in current trunk
+ Update win32-release script for cmake, move unused docs/scripts to old folder
+ Try to handle previous runs of cmake in configure wrapper
+ Correct view source assertions in tab unit test
+ Build fix: found undeclared in midori_bookmarks_db_remove_item_recursive
+ Cache bookmark items to avoid their recreation on database reads
+ allow "view source" on about pages
+ Enable old target policy on cmake < 2.8.8
+ Re-arrange data file installing to be more explicit
+ option to modify the number of tabs which will be restored in each idle callback
+ Implement MidoriBookmarksDatabase class by inheritence from MidoriDatabase
+ Ensure tab spinners update as often as the menubar spinner to avoid desync
+ Use tabby sorting increment when importing session.xbel tabs
+ Only install config files to /etc if prefix equals /usr
+ handle urls as argument when starting midori
+ Make tabby compile with Webkit2
+ Drop waf build system and provide cmake-based "configure" script
+ midori_panel_action_activate_cb forgot to update the action group
+ Fixes bug where certificate Security overlay failed to close
+ handle tab movement
+ add tab sorting
+ Untangle implicit GTK+3 for Granite and WebKit2
+ Allow running test under debug tools with cmake
+ Install config files to /etc when install prefix is /usr
+ Add missing PO_FILES argument to GETTEXT_PROCESS_PO_FILES
+ Add USE_APIDOCS to build API docs with CMake
+ Rasterize SVG to PNG with rsvg-convert
+ fix bookmarks test regression after fix-1179200-4
+ Add CMakeLists.txt for config directory
+ Install mo files in locale dir
+ don't change uri/title if the tab isn't loaded
+ use a separate signal to store the tab title
+ Check if execinfo.h header exists on BSD
+ fix endless loop in Midori.Database.init
+ Use destructive-action style class in ClearPrivateData
+ Initialize priv->element to avoid crash when freeing
+ Introduces KatzeArray::update-item to handle metadata changes
+ Refactor excuting schema from file into a function
+ Use stock as string in liststore
+ Drop needless (and wrong) HAVE_LIBNOTIFY in preferences
+ Flip horizontal position of the overlay when hit by the mouse
+ Add Midori.URI.get_base_domain and use it in NoJS
+ Introduce Midori.Database and use for history and tabby
+ ctrl+shift+w should trigger a delete-event
+ Implement dialog windows opened via javascript
+ Make get_res_filename work with different hierarchies
+ fix check for new database
+ Speed up session import
+ Import tab title from old sessions
+ Separate CFLAGS for C and add missing HAVE_
+ Install top-level text files and FAQ html/ css to doc dir
+ Provide and install .appdata.xml file for app stores
+ Move bookmarks db handling to midori-bookmarks-db
+ Add XSS to OPTS_LIBRARIES
+ Update condition for UBUNTU_MENUPROXY to work on Saucy
+ Introduce tabby, the new session manager
+ Fix typo in katze_item_set_meta_integer call
+ Allow bookmark bar update on additions resulting from imports
+ Re-work midori_array_query_recursive to not include folder items twice
+ Fix syntax of icon sizes passed to foreach
+ Add bzr revision number to version if available
+ Unify nojs and cookie policy dialogs, make policy changeable within the list
+ Drop all G_ENABLE_DEBUG guards
+ Add -g to CFLAGS to enable debugging symbols
+ Adjust cmake build for Win32
+ Implement CMake build setup
+ Port MidoriApp from Unique/ sockets to GApplication
+ New signal about-content to provide content for about uris
+ Check if browser is NULL in midori_view_get_tab_menu to prevent a crash. Fixes bug #1215652.
+ Ensure proxy setting widgets callbacks don't outlive the widgets themselves
+ Fix webkit2 build error
+ Show the bookmarks import location combobox.
+ Rename internal completion URLs to avoid confusion
+
+v0.5.5:
+ Fix name and text fields inversion in XBEL folder import
+ Correct packing of cookie and nojs permission dialog.
+ Don't set tab title/special when a non-main frame displays an error
+ Revise "cookies" debug output, merge expiry check and disallow revival of old cookies
+ Drop now unused cgit module.xml file
+ Use SoupProxyResolverGnome unconditionally and disable prefetching if proxy is active
+ win32: Hide gui for profiles in webapp manager, as they are currently broken on Windows
+ win32: support additional mouse buttons for going back/forward in history
+ Enrich app error messages with filenames
+ Fix segfault if url contains " %00"
+ Replace 'Run as app' in bookmark dialog with 'Create launcher'
+ Split config files and install from folders recursively
+ Implement GTK+ theme switching via Preferences (Win32)
+ Enable set_disk_cache_directory with WebKit2
+ Introduce Midori.ContextAction and refactor page menu from scratch
+ Define large dialog icon size relative to dialog icon size
+ Extension Devpet which shows error messages and backtraces in systray
+ WebKit2 cookie support
+ Check the hit test result for editable to see if , should search
+ Use SoupCookieJarSqlite and drop KatzeHttpCookies(Sqlite)
+ Show folder tree when editing bookmarks
+ Handle double value in _midori_browser_activate_action
+ Add privacy preferences in web app mode
+ Escape parentheses in adblock_fixup_regexp
+ Introduce object oriented API for access to History Database
+ Allow rss feeds with version 0.92
+ Rename History completion to Bookmarks and History
+ Don't show rss feed icon on twitter, underlying API was retired
+ Read apps/ profiles from folder, leave launchers separate
+ Fill in bookmark folder attributes in bookmarkbar populate
+
+v0.5.4:
+ Refactor history step and allow multiple title updates
+ Call midori_browser_connect_tab with correct type
+ Don't add HistoryCompletion if there's no history
+ Restore reload button icon in error pages
+ Don't insert folders into the log
+ If an url is specified the fallback url should not be loaded
+ Fixed crashes when closing a loading tab + granite's tab moving
+ Test if plugins are redundant instead of skipping them all
+ Avoid selecting bookmark uris that begin by 'javascript:' for completion
+ Set FOREIGN_KEYS pragma on db initialization
+ Implement a default zoom level preference
+ Fix tautological use of G_MAXINT with enum
+ Take current selection into account for bookmark folders when adding/editing bookmark
+ Improve error page visuals, show suggestions on network errors
+ Bump vala to 0.16.0
+ Downgrade glib requirement to 2.32.3 to re-enable building under Ubuntu 12.04 (LTS)
+ Bump glib2 version to 2.32.4
+ Improve and unify thumbnail generation
+ Omit speed dial and blank pages from view completion
+ Makes the elements of the speed dial non-selectable
+ Use NULL-safe comparison in katze_item_icon_loaded_cb
+ Drop non-DOM style sheet injection code path
+ Clean small leftovers from GTK and WebKit version bumps
+ Bump GTK+ requirement to 2.24 and drop support for earlier versions
+ Check for app mode to set browser icon instead of readonly
+ Escape square brackets in adblock_fixup_regexp
+ Fix showing (sub)folders in bookmarkbar
+ Bump WebKit requirement to 1.8.3 and drop support for earlier versions
+ Set menu on dynamic notebook tab
+ Do not run toolbar editor's GtkDialog in its own main loop by prevent calling gtk_dialog_run(). Instead just set the GtkDialog modal and show it.
+ Remove unnecesary harmful code from tab_switched_cb
+ Fix segfault when deleteing tabs with history list
+ Specify int64 id item as a string in bookmark remove/update queries
+ Distinguish between box and event box in the tab label when colouring tabs
+ Show visual feedback when hovering over items in bookmark panel
+ Replace INSTALL/ HACKING with exported Contribute wiki page
+ Delete tabs from history list with Del
+ Check brightness of backgroung color when deciding foreground color of given tab
+ Clean launcher filenames, double-click to open and delete button
+ Avoid declaring browser twice within the same function
+ Add ./waf --update-pot
+ Fix memory leak introduced in r6184
+ Use old function name g_dbus_generate_guid for old valac
+ Move Import and Export into menu Bookmarks
+ Collect multiple download notifications within a minute
+ Fix segfault when right clicking on a web view.
+ Make libnotify mandatory except on Windows
+ Remove the rather unnecessary ./waf --run feature
+ Send a notification after creating a launcher
+ Ambiguous 'Open as App' context menu item was removed
+ Apply label color to label rather than event box
+ Store data of app mode based on URL in ~/.local/share/midori/apps
+ Split colorful tabs code into helper functions and add unit tests
+ Fix History List memory leak  when closing Midori window.
+ Replace .gitignore with a .bzrignore
+ Always define GCR_VERSION in GTK+2 build
+ Fix bookmarks dialog rename regression introduced in r6167.
+ Drop check for gcr-3-gtk2 which isn't being maintained.
+ Scrap unneeded background variables in location renderer callbacks
+ Title case and proper packing in bookmark dialog
+ Delete PO files Launchpad spewed into root directory when it couldn't find po/*.pot file.
+ Issue a warning when trying to use MIDORI_DEBUG while running
+ Update dates to 2013 to fix bug #1167075.
+
 v0.5.2:
  Re-release with a proper version number and changelog
 

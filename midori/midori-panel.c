@@ -443,7 +443,7 @@ midori_panel_get_property (GObject*    object,
  *
  * Creates a new empty panel.
  *
- * Return value: a new #MidoriPanel
+ * Return value: (transfer full): a new #MidoriPanel
  **/
 GtkWidget*
 midori_panel_new (void)
@@ -483,25 +483,6 @@ midori_panel_set_right_aligned (MidoriPanel* panel,
         !panel->right_aligned ? _("Align sidepanel to the right")
             : _("Align sidepanel to the left"));
     g_object_notify (G_OBJECT (panel), "right-aligned");
-}
-
-/* Private function, used by MidoriBrowser */
-/* static */ GtkWidget*
-midori_panel_construct_menu_item (MidoriPanel*    panel,
-                                  MidoriViewable* viewable,
-                                  gboolean        popup)
-{
-    GtkAction* action;
-    GtkWidget* menuitem;
-
-    action = g_object_get_data (G_OBJECT (viewable), "midori-panel-action");
-    menuitem = popup ? sokoke_action_create_popup_menu_item (action)
-      : gtk_action_create_menu_item (action);
-    g_object_set_data (G_OBJECT (menuitem), "page", viewable);
-
-    if (gtk_widget_get_visible (GTK_WIDGET (viewable)))
-        gtk_widget_show (menuitem);
-    return menuitem;
 }
 
 static void
@@ -555,6 +536,10 @@ static void
 midori_panel_action_activate_cb (GtkRadioAction* action,
                                  MidoriPanel*    panel)
 {
+    MidoriBrowser* browser = midori_browser_get_for_widget (GTK_WIDGET (panel));
+    GtkActionGroup* actions = midori_browser_get_action_group (browser);
+    GtkAction* panel_action = gtk_action_group_get_action (actions, "Panel");
+    gtk_toggle_action_set_active (GTK_TOGGLE_ACTION (panel_action), TRUE);
     GtkWidget* viewable = g_object_get_data (G_OBJECT (action), "viewable");
     gint n = midori_panel_page_num (panel, viewable);
 
@@ -567,9 +552,6 @@ midori_panel_action_activate_cb (GtkRadioAction* action,
  * midori_panel_append_page:
  * @panel: a #MidoriPanel
  * @viewable: a viewable widget
- * @toolbar: a toolbar widget, or %NULL
- * @stock_id: a stock ID
- * @label: a string to use as the label
  *
  * Appends a new page to the panel. If @toolbar is specified it will
  * be packed above @viewable.
@@ -637,6 +619,9 @@ midori_panel_append_page (MidoriPanel*    panel,
     gtk_container_add (GTK_CONTAINER (panel->notebook), scrolled);
 
     toolbar = midori_viewable_get_toolbar (viewable);
+    gtk_toolbar_set_style (GTK_TOOLBAR (toolbar), GTK_TOOLBAR_BOTH_HORIZ);
+    gtk_toolbar_set_icon_size (GTK_TOOLBAR (toolbar), GTK_ICON_SIZE_BUTTON);
+    gtk_toolbar_set_show_arrow (GTK_TOOLBAR (toolbar), FALSE);
     gtk_widget_show (toolbar);
     gtk_container_add (GTK_CONTAINER (panel->toolbook), toolbar);
     g_signal_connect (viewable, "destroy",
@@ -725,7 +710,7 @@ _midori_panel_child_for_scrolled (MidoriPanel* panel,
  *
  * If @panel has no children, %NULL is returned.
  *
- * Return value: the child widget of the new page, or %NULL
+ * Return value: (transfer none): the child widget of the new page, or %NULL
  **/
 GtkWidget*
 midori_panel_get_nth_page (MidoriPanel* panel,

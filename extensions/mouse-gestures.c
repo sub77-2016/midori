@@ -128,8 +128,19 @@ struct MouseGestureNode
 static guint
 dist_sqr (guint x1, guint y1, guint x2, guint y2)
 {
-    guint xdiff = abs(x1 - x2);
-    guint ydiff = abs(y1 - y2);
+    guint xdiff = 0, ydiff = 0;
+    // Remember that x1, x2, y1 and y2 are guint unsigned integers.
+    // Subtracting a greater number from a lower one is undefined.
+    // This guards against that.
+
+    if (x1 > x2)
+        xdiff = x1 - x2;
+    else
+        xdiff = x2 - x1;
+    if (y1 > y2)
+        ydiff = y1 - y2;
+    else
+        ydiff = y2 - y1;
     return xdiff * xdiff + ydiff * ydiff;
 }
 
@@ -159,7 +170,7 @@ vector_follows_direction (float angle, float distance, MouseGestureDirection dir
         return distance < MINLENGTH / 2;
 
     float dir_angle = get_angle_for_direction (direction);
-    if (fabsf(angle - dir_angle) < DEVIANCE || fabsf(angle - dir_angle + 2 * M_PI) < DEVIANCE)
+    if (fabsf (angle - dir_angle) < DEVIANCE || fabsf (angle - dir_angle + 2 * (float)(M_PI)) < DEVIANCE)
         return TRUE;
 
     if(distance < MINLENGTH / 2)
@@ -267,8 +278,8 @@ mouse_gestures_motion_notify_event_cb (GtkWidget*     web_view,
             if (distance >= MINLENGTH)
             {
                 gesture->strokes[gesture->count] = nearest_direction_for_angle (angle);
-                if(midori_debug ("adblock:match"))
-                    g_debug ("detected %s\n", direction_names[gesture->strokes[gesture->count]]);
+                if (midori_debug ("mouse"))
+                    g_print ("mouse_gestures detected %s\n", direction_names[gesture->strokes[gesture->count]]);
             }
         }
         else if (!vector_follows_direction (angle, distance, old_direction)
@@ -384,7 +395,7 @@ mouse_gestures_load_config (MidoriExtension* extension)
     for(i = 0; keys[i]; i++)
     {
         gsize n_strokes;
-        int j;
+        guint j;
         gchar** stroke_strings = g_key_file_get_string_list (keyfile, "gestures", keys[i], &n_strokes,
                                                              NULL);
 

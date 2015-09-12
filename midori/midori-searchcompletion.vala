@@ -1,5 +1,5 @@
 /*
- Copyright (C) 2012 Christian Dywan <christian@twotoasts.de>
+ Copyright (C) 2012-2013 Christian Dywan <christian@twotoasts.de>
 
  This library is free software; you can redistribute it and/or
  modify it under the terms of the GNU Lesser General Public
@@ -29,7 +29,7 @@ namespace Midori {
         }
 
         public override bool can_action (string action) {
-            return action == "about:search";
+            return action == "complete:more/search";
         }
 
         public override async List<Suggestion>? complete (string text, string? action, Cancellable cancellable) {
@@ -39,26 +39,24 @@ namespace Midori {
             var suggestions = new List<Suggestion> ();
             uint n = 0;
             foreach (var item in items) {
-                string icon, uri, title, desc;
-                item.get ("icon", out icon);
+                string uri, title, desc;
                 item.get ("uri", out uri);
                 item.get ("name", out title);
                 item.get ("text", out desc);
                 string search_uri = URI.for_search (uri, text);
                 string search_title = _("Search with %s").printf (title);
-                Gdk.Pixbuf? pixbuf = Midori.Paths.get_icon (icon, null);
-                if (pixbuf == null)
-                    pixbuf = Midori.Paths.get_icon (uri, null);
+                Icon? icon = yield Midori.URI.get_icon_fallback (uri, null, cancellable);
                 string search_desc = search_title + "\n" + desc ?? uri;
                 /* FIXME: Theming? Win32? */
                 string background = "gray";
-                var suggestion = new Suggestion (search_uri, search_desc, false, background, pixbuf);
+                var suggestion = new Suggestion (search_uri, search_desc, false, background, icon);
                 suggestions.append (suggestion);
 
                 n++;
                 if (n == 3 && action == null) {
-                    suggestion = new Suggestion ("about:search", _("Search with…"), false, background);
+                    suggestion = new Suggestion ("complete:more/search", _("Search with…"), false, background);
                     suggestion.action = true;
+                    suggestion.priority = this.position;
                     suggestions.append (suggestion);
                     break;
                 }

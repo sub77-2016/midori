@@ -1,5 +1,5 @@
 /*
- Copyright (C) 2008-2012 Christian Dywan <christian@twotoasts.de>
+ Copyright (C) 2008-2013 Christian Dywan <christian@twotoasts.de>
  Copyright (C) 2009 Dale Whittaker <dayul@users.sf.net>
 
  This library is free software; you can redistribute it and/or
@@ -554,13 +554,19 @@ midori_extension_load_from_folder (MidoriApp* app,
 
     if (activate)
     {
+        /* FIXME need proper stock extension mechanism */
+        g_assert (midori_extension_activate_gracefully (app, extension_path, "libtransfers." G_MODULE_SUFFIX, activate));
+        g_assert (midori_extension_activate_gracefully (app, extension_path, "libapps." G_MODULE_SUFFIX, activate));
+        g_assert (midori_extension_activate_gracefully (app, extension_path, "libdelayed-load." G_MODULE_SUFFIX, activate));
+        g_assert (midori_extension_activate_gracefully (app, extension_path, "libabout." G_MODULE_SUFFIX, activate));
+        g_assert (midori_extension_activate_gracefully (app, extension_path, "libtabby." G_MODULE_SUFFIX, activate));
+        g_assert (midori_extension_activate_gracefully (app, extension_path, "libopen-with." G_MODULE_SUFFIX, activate));
+        g_assert (midori_extension_activate_gracefully (app, extension_path, "libflummi." G_MODULE_SUFFIX, activate));
+
         gint i = 0;
         const gchar* filename;
         while (keys && (filename = keys[i++]))
             midori_extension_activate_gracefully (app, extension_path, filename, activate);
-        /* FIXME need proper stock extension mechanism */
-        GObject* extension = midori_extension_activate_gracefully (app, extension_path, "libtransfers." G_MODULE_SUFFIX, activate);
-        g_assert (extension != NULL);
     }
     else
     {
@@ -575,6 +581,17 @@ midori_extension_load_from_folder (MidoriApp* app,
     g_free (extension_path);
 }
 
+/**
+ * midori_extension_load_from_file:
+ * @extension_path: the path to use for the extension's data files
+ * @filename: the path to the extension's module file
+ * @activate: whether to activate the extension
+ * @test: whether to run the extension's tests
+ *
+ * Load an extension from a file.
+ *
+ * Return value: (transfer none): the loaded extension, or %NULL
+ **/
 GObject*
 midori_extension_load_from_file (const gchar* extension_path,
                                  const gchar* filename,
@@ -634,6 +651,17 @@ midori_extension_load_from_file (const gchar* extension_path,
     return extension;
 }
 
+/**
+ * midori_extension_activate_gracefully:
+ * @app: the #MidoriApp for which to load the extension
+ * @extension_path: the path to use for the extension's data files
+ * @filename: the path to the extension's module file
+ * @activate: whether to activate the extension
+ *
+ * Load an extension into the context of a #MidoriApp.
+ *
+ * Return value: (transfer none): the loaded extension, or %NULL
+ **/
 GObject*
 midori_extension_activate_gracefully (MidoriApp*   app,
                                       const gchar* extension_path,
@@ -672,10 +700,15 @@ midori_extension_add_to_list (MidoriApp*       app,
     if (katze_array_get_item_index (extensions, extension) >= 0)
         return;
     /* FIXME need proper stock extension mechanism */
-    if (!strcmp (filename, "libtransfers." G_MODULE_SUFFIX))
-        return;
+    if (strcmp (filename, "libtransfers." G_MODULE_SUFFIX)
+     && strcmp (filename, "libapps." G_MODULE_SUFFIX)
+     && strcmp (filename, "libdelayed-load." G_MODULE_SUFFIX)
+     && strcmp (filename, "libabout." G_MODULE_SUFFIX)
+     && strcmp (filename, "libtabby." G_MODULE_SUFFIX)
+     && strcmp (filename, "libopen-with." G_MODULE_SUFFIX)
+     && strcmp (filename, "libflummi." G_MODULE_SUFFIX))
+        katze_array_add_item (extensions, extension);
 
-    katze_array_add_item (extensions, extension);
     g_object_unref (extensions);
 
     if (midori_paths_is_readonly ())
@@ -684,7 +717,9 @@ midori_extension_add_to_list (MidoriApp*       app,
     /* Signal that we want the extension to load and save */
     if (midori_extension_is_prepared (extension))
     {
+        /* This is a sensible check but makes unit testing hard
         g_warn_if_fail (extension->priv->config_dir == NULL);
+         */
         extension->priv->config_dir = midori_paths_get_extension_config_dir (filename);
     }
 }
@@ -813,7 +848,7 @@ midori_extension_deactivate (MidoriExtension* extension)
  * Retrieves the #MidoriApp the extension belongs to. The
  * extension has to be active.
  *
- * Return value: the #MidoriApp instance
+ * Return value: (transfer none): the #MidoriApp instance
  *
  * Since 0.1.6
  **/
@@ -1161,8 +1196,8 @@ midori_extension_install_string_list (MidoriExtension* extension,
  *
  * Retrieves the value of the specified setting.
  *
- * Return value: a newly allocated NULL-terminated list of strings,
- *     should be freed with g_strfreev()
+ * Return value: (transfer full) (array zero-terminated=1): the list of
+ *     strings, NULL-terminated and to be freed with g_strfreev()
  *
  * Since: 0.1.7
  **/

@@ -1,5 +1,5 @@
 /*
- Copyright (C) 2010-2011 Christian Dywan <christian@twotoasts.de>
+ Copyright (C) 2010-2013 Christian Dywan <christian@twotoasts.de>
 
  This library is free software; you can redistribute it and/or
  modify it under the terms of the GNU Lesser General Public
@@ -14,7 +14,6 @@
 
 #include "midori/midori-stock.h"
 #include "katze/gtk3-compat.h"
-#include "midori/gtkiconentry.h"
 #include "midori/sokoke.h"
 
 /* Common behavior modifiers */

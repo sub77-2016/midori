@@ -160,6 +160,7 @@ extension_settings (void)
     midori_extension_set_string_list (extension, "pets", names, 2);
     g_strfreev (names);
     names = midori_extension_get_string_list (extension, "pets", &names_n);
+    g_strfreev (names);
     g_assert_cmpint (names_n, ==, 2);
     midori_extension_deactivate (extension);
 }
@@ -175,12 +176,11 @@ extension_activate (gconstpointer data)
 }
 
 static void
-extension_load (const gchar* extension_path,
-                GDir*        extension_dir)
+extension_load (const gchar* absolute_filename)
 {
-    const gchar* filename;
-    while ((filename = g_dir_read_name (extension_dir)))
-    {
+    g_assert (g_access (absolute_filename, F_OK) == 0);
+    gchar* extension_path = g_path_get_dirname (absolute_filename);
+    gchar* filename = g_path_get_basename (absolute_filename);
         GObject* extension = midori_extension_load_from_file (extension_path, filename, FALSE, TRUE);
         if (KATZE_IS_ARRAY (extension))
         {
@@ -201,7 +201,6 @@ extension_load (const gchar* extension_path,
             g_test_add_data_func (path, extension, extension_activate);
             g_free (path);
         }
-    }
 }
 
 static void
@@ -215,30 +214,33 @@ int
 main (int    argc,
       char** argv)
 {
-    g_test_init (&argc, &argv, NULL);
-    midori_app_setup (&argc, &argv, NULL);
+    midori_test_init (&argc, &argv);
+    gchar* extension;
+    GOptionEntry entries[] = {
+        { "extension", 'e', 0, G_OPTION_ARG_STRING, &extension,
+          "Execute cases defined in extension_init", "EXTENSION" },
+        { NULL }
+    };
+    extension = NULL;
+    midori_app_setup (&argc, &argv, entries);
     midori_paths_init (MIDORI_RUNTIME_MODE_NORMAL, NULL);
     #ifndef HAVE_WEBKIT2
     soup_session_add_feature_by_type (webkit_get_default_session (),
         SOUP_TYPE_COOKIE_JAR);
     #endif
 
-    g_test_add_func ("/extensions/create", extension_create);
-    g_test_add_func ("/extensions/settings", extension_settings);
-    g_test_add_func ("/extensions/config", extension_config);
-
-    if (g_module_supported ())
+    if (extension == NULL)
     {
-        gchar* extension_path = midori_paths_get_lib_path (PACKAGE_NAME);
-        GDir* extension_dir = g_dir_open (extension_path, 0, NULL);
-        g_assert (extension_dir != NULL);
-
+        g_test_add_func ("/extensions/create", extension_create);
+        g_test_add_func ("/extensions/settings", extension_settings);
+        g_test_add_func ("/extensions/config", extension_config);
+    }
+    else
+    {
+        g_assert (g_module_supported ());
         /* We require that extensions can be loaded repeatedly */
-        extension_load (extension_path, extension_dir);
-        extension_load (extension_path, extension_dir);
-
-        g_dir_close (extension_dir);
-        g_free (extension_path);
+        extension_load (extension);
+        extension_load (extension);
     }
 
     return g_test_run ();

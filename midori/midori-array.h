@@ -27,21 +27,13 @@ midori_array_to_file   (KatzeArray*  array,
                         const gchar* format,
                         GError**     error);
 
+void
+katze_item_set_value_from_column (sqlite3_stmt* stmt,
+                                  gint          column,
+                                  KatzeItem*    item);
+
 KatzeArray*
 katze_array_from_statement (sqlite3_stmt* stmt);
-
-KatzeArray*
-midori_array_query     (KatzeArray*  array,
-                        const gchar* fields,
-                        const gchar* condition,
-                        const gchar* value);
-
-KatzeArray*
-midori_array_query_recursive (KatzeArray*  array,
-                              const gchar* fields,
-                              const gchar* condition,
-                              const gchar* value,
-                              gboolean     recursive);
 
 KatzeArray*
 katze_array_from_sqlite (sqlite3*     db,

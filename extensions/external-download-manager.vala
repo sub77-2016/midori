@@ -9,12 +9,6 @@
    See the file COPYING for the full license text.
 */
 
-using Gtk;
-using Soup;
-using Katze;
-using Midori;
-using WebKit;
-
 namespace EDM {
 #if !HAVE_WIN32
     [DBus (name = "net.launchpad.steadyflow.App")]
@@ -33,7 +27,7 @@ namespace EDM {
     internal Manager manager;
 
     private class Manager : GLib.Object {
-        private CookieJar cookie_jar;
+        private Soup.CookieJar cookie_jar;
         private GLib.PtrArray download_managers =  new GLib.PtrArray ();
 
         public bool download_requested (Midori.View view, WebKit.Download download) {
@@ -41,11 +35,16 @@ namespace EDM {
 
             if (download_type == Midori.DownloadType.SAVE) {
                 var dlReq = new DownloadRequest ();
-                dlReq.uri = download.get_uri ();
 
+                #if HAVE_WEBKIT2
+                dlReq.uri = download.request.get_uri ();
+                weak Soup.MessageHeaders headers = download.request.get_http_headers ();
+                #else
+                dlReq.uri = download.get_uri ();
                 var request = download.get_network_request ();
                 var message = request.get_message ();
-                weak MessageHeaders headers = message.request_headers;
+                weak Soup.MessageHeaders headers = message.request_headers;
+                #endif
 
                 dlReq.auth = headers.get ("Authorization");
                 dlReq.referer = headers.get ("Referer");
@@ -102,8 +101,12 @@ namespace EDM {
         }
 
         construct {
+            #if HAVE_WEBKIT2
+            var session= new Session ();
+            #else
             var session = WebKit.get_default_session ();
-            this.cookie_jar = session.get_feature (typeof (CookieJar)) as CookieJar;
+            #endif
+            this.cookie_jar = session.get_feature (typeof (Soup.CookieJar)) as Soup.CookieJar;
         }
     }
 
@@ -119,8 +122,8 @@ namespace EDM {
         public void handle_exception (GLib.Error error) {
             string ext_name;
             this.get ("name",out ext_name);
-            var dialog = new MessageDialog (null, DialogFlags.MODAL,
-                MessageType.ERROR, ButtonsType.CLOSE,
+            var dialog = new Gtk.MessageDialog (null, Gtk.DialogFlags.MODAL,
+                Gtk.MessageType.ERROR, Gtk.ButtonsType.CLOSE,
                 _("An error occurred when attempting to download a file with the following plugin:\n" +
                   "%s\n\n" +
                   "Error:\n%s\n\n" +
@@ -137,32 +140,49 @@ namespace EDM {
 #if !HAVE_WIN32
     private class Aria2 : ExternalDownloadManager {
         public override bool download (DownloadRequest dlReq) {
-            var url = value_array_new ();
-            value_array_insert (url, 0, typeof (string), dlReq.uri);
+            var url = Soup.value_array_new ();
+            Soup.value_array_insert (url, 0, typeof (string), dlReq.uri);
 
-            GLib.HashTable<string, GLib.Value?> options = value_hash_new ();
+            GLib.HashTable<string, GLib.Value?> options = Soup.value_hash_new ();
             var referer = new GLib.Value (typeof (string));
             referer.set_string (dlReq.referer);
             options.insert ("referer", referer);
 
-            var headers = value_array_new ();
+            var headers = Soup.value_array_new ();
             if (dlReq.cookie_header != null) {
-                value_array_insert (headers, 0, typeof (string), "Cookie: %s".printf(dlReq.cookie_header));
+                Soup.value_array_insert (headers, 0, typeof (string), "Cookie: " + dlReq.cookie_header);
             }
 
             if (headers.n_values > 0)
                options.insert ("header", headers);
 
-            var message = XMLRPC.request_new ("http://127.0.0.1:6800/rpc",
+            var message = Soup.XMLRPC.request_new ("http://127.0.0.1:6800/rpc",
                 "aria2.addUri",
                 typeof (ValueArray), url,
                 typeof(HashTable), options);
-            var session = new SessionSync ();
+            var session = new Soup.SessionSync ();
             session.send_message (message);
+
+            /* Check if the plug-in actually recieved an reply.
+             * The parse method do not warns us about it. And the exception
+             * never is launched.*/
+            if (message.status_code != 200) {
+                var dialog = new Gtk.MessageDialog (null, Gtk.DialogFlags.MODAL,
+                    Gtk.MessageType.ERROR, Gtk.ButtonsType.CLOSE,
+                    "%s",
+                    _("The plug-in was unable to connect with aria2:\n" +
+                      "Please make sure that aria2 is running with rpc enabled ie: aria2c --enable-rpc\n" +
+                      "If it's so, check it also is using the port 6800.\n" +
+                      "Lastly Check the configuration of your firewall.\n" +
+                      "Whitelist aria2 and the port 6800 if they aren't."
+                      ));
+                dialog.response.connect ((a) => { dialog.destroy (); });
+                dialog.run ();
+            }
 
             try {
                 Value v;
-                XMLRPC.parse_method_response ((string) message.response_body.flatten ().data, -1, out v);
+                Soup.XMLRPC.parse_method_response ((string) message.response_body.flatten ().data, -1, out v);
                 return true;
             } catch (Error e) {
                 this.handle_exception (e);
@@ -212,7 +232,7 @@ namespace EDM {
 #endif
 
     private class CommandLinePreferences : Gtk.Dialog {
-        protected Entry input;
+        protected Gtk.Entry input;
         protected CommandLine commandline;
 
         public CommandLinePreferences(CommandLine cl) {
@@ -234,20 +254,20 @@ namespace EDM {
 
         private void response_cb (Gtk.Dialog source, int response_id) {
             switch (response_id) {
-                case ResponseType.APPLY:
+                case Gtk.ResponseType.APPLY:
                     this.commandline.set_string ("commandline", this.input.get_text ());
                     this.commandline.update_description (this.commandline.get_app ());
                     this.destroy ();
                     break;
-                case ResponseType.CANCEL:
+                case Gtk.ResponseType.CANCEL:
                     this.destroy ();
                     break;
             }
         }
 
         private void create_widgets () {
-            Label text = new Label (_("Command:"));
-            this.input = new Entry ();
+            Gtk.Label text = new Gtk.Label (_("Command:"));
+            this.input = new Gtk.Entry ();
             this.input.set_text (this.commandline.get_string ("commandline"));
 
 
@@ -260,8 +280,8 @@ namespace EDM {
             this.vbox.pack_start (this.input, false, true, 0);
 #endif
 
-            this.add_button (Gtk.STOCK_CANCEL, ResponseType.CANCEL);
-            this.add_button (Gtk.STOCK_APPLY, ResponseType.APPLY);
+            this.add_button (Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL);
+            this.add_button (Gtk.STOCK_APPLY, Gtk.ResponseType.APPLY);
 
             this.show_all ();
         }
@@ -273,15 +293,15 @@ namespace EDM {
             dialog.show ();
         }
 
+        private string replace_quoted (string context, string replace, string? with) {
+            return context.replace(replace, with != null ? GLib.Shell.quote(with) : "\'\'");
+        }
+
         public override bool download (DownloadRequest dlReq) {
             try {
                 string cmd = this.get_string ("commandline");
-                cmd = cmd.replace("{REFERER}", GLib.Shell.quote (dlReq.referer));
-                if (dlReq.cookie_header != null) {
-                    cmd = cmd.replace("{COOKIES}", GLib.Shell.quote ("Cookie: " + dlReq.cookie_header));
-                } else {
-                    cmd = cmd.replace("{COOKIES}", "\'\'");
-                }
+                cmd = replace_quoted(cmd, "{REFERER}", dlReq.referer);
+                cmd = replace_quoted(cmd, "{COOKIES}", dlReq.cookie_header != null ? "Cookie: " + dlReq.cookie_header : null);
                 cmd = cmd.replace("{URL}", GLib.Shell.quote (dlReq.uri));
                 GLib.Process.spawn_command_line_async (cmd);
                 return true;
@@ -311,7 +331,7 @@ namespace EDM {
         internal CommandLine () {
 #if HAVE_WIN32
             string default_commandline = "\"%s\\FlashGet\\flashget.exe\" {URL}".printf (Environment.get_variable ("ProgramFiles"));
-#elif HAVE_FREEBSD
+#elif HAVE_FREEBSD || HAVE_DRAGONFLY
             string default_commandline = "fetch HTTP_REFERER={REFERER} {URL}";
 #else
             string default_commandline = "wget --no-check-certificate --referer={REFERER} --header={COOKIES} {URL}";
@@ -344,4 +364,3 @@ public Katze.Array extension_init () {
     extensions.add_item (new EDM.CommandLine ());
     return extensions;
 }
-

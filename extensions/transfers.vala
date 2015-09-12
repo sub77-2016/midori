@@ -14,15 +14,19 @@ namespace Gtk {
 }
 
 namespace Sokoke {
-    extern static bool show_uri (Gdk.Screen screen, string uri, uint32 timestamp) throws Error;
     extern static void widget_get_text_size (Gtk.Widget widget, string sample, out int width, out int height);
 }
 
 namespace Transfers {
     private class Transfer : GLib.Object {
+        internal uint poll_source = 0;
         internal WebKit.Download download;
 
-        internal signal void changed ();
+        internal virtual signal void changed ()
+        {
+            string tooltip = Midori.Download.calculate_tooltip (download);
+            this.set_data ("tooltip", tooltip);
+        }
         internal signal void remove ();
         internal signal void removed ();
 
@@ -51,26 +55,34 @@ namespace Transfers {
 #endif
 
         internal Transfer (WebKit.Download download) {
+            poll_source = Timeout.add(1000/10, () => {
+                changed ();
+                return true;
+            });
             this.download = download;
             #if HAVE_WEBKIT2
-            download.notify["estimated-progress"].connect (transfer_changed);
             download.finished.connect (() => {
                 succeeded = finished = true;
                 changed ();
+                Source.remove (poll_source);
+                poll_source = 0;
             });
             download.failed.connect (() => {
                 succeeded = false;
                 finished = true;
                 changed ();
+                Source.remove (poll_source);
+                poll_source = 0;
             });
             #else
-            download.notify["status"].connect (transfer_changed);
-            download.notify["progress"].connect (transfer_changed);
+            download.notify["status"].connect (() => {
+                changed ();
+                if (download.status == WebKit.DownloadStatus.FINISHED || download.status == WebKit.DownloadStatus.ERROR) {
+                    Source.remove (poll_source);
+                    poll_source = 0;
+                }
+            });
             #endif
-        }
-
-        void transfer_changed (GLib.ParamSpec pspec) {
-            changed ();
         }
     }
 
@@ -174,8 +186,13 @@ namespace Transfers {
                 Transfer transfer;
                 store.get (iter, 0, out transfer);
 
-                if (Midori.Download.action_clear (transfer.download, treeview))
-                    transfer.remove ();
+                try {
+                    if (Midori.Download.action_clear (transfer.download, treeview))
+                        transfer.remove ();
+                } catch (Error error) {
+                    // Failure to open is the only known possibility here
+                    GLib.warning (_("Failed to open download: %s"), error.message);
+                }
             }
         }
 
@@ -198,7 +215,11 @@ namespace Transfers {
                 var menu = new Gtk.Menu ();
                 var menuitem = new Gtk.ImageMenuItem.from_stock (Gtk.STOCK_OPEN, null);
                 menuitem.activate.connect (() => {
-                    Midori.Download.open (transfer.download, treeview);
+                    try {
+                        Midori.Download.open (transfer.download, treeview);
+                    } catch (Error error_open) {
+                        GLib.warning (_("Failed to open download: %s"), error_open.message);
+                    }
                 });
                 menuitem.sensitive = transfer.succeeded;
                 menu.append (menuitem);
@@ -206,7 +227,7 @@ namespace Transfers {
                 menuitem.image = new Gtk.Image.from_stock (Gtk.STOCK_DIRECTORY, Gtk.IconSize.MENU);
                 menuitem.activate.connect (() => {
                     var folder = GLib.File.new_for_uri (transfer.destination);
-                    Sokoke.show_uri (get_screen (), folder.get_parent ().get_uri (), 0);
+                    (Midori.Browser.get_for_widget (this).tab as Midori.Tab).open_uri (folder.get_parent ().get_uri ());
                 });
                 menu.append (menuitem);
                 menuitem = new Gtk.ImageMenuItem.with_mnemonic (_("Copy Link Loc_ation"));
@@ -232,7 +253,7 @@ namespace Transfers {
             return (transfer1.finished ? 1 : 0) - (transfer2.finished ? 1 : 0);
         }
 
-        void transfer_changed () {
+        void transfer_changed (GLib.Object item) {
             treeview.queue_draw ();
         }
 
@@ -241,7 +262,7 @@ namespace Transfers {
             Gtk.TreeIter iter;
             store.append (out iter);
             store.set (iter, 0, transfer);
-            transfer.changed.connect (transfer_changed);
+            transfer.changed.connect (() => transfer_changed (transfer));
             clear.sensitive = true;
         }
 
@@ -281,8 +302,7 @@ namespace Transfers {
 
             Transfer transfer;
             model.get (iter, 0, out transfer);
-            string tooltip = Midori.Download.get_tooltip (transfer.download);
-            renderer.set ("text", tooltip,
+            renderer.set ("text", transfer.get_data<string>("tooltip") ?? "",
                           "value", (int)(transfer.progress * 100));
         }
 
@@ -312,7 +332,7 @@ namespace Transfers {
             progress.show_text = true;
 #endif
             progress.ellipsize = Pango.EllipsizeMode.MIDDLE;
-            string filename = Path.get_basename (transfer.destination);
+            string filename = Midori.Download.get_basename_for_display (transfer.destination);
             progress.text = filename;
             int width;
             Sokoke.widget_get_text_size (progress, "M", out width, null);
@@ -336,13 +356,18 @@ namespace Transfers {
         }
 
         void button_clicked () {
-            if (Midori.Download.action_clear (transfer.download, button))
-                transfer.remove ();
+            try {
+                if (Midori.Download.action_clear (transfer.download, button))
+                    transfer.remove ();
+            } catch (Error error) {
+                // Failure to open is the only known possibility here
+                GLib.warning (_("Failed to open download: %s"), error.message);
+            }
         }
 
         void transfer_changed () {
             progress.fraction = Midori.Download.get_progress (transfer.download);
-            progress.tooltip_text = Midori.Download.get_tooltip (transfer.download);
+            progress.tooltip_text = transfer.get_data<string>("tooltip") ?? "";
             string stock_id = Midori.Download.action_stock_id (transfer.download);
             icon.set_from_stock (stock_id, Gtk.IconSize.MENU);
         }
@@ -411,6 +436,8 @@ namespace Transfers {
     private class Manager : Midori.Extension {
         internal Katze.Array array;
         internal GLib.List<Gtk.Widget> widgets;
+        internal GLib.List<string> notifications;
+        internal uint notification_timeout;
 
         void download_added (WebKit.Download download) {
             var transfer = new Transfer (download);
@@ -420,16 +447,36 @@ namespace Transfers {
             array.add_item (transfer);
         }
 
+        bool notification_timeout_triggered () {
+            notification_timeout = 0;
+            if (notifications.length () > 0) {
+                string filename = notifications.nth_data(0);
+                string msg;
+                if (notifications.length () == 1)
+                    msg = _("The file '<b>%s</b>' has been downloaded.").printf (filename);
+                else
+                    msg = _("'<b>%s</b>' and %d other files have been downloaded.").printf (filename, notifications.length ());
+                get_app ().send_notification (_("Transfer completed"), msg);
+                notifications = new GLib.List<string> ();
+            }
+            return false;
+        }
+
         void transfer_changed (Transfer transfer) {
             if (transfer.succeeded) {
                 /* FIXME: The following 2 blocks ought to be done in core */
                 if (transfer.action == Midori.DownloadType.OPEN) {
-                    if (Midori.Download.action_clear (transfer.download, widgets.nth_data (0)))
-                        transfer.remove ();
+                    try {
+                        if (Midori.Download.action_clear (transfer.download, widgets.nth_data (0)))
+                            transfer.remove ();
+                    } catch (Error error) {
+                        // Failure to open is the only known possibility here
+                        GLib.warning (_("Failed to open download: %s"), error.message);
+                    }
                 }
 
                 string uri = transfer.destination;
-                string filename = Path.get_basename (uri);
+                string filename = Midori.Download.get_basename_for_display (uri);
                 var item = new Katze.Item ();
                 item.uri = uri;
                 item.name = filename;
@@ -437,8 +484,11 @@ namespace Transfers {
                 if (!Midori.Download.has_wrong_checksum (transfer.download))
                     Gtk.RecentManager.get_default ().add_item (uri);
 
-                string msg = _("The file '<b>%s</b>' has been downloaded.").printf (filename);
-                get_app ().send_notification (_("Transfer completed"), msg);
+                notifications.append (filename);
+                if (notification_timeout == 0) {
+                    notification_timeout_triggered ();
+                    notification_timeout = Midori.Timeout.add_seconds (60, notification_timeout_triggered);
+                }
             }
         }
 
@@ -461,6 +511,7 @@ namespace Transfers {
                 var dialog = new Gtk.MessageDialog (browser,
                     Gtk.DialogFlags.DESTROY_WITH_PARENT,
                     Gtk.MessageType.WARNING, Gtk.ButtonsType.NONE,
+                    "%s",
                     _("Some files are being downloaded"));
                 dialog.title = _("Some files are being downloaded");
                 dialog.add_buttons (Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
@@ -495,6 +546,8 @@ namespace Transfers {
         void activated (Midori.App app) {
             array = new Katze.Array (typeof (Transfer));
             widgets = new GLib.List<Gtk.Widget> ();
+            notifications = new GLib.List<string> ();
+            notification_timeout = 0;
             foreach (var browser in app.get_browsers ())
                 browser_added (browser);
             app.add_browser.connect (browser_added);

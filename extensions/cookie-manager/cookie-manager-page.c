@@ -87,10 +87,6 @@ static void cm_create_toolbar(CookieManagerPage *cmp)
 	GtkToolItem *toolitem;
 
 	priv->toolbar = toolbar = gtk_toolbar_new();
-	gtk_toolbar_set_style(GTK_TOOLBAR(toolbar), GTK_TOOLBAR_BOTH_HORIZ);
-	gtk_toolbar_set_icon_size(GTK_TOOLBAR(toolbar), GTK_ICON_SIZE_BUTTON);
-	gtk_widget_show(toolbar);
-
 	toolitem = gtk_tool_button_new_from_stock(GTK_STOCK_DELETE);
 	gtk_tool_item_set_is_important(toolitem, TRUE);
 	g_signal_connect(toolitem, "clicked", G_CALLBACK(cm_button_delete_clicked_cb), cmp);
@@ -167,7 +163,7 @@ static void cookie_manager_page_cookies_changed_cb(CookieManager *cm, CookieMana
 	g_object_unref(priv->filter);
 
 	/* if a filter is set, apply it again but ignore the place holder text */
-	if (!g_object_get_data (G_OBJECT (priv->filter_entry), "sokoke_has_default"))
+	if (!g_object_get_data (G_OBJECT (priv->filter_entry), "sokoke_showing_default"))
 	{
 		filter_text = gtk_entry_get_text(GTK_ENTRY(priv->filter_entry));
 		if (*filter_text != '\0')
@@ -579,7 +575,7 @@ static void cm_button_delete_all_clicked_cb(GtkToolButton *button, CookieManager
 	if (toplevel != NULL)
 		gtk_window_set_icon_name(GTK_WINDOW(dialog), gtk_window_get_icon_name(GTK_WINDOW(toplevel)));
 
-	if (!g_object_get_data (G_OBJECT (priv->filter_entry), "sokoke_has_default"))
+	if (!g_object_get_data (G_OBJECT (priv->filter_entry), "sokoke_showing_default"))
 	{
 		filter_text = gtk_entry_get_text(GTK_ENTRY(priv->filter_entry));
 		if (*filter_text != '\0')
@@ -664,17 +660,9 @@ static gchar *cm_get_cookie_description_text(SoupCookie *cookie)
 	if (cookie->expires != NULL)
 	{
 		time_t expiration_time = soup_date_to_time_t(cookie->expires);
-		#if GLIB_CHECK_VERSION (2, 26, 0)
 		GDateTime* date = g_date_time_new_from_unix_local(expiration_time);
 		expires = g_date_time_format(date, "%c");
 		g_date_time_unref(date);
-		#else
-		static gchar date_fmt[512];
-		const struct tm *tm = localtime(&expiration_time);
-		/* Some GCC versions falsely complain about "%c" */
-		strftime(date_fmt, sizeof(date_fmt), "%c", tm);
-		expires = g_strdup(date_fmt);
-		#endif
 	}
 	else
 		expires = g_strdup(_("At the end of the session"));
@@ -820,7 +808,7 @@ static void cm_filter_entry_changed_cb(GtkEditable *editable, CookieManagerPage 
 	if (priv->ignore_changed_filter)
 		return;
 
-	if (!g_object_get_data (G_OBJECT (editable), "sokoke_has_default"))
+	if (!g_object_get_data (G_OBJECT (editable), "sokoke_showing_default"))
 		text = gtk_entry_get_text(GTK_ENTRY(editable));
 	else
 		text = NULL;

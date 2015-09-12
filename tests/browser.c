@@ -11,6 +11,7 @@
 
 #include "midori.h"
 
+#ifndef HAVE_WEBKIT2
 static void
 browser_create (void)
 {
@@ -43,7 +44,7 @@ browser_create (void)
     midori_settings_set_download_folder (MIDORI_SETTINGS (settings), temporary_downloads);
     midori_browser_save_uri (browser, MIDORI_VIEW (view), NULL);
 
-    filename = midori_view_save_source (MIDORI_VIEW (view), NULL, NULL);
+    filename = midori_view_save_source (MIDORI_VIEW (view), NULL, NULL, FALSE);
     filename2 = g_filename_from_uri (uri, NULL, NULL);
     g_assert_cmpstr (filename, ==, filename2);
     g_free (filename);
@@ -61,6 +62,7 @@ browser_create (void)
     g_object_unref (settings);
     g_object_unref (app);
 }
+#endif
 
 static void
 browser_tooltips (void)
@@ -157,6 +159,43 @@ browser_block_uris (void)
     g_object_unref (settings);
 }
 
+static void
+browser_appmenu_visibility (void)
+{
+    MidoriApp* app = midori_app_new (NULL);
+    MidoriBrowser* browser = midori_app_create_browser (app);
+    GtkToolItem* appmenu = midori_window_get_tool_item (MIDORI_WINDOW (browser), "CompactMenu");
+    gboolean menubar_visible;
+    gboolean appmenu_visible;
+
+    midori_test_log_set_fatal_handler_for_icons ();
+
+    g_object_get (appmenu, "visible", &appmenu_visible, NULL);
+    g_object_get (browser, "show-menubar", &menubar_visible, NULL);
+    g_assert (menubar_visible == !appmenu_visible);
+
+    g_object_set (browser, "show-menubar", !menubar_visible, NULL);
+
+    g_object_get (appmenu, "visible", &appmenu_visible, NULL);
+    g_object_get (browser, "show-menubar", &menubar_visible, NULL);
+    g_assert (menubar_visible == !appmenu_visible);
+
+    g_object_set (browser, "show-menubar", TRUE, NULL);
+
+    g_object_get (appmenu, "visible", &appmenu_visible, NULL);
+    g_object_get (browser, "show-menubar", &menubar_visible, NULL);
+    g_assert (menubar_visible && !appmenu_visible);
+
+    g_object_set (browser, "show-menubar", FALSE, NULL);
+
+    g_object_get (appmenu, "visible", &appmenu_visible, NULL);
+    g_object_get (browser, "show-menubar", &menubar_visible, NULL);
+    g_assert (!menubar_visible && appmenu_visible);
+
+    gtk_widget_destroy (GTK_WIDGET (browser));
+    g_object_unref (app);
+}
+
 int
 main (int    argc,
       char** argv)
@@ -168,12 +207,13 @@ main (int    argc,
     #ifndef HAVE_WEBKIT2
     g_object_set_data (G_OBJECT (webkit_get_default_session ()),
                        "midori-session-initialized", (void*)1);
-    #endif
-
     g_test_add_func ("/browser/create", browser_create);
+    #endif                   
+
     g_test_add_func ("/browser/tooltips", browser_tooltips);
     g_test_add_func ("/browser/site_data", browser_site_data);
     g_test_add_func ("/browser/block_uris", browser_block_uris);
+    g_test_add_func ("/browser/appmenu_visibility", browser_appmenu_visibility);
 
     return g_test_run ();
 }

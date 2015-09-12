@@ -12,6 +12,7 @@
 
 #include "katze-arrayaction.h"
 
+#include "midori/midori-platform.h"
 #include "katze-utils.h"
 #include "marshal.h"
 
@@ -51,6 +52,7 @@ enum
     POPULATE_POPUP,
     POPULATE_FOLDER,
     ACTIVATE_ITEM,
+    ACTIVATE_ITEM_NEW_TAB,
     ACTIVATE_ITEM_ALT,
     LAST_SIGNAL
 };
@@ -115,7 +117,7 @@ katze_array_action_class_init (KatzeArrayActionClass* class)
      * @menu: the menu shell being opened
      * @folder: the folder being opened
      *
-     * A context menu is going to be opened for @folder,
+     * A submenu is going to be opened for @folder,
      * the provided @menu can be populated accordingly.
      *
      * Unlike "populate-popup" this signal is emitted for
@@ -141,33 +143,50 @@ katze_array_action_class_init (KatzeArrayActionClass* class)
      * KatzeArrayAction::activate-item:
      * @array: the object on which the signal is emitted
      * @item: the item being activated
+     * @event: (allow-none): the event that caused the activation
      *
-     * An item was clicked with the first button.
-     *
-     * Deprecated: 0.2.8: Use "activate-item-alt" instead.
+     * An item was activated.
      **/
     signals[ACTIVATE_ITEM] = g_signal_new ("activate-item",
-                                       G_TYPE_FROM_CLASS (class),
-                                       (GSignalFlags) (G_SIGNAL_RUN_LAST),
-                                       0,
-                                       0,
-                                       NULL,
-                                       g_cclosure_marshal_VOID__OBJECT,
-                                       G_TYPE_NONE, 1,
-                                       KATZE_TYPE_ITEM);
+                                           G_TYPE_FROM_CLASS (class),
+                                           (GSignalFlags) (G_SIGNAL_RUN_LAST),
+                                           0,
+                                           0,
+                                           NULL,
+                                           g_cclosure_marshal_VOID__OBJECT,
+                                           G_TYPE_NONE, 1,
+                                           KATZE_TYPE_ITEM);
+
+    /**
+     * KatzeArrayAction::activate-item-new-tab:
+     * @array: the object on which the signal is emitted
+     * @item: the item being activated
+     * @event: (allow-none): the event that caused the activation
+     *
+     * An item was activated and should be opened in a new tab.
+     *
+     * Since: 0.5.10
+     **/
+    signals[ACTIVATE_ITEM_NEW_TAB] = g_signal_new ("activate-item-new-tab",
+                                                   G_TYPE_FROM_CLASS (class),
+                                                   (GSignalFlags) (G_SIGNAL_RUN_LAST),
+                                                   0,
+                                                   0,
+                                                   NULL,
+                                                   g_cclosure_marshal_VOID__OBJECT,
+                                                   G_TYPE_NONE, 1,
+                                                   KATZE_TYPE_ITEM);
 
     /**
      * KatzeArrayAction::activate-item-alt:
      * @array: the object on which the signal is emitted
+     * @proxy: the %GtkWidget that caught the event
      * @item: the item being activated
-     * @button: the mouse button pressed
+     * @event: the mouse button pressed event
      *
-     * An item was clicked, with the specified @button.
+     * The specified @button has been pressed (but not yet released) on the item.
      *
-     * Return value: %TRUE if the event was handled. If %FALSE is returned,
-     *               the default "activate-item" signal is emitted.
-     *
-     * Since: 0.1.7
+     * Return value: %TRUE if the event was handled.
      **/
     signals[ACTIVATE_ITEM_ALT] = g_signal_new ("activate-item-alt",
                                        G_TYPE_FROM_CLASS (class),
@@ -175,9 +194,9 @@ katze_array_action_class_init (KatzeArrayActionClass* class)
                                        0,
                                        0,
                                        NULL,
-                                       midori_cclosure_marshal_BOOLEAN__OBJECT_UINT,
-                                       G_TYPE_BOOLEAN, 2,
-                                       KATZE_TYPE_ITEM, G_TYPE_UINT);
+				       midori_cclosure_marshal_BOOLEAN__OBJECT_OBJECT_POINTER,
+				       G_TYPE_BOOLEAN, 3,
+                                       KATZE_TYPE_ITEM, GTK_TYPE_WIDGET, G_TYPE_POINTER);
 
     gobject_class = G_OBJECT_CLASS (class);
     gobject_class->finalize = katze_array_action_finalize;
@@ -287,14 +306,37 @@ katze_array_action_activate (GtkAction* action)
 
 static void
 katze_array_action_activate_item (KatzeArrayAction* action,
-                                  KatzeItem*        item,
-                                  gint              button)
+                                  KatzeItem*        item)
 {
+    g_signal_emit (action, signals[ACTIVATE_ITEM], 0, item);
+}
+
+static void
+katze_array_action_activate_item_new_tab (KatzeArrayAction* action,
+                                          KatzeItem*        item)
+{
+    g_signal_emit (action, signals[ACTIVATE_ITEM_NEW_TAB], 0, item);
+}
+
+static gboolean
+katze_array_action_activate_item_alt (KatzeArrayAction* action,
+                                      KatzeItem*        item,
+                                      GdkEventButton*   event,
+                                      GtkWidget*        proxy)
+{
+    /* katze_array_action_activate_item emits the signal.
+     * It can result from "clicked" event where the button event
+     * is not provided.
+     */
+
     gboolean handled = FALSE;
+
+    g_assert (event);
+
     g_signal_emit (action, signals[ACTIVATE_ITEM_ALT], 0, item,
-                   button, &handled);
-    if (!handled)
-        g_signal_emit (action, signals[ACTIVATE_ITEM], 0, item);
+                       proxy, event, &handled);
+
+    return handled;
 }
 
 static void
@@ -302,7 +344,26 @@ katze_array_action_menu_activate_cb  (GtkWidget*        proxy,
                                       KatzeArrayAction* array_action)
 {
     KatzeItem* item = g_object_get_data (G_OBJECT (proxy), "KatzeItem");
-    katze_array_action_activate_item (array_action, item, 1);
+
+    GdkEvent* event = gtk_get_current_event();
+
+    if (event && MIDORI_EVENT_NEW_TAB (event))
+        katze_array_action_activate_item_new_tab (array_action, item);
+    else
+        katze_array_action_activate_item (array_action, item);
+
+    if (event)
+        gdk_event_free (event);
+}
+
+static gboolean
+katze_array_action_menu_item_button_press_cb (GtkWidget*        proxy,
+                                              GdkEventButton*   event,
+                                              KatzeArrayAction* array_action)
+{
+    KatzeItem* item = g_object_get_data (G_OBJECT (proxy), "KatzeItem");
+
+    return katze_array_action_activate_item_alt (array_action, item, event, proxy);
 }
 
 static gboolean
@@ -310,21 +371,94 @@ katze_array_action_menu_button_press_cb (GtkWidget*        proxy,
                                          GdkEventButton*   event,
                                          KatzeArrayAction* array_action)
 {
-    KatzeItem* item = g_object_get_data (G_OBJECT (proxy), "KatzeItem");
+    /* Override the button-press handler for menus which would
+       open a submenu to instead show a popup menu
+    */
 
-    katze_array_action_activate_item (array_action, item, event->button);
+    return katze_array_action_menu_item_button_press_cb (gtk_get_event_widget ((GdkEvent *) event), event, array_action);
+}
 
-    /* we need to block the 'activate' handler which would be called
-     * otherwise as well */
-    g_signal_handlers_block_by_func (proxy,
-        katze_array_action_menu_activate_cb, array_action);
+static gboolean
+katze_array_action_tool_item_child_button_press_cb (GtkWidget*        proxy,
+                                                    GdkEventButton*   event,
+                                                    KatzeArrayAction* array_action)
+{
+    GtkWidget* toolitem = gtk_widget_get_parent (proxy);
+    KatzeItem* item = g_object_get_data (G_OBJECT (toolitem), "KatzeItem");
 
-    return TRUE;
+    /* Left button clicks (e.g. for activation) should not be handled until button release */
+    if (event->button == 1)
+        return FALSE;
+
+    return katze_array_action_activate_item_alt (array_action, item, event, proxy);
+}
+
+/* GtkToolItem does not emit the "clicked" event for middle-clicks, so handle them (but not
+   regular or ctrl-clicks) manually via the button-release-event signal. */
+static gboolean
+katze_array_action_tool_item_child_button_release_cb (GtkWidget*        proxy,
+                                                      GdkEventButton*   event,
+                                                      KatzeArrayAction* array_action)
+{
+    GtkWidget* toolitem = gtk_widget_get_parent (proxy);
+    KatzeItem* item = g_object_get_data (G_OBJECT (toolitem), "KatzeItem");
+
+    /* We only need to handle middle-clicks here, since proper handling for 
+     * ctrl-clicks, right-clicks, and left-clicks has been done elsewhere. */
+    if (event && MIDORI_EVENT_NEW_TAB (event))
+    {
+        katze_array_action_activate_item_new_tab (array_action, item);
+        return TRUE;
+    }
+
+    return FALSE;
 }
 
 static void
 katze_array_action_menu_item_select_cb (GtkWidget*        proxy,
                                         KatzeArrayAction* array_action);
+
+static GtkWidget*
+katze_array_action_menu_item_new (KatzeArrayAction* array_action,
+                                  KatzeItem* item)
+{
+    GtkWidget* menuitem = katze_image_menu_item_new_ellipsized (
+        katze_item_get_name (item));
+    GtkWidget* image = katze_item_get_image (item, menuitem);
+
+    gtk_image_menu_item_set_image (GTK_IMAGE_MENU_ITEM (menuitem), image);
+    gtk_image_menu_item_set_always_show_image (
+        GTK_IMAGE_MENU_ITEM (menuitem), TRUE);
+
+    g_object_set_data (G_OBJECT (menuitem), "KatzeItem", item);
+
+    if (KATZE_ITEM_IS_FOLDER (item))
+    {
+        GtkWidget* submenu = gtk_menu_new ();
+        gtk_menu_item_set_submenu (GTK_MENU_ITEM (menuitem), submenu);
+        /* Handle popup menus on menuitems which have open submenus */
+        g_signal_connect (submenu, "button-press-event",
+            G_CALLBACK (katze_array_action_menu_button_press_cb), array_action);
+        g_signal_connect (menuitem, "select",
+            G_CALLBACK (katze_array_action_menu_item_select_cb), array_action);
+        g_signal_connect (menuitem, "activate",
+            G_CALLBACK (katze_array_action_menu_item_select_cb), array_action);
+    }
+    else
+    {
+        /* We need the 'activate' signal for actual item activation */
+        g_signal_connect (menuitem, "activate",
+            G_CALLBACK (katze_array_action_menu_activate_cb), array_action);
+    }
+
+    /* Connect to button-press-event to catch right-clicks to open popup menus.
+       Note that this is also necessary for menuitems which have submenus
+       but whose submenus are not open at present! */
+    g_signal_connect (menuitem, "button-press-event",
+        G_CALLBACK (katze_array_action_menu_item_button_press_cb), array_action);
+
+    return menuitem;
+}
 
 /**
  * katze_array_action_generate_menu:
@@ -355,15 +489,13 @@ katze_array_action_generate_menu (KatzeArrayAction* array_action,
     gint summand;
     KatzeItem* item;
     GtkWidget* menuitem;
-    GtkWidget* image;
-    GtkWidget* submenu;
 
     g_return_if_fail (KATZE_IS_ARRAY_ACTION (array_action));
     g_return_if_fail (KATZE_IS_ITEM (array));
     g_return_if_fail (GTK_IS_MENU_SHELL (menu));
     g_return_if_fail (GTK_IS_TOOL_ITEM (proxy)
-                   || GTK_IS_MENU_ITEM (proxy)
-                   || GTK_IS_WINDOW (proxy));
+        || GTK_IS_MENU_ITEM (proxy)
+        || GTK_IS_WINDOW (proxy));
 
     if (!KATZE_IS_ARRAY (array))
         return;
@@ -388,35 +520,19 @@ katze_array_action_generate_menu (KatzeArrayAction* array_action,
             gtk_menu_shell_append (menu, menuitem);
             continue;
         }
-        menuitem = katze_image_menu_item_new_ellipsized (
-            katze_item_get_name (item));
-        image = katze_item_get_image (item, menuitem);
-        gtk_image_menu_item_set_image (GTK_IMAGE_MENU_ITEM (menuitem), image);
-        gtk_image_menu_item_set_always_show_image (
-            GTK_IMAGE_MENU_ITEM (menuitem), TRUE);
-        gtk_menu_shell_append (menu, menuitem);
-        g_object_set_data (G_OBJECT (menuitem), "KatzeItem", item);
+
+        menuitem = katze_array_action_menu_item_new (array_action, item);
+
         if (KATZE_ITEM_IS_FOLDER (item))
         {
-            submenu = gtk_menu_new ();
-            gtk_menu_item_set_submenu (GTK_MENU_ITEM (menuitem), submenu);
+            GtkWidget* submenu = gtk_menu_item_get_submenu (GTK_MENU_ITEM (menuitem));
             /* Make sure menu appears to contain items */
             gtk_menu_shell_append (GTK_MENU_SHELL (submenu),
                 gtk_separator_menu_item_new ());
-            g_signal_connect (menuitem, "select",
-                G_CALLBACK (katze_array_action_menu_item_select_cb), array_action);
-            g_signal_connect (menuitem, "activate",
-                G_CALLBACK (katze_array_action_menu_item_select_cb), array_action);
         }
-        else
-        {
-            /* we need the 'activate' signal as well for keyboard events */
-            g_signal_connect (menuitem, "activate",
-                G_CALLBACK (katze_array_action_menu_activate_cb), array_action);
-        }
-        g_signal_connect (menuitem, "button-press-event",
-            G_CALLBACK (katze_array_action_menu_button_press_cb), array_action);
+
         gtk_widget_show (menuitem);
+        gtk_menu_shell_append (menu, menuitem);
     }
 }
 
@@ -444,7 +560,7 @@ katze_array_action_menu_item_need_update (KatzeArrayAction* array_action,
     katze_array_action_generate_menu (array_action, array, GTK_MENU_SHELL (menu), proxy);
     g_signal_emit (array_action, signals[POPULATE_FOLDER], 0, menu, array, &handled);
     g_object_set_data (G_OBJECT (proxy), "last-update",
-                       GINT_TO_POINTER (time (NULL)));
+        GINT_TO_POINTER (time (NULL)));
     return TRUE;
 }
 
@@ -475,24 +591,19 @@ katze_array_action_proxy_clicked_cb (GtkWidget*        proxy,
     KatzeArray* array;
     gboolean handled = FALSE;
 
-    array = (KatzeArray*)g_object_get_data (G_OBJECT (proxy), "KatzeItem");
+    array = KATZE_ARRAY (g_object_get_data (G_OBJECT (proxy), "KatzeItem"));
+
     if (GTK_IS_MENU_ITEM (proxy))
     {
         if (katze_array_action_menu_item_need_update (array_action, proxy))
         {
             g_signal_emit (array_action, signals[POPULATE_FOLDER], 0,
-                           gtk_menu_item_get_submenu (GTK_MENU_ITEM (proxy)),
-                           array, &handled);
+                gtk_menu_item_get_submenu (GTK_MENU_ITEM (proxy)),
+                array, &handled);
             if (!handled)
                 g_signal_emit (array_action, signals[POPULATE_POPUP], 0,
                     gtk_menu_item_get_submenu (GTK_MENU_ITEM (proxy)));
         }
-        return;
-    }
-
-    if (KATZE_IS_ITEM (array) && katze_item_get_uri ((KatzeItem*)array))
-    {
-        katze_array_action_activate_item (array_action, KATZE_ITEM (array), 1);
         return;
     }
 
@@ -512,7 +623,7 @@ katze_array_action_proxy_clicked_cb (GtkWidget*        proxy,
     }
 
     katze_widget_popup (GTK_WIDGET (proxy), GTK_MENU (menu),
-                        NULL, KATZE_MENU_POSITION_LEFT);
+        NULL, KATZE_MENU_POSITION_LEFT);
     gtk_menu_shell_select_first (GTK_MENU_SHELL (menu), TRUE);
     g_object_set_data (G_OBJECT (menu), "KatzeArrayAction", array_action);
     g_signal_connect (menu, "deactivate",
@@ -606,31 +717,9 @@ katze_array_action_proxy_create_menu_proxy_cb (GtkWidget* proxy,
 {
     KatzeArrayAction* array_action;
     GtkWidget* menuitem;
-    GtkWidget* image;
 
     array_action = g_object_get_data (G_OBJECT (proxy), "KatzeArrayAction");
-    menuitem = katze_image_menu_item_new_ellipsized (
-        katze_item_get_name (item));
-    image = katze_item_get_image (item, menuitem);
-    gtk_image_menu_item_set_image (GTK_IMAGE_MENU_ITEM (menuitem), image);
-    gtk_image_menu_item_set_always_show_image (
-        GTK_IMAGE_MENU_ITEM (menuitem), TRUE);
-    g_object_set_data (G_OBJECT (menuitem), "KatzeItem", item);
-    if (KATZE_ITEM_IS_FOLDER (item))
-    {
-        GtkWidget* submenu = gtk_menu_new ();
-        gtk_menu_item_set_submenu (GTK_MENU_ITEM (menuitem), submenu);
-        g_signal_connect (menuitem, "select",
-            G_CALLBACK (katze_array_action_menu_item_select_cb), array_action);
-    }
-    else
-    {
-        g_signal_connect (menuitem, "button-press-event",
-            G_CALLBACK (katze_array_action_menu_button_press_cb), array_action);
-        /* we need the 'activate' signal as well for keyboard events */
-        g_signal_connect (menuitem, "activate",
-            G_CALLBACK (katze_array_action_menu_activate_cb), array_action);
-    }
+    menuitem = katze_array_action_menu_item_new (array_action, item);
     gtk_tool_item_set_proxy_menu_item (GTK_TOOL_ITEM (proxy),
         "katze-tool-item-menu", menuitem);
     return TRUE;
@@ -657,7 +746,7 @@ katze_array_action_toolitem_destroy_cb (GtkToolItem* toolitem,
  * Note that the label is reasonably ellipsized for you,
  * much like katze_image_menu_item_new_ellipsized().
  *
- * Return value: a new tool item
+ * Return value: (transfer full): a new tool item
  **/
 GtkToolItem*
 katze_array_action_create_tool_item_for (KatzeArrayAction* array_action,
@@ -706,9 +795,31 @@ katze_array_action_create_tool_item_for (KatzeArrayAction* array_action,
     else
         gtk_tool_item_set_tooltip_text (toolitem, uri);
 
-    g_object_set_data (G_OBJECT (toolitem), "KatzeArray", item);
-    g_signal_connect (toolitem, "clicked",
-        G_CALLBACK (katze_array_action_proxy_clicked_cb), array_action);
+    g_object_set_data (G_OBJECT (toolitem), "KatzeItem", item);
+    if (KATZE_ITEM_IS_FOLDER (item))
+        g_signal_connect (toolitem, "clicked",
+            G_CALLBACK (katze_array_action_proxy_clicked_cb), array_action);
+    else if (KATZE_IS_ITEM (item))
+    {
+        /* Connect to "button-press-event" to handle right-clicks.
+         * Tool items block the "button-press-event" but we can get it
+         * when connecting it to the tool item's child widget
+         */
+        GtkWidget* child = gtk_bin_get_child (GTK_BIN (toolitem));
+        g_signal_connect (child, "button-press-event",
+            G_CALLBACK (katze_array_action_tool_item_child_button_press_cb), array_action);
+
+        /* Connect to the "clicked" signal to handle normal keyboard and mouse
+         * activations, checking the event to see if a new tab should be
+         * opened. */
+        g_signal_connect (toolitem, "clicked",
+            G_CALLBACK (katze_array_action_menu_activate_cb), array_action);
+
+        /* Connect to the "button-released-event" signal to handle middle clicks, since
+         * GtkToolButton does not emit "clicked" for middle-clicks. */
+        g_signal_connect (child, "button-release-event",
+            G_CALLBACK (katze_array_action_tool_item_child_button_release_cb), array_action);
+    }
 
     g_object_set_data (G_OBJECT (toolitem), "KatzeArrayAction", array_action);
     g_signal_connect (item, "notify",
@@ -754,6 +865,14 @@ katze_array_action_disconnect_proxy (GtkAction* action,
         (action, proxy);
 }
 
+/**
+ * katze_array_action_get_array:
+ * @array_action: a #KatzeArrayAction
+ *
+ * Obtain the array which backs the array action.
+ *
+ * Return value: (transfer none): the KatzeArray used by @array_action
+ **/
 KatzeArray*
 katze_array_action_get_array (KatzeArrayAction* array_action)
 {
@@ -767,23 +886,25 @@ katze_array_action_set_array (KatzeArrayAction* array_action,
                               KatzeArray*       array)
 {
     GSList* proxies;
+    KatzeArray *old_array = NULL;
 
     g_return_if_fail (KATZE_IS_ARRAY_ACTION (array_action));
     g_return_if_fail (!array || katze_array_is_a (array, KATZE_TYPE_ITEM));
 
     /* FIXME: Disconnect old array */
 
+    old_array = array_action->array;
     if (array)
         g_object_ref (array);
     katze_object_assign (array_action->array, array);
 
     /* FIXME: Add and remove items dynamically */
     /*g_object_connect (array,
-        "signal-after::add-item",
-        katze_array_action_engines_add_item_cb, array_action,
-        "signal-after::remove-item",
-        katze_array_action_engines_remove_item_cb, array_action,
-        NULL);*/
+      "signal-after::add-item",
+      katze_array_action_engines_add_item_cb, array_action,
+      "signal-after::remove-item",
+      katze_array_action_engines_remove_item_cb, array_action,
+      NULL);*/
 
     g_object_notify (G_OBJECT (array_action), "array");
 
@@ -793,7 +914,15 @@ katze_array_action_set_array (KatzeArrayAction* array_action,
 
     do
     {
+        KatzeArray* item = g_object_get_data (G_OBJECT (proxies->data), "KatzeItem");
+
+        if (item && (item == old_array))
+            g_object_set_data (G_OBJECT (proxies->data), "KatzeItem", array);
+
         gtk_widget_set_sensitive (proxies->data, array != NULL);
     }
     while ((proxies = g_slist_next (proxies)));
+
+    if (array)
+        katze_array_update (KATZE_ARRAY (array));
 }

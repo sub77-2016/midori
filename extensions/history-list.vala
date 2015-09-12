@@ -1,5 +1,5 @@
 /*
-   Copyright (C) 2010-2011 André Stösel <andre@stoesel.de>
+   Copyright (C) 2010-2013 André Stösel <andre@stoesel.de>
 
    This library is free software; you can redistribute it and/or
    modify it under the terms of the GNU Lesser General Public
@@ -8,11 +8,6 @@
 
    See the file COPYING for the full license text.
 */
-
-using Gtk;
-using Gdk;
-using WebKit;
-using Midori;
 
 namespace HistoryList {
     enum TabTreeCells {
@@ -50,6 +45,8 @@ namespace HistoryList {
             Gtk.TreeViewColumn? column;
 
             this.treeview.get_cursor (out path, out column);
+            if (path == null)
+                return;
 
             unowned int[] indices = path.get_indices ();
             int new_index = indices[0] + step;
@@ -66,14 +63,16 @@ namespace HistoryList {
 
         public abstract void make_update ();
         public abstract void clean_up ();
+        public abstract void close_tab ();
     }
 
     private class TabWindow : HistoryWindow {
         protected Gtk.HBox? hbox;
         protected Gtk.VBox? vbox;
         protected bool is_dirty = false;
+        protected Gtk.ScrolledWindow? scroll_windows;
 
-        protected void store_append_row (GLib.PtrArray list, Gtk.ListStore store, out Gtk.TreeIter iter) {
+        protected void store_append_row (GLib.PtrArray list, Gtk.ListStore store) {
             for (var i = list.len; i > 0; i--) {
                 Midori.View view = list.index (i - 1) as Midori.View;
 
@@ -82,6 +81,7 @@ namespace HistoryList {
 
                 unowned string title = view.get_display_title ();
 
+                Gtk.TreeIter iter;
                 store.append (out iter);
                 store.set (iter, TabTreeCells.TREE_CELL_PIXBUF, icon,
                                  TabTreeCells.TREE_CELL_STRING, title,
@@ -92,11 +92,32 @@ namespace HistoryList {
         }
 
         protected virtual void insert_rows (Gtk.ListStore store) {
-            Gtk.TreeIter iter;
             unowned GLib.PtrArray list = this.browser.get_data<GLib.PtrArray> ("history-list-tab-history");
             unowned GLib.PtrArray list_new = this.browser.get_data<GLib.PtrArray> ("history-list-tab-history-new");
-            store_append_row (list, store, out iter);
-            store_append_row (list_new, store, out iter);
+            store_append_row (list, store);
+            store_append_row (list_new, store);
+        }
+
+        protected void resize_treeview () {
+            Gtk.Requisition requisition;
+            int height;
+            int max_lines = 10;
+#if HAVE_GTK3
+            requisition = Gtk.Requisition();
+            this.treeview.get_preferred_size(out requisition, null);
+#else
+            this.treeview.size_request (out requisition);
+#endif
+            Gtk.ListStore model = this.treeview.get_model () as Gtk.ListStore;
+            int length = model.iter_n_children(null);
+            if (length > max_lines) {
+                height = requisition.height / length * max_lines + 2;
+            } else {
+                height = requisition.height + 2;
+            }
+            this.scroll_windows.set_size_request (320, height);
+            this.resize (320, height);
+
         }
 
         public TabWindow (Midori.Browser browser) {
@@ -107,10 +128,10 @@ namespace HistoryList {
 
             this.hbox = new Gtk.HBox (false, 1);
 
-            var sw = new Gtk.ScrolledWindow (null, null);
-            sw.set_policy (PolicyType.NEVER , PolicyType.AUTOMATIC);
-            sw.set_shadow_type (ShadowType.ETCHED_IN);
-            this.hbox.pack_start (sw, true, true, 0);
+            this.scroll_windows = new Gtk.ScrolledWindow (null, null);
+            this.scroll_windows.set_policy (Gtk.PolicyType.NEVER , Gtk.PolicyType.AUTOMATIC);
+            this.scroll_windows.set_shadow_type (Gtk.ShadowType.ETCHED_IN);
+            this.hbox.pack_start (this.scroll_windows, true, true, 0);
 
             var store = new Gtk.ListStore (TabTreeCells.TREE_CELL_COUNT,
                 typeof (Gdk.Pixbuf), typeof (string),
@@ -121,39 +142,23 @@ namespace HistoryList {
             this.vbox.pack_start (this.hbox, true, true, 0);
 
             this.treeview = new Gtk.TreeView.with_model (store);
-            sw.add (treeview);
+            this.scroll_windows.add (treeview);
 
             this.treeview.set_model (store);
             this.treeview.set ("headers-visible", false);
 
             this.treeview.insert_column_with_attributes (
                 -1, "Icon",
-                new CellRendererPixbuf (), "pixbuf", TabTreeCells.TREE_CELL_PIXBUF,
+                new Gtk.CellRendererPixbuf (), "pixbuf", TabTreeCells.TREE_CELL_PIXBUF,
                 "cell-background-gdk", TabTreeCells.TREE_CELL_BG);
             this.treeview.insert_column_with_attributes (
                 -1, "Title",
-                new CellRendererText (), "text", TabTreeCells.TREE_CELL_STRING,
+                new Gtk.CellRendererText (), "text", TabTreeCells.TREE_CELL_STRING,
                 "foreground-gdk", TabTreeCells.TREE_CELL_FG,
                 "cell-background-gdk", TabTreeCells.TREE_CELL_BG);
 
             this.show_all ();
-
-            Requisition requisition;
-            int height;
-            int max_lines = 10;
-#if HAVE_GTK3
-            requisition = Requisition();
-            this.treeview.get_preferred_size(out requisition, null);
-#else
-            this.treeview.size_request (out requisition);
-#endif
-            int length = store.iter_n_children(null);
-            if (length > max_lines) {
-                height = requisition.height / length * max_lines + 2;
-            } else {
-                height = requisition.height + 2;
-            }
-            sw.set_size_request (320, height);
+            this.resize_treeview ();
         }
 
         public override void make_update () {
@@ -163,13 +168,16 @@ namespace HistoryList {
             Gtk.TreeViewColumn? column;
 
             this.treeview.get_cursor (out path, out column);
+            if (path == null)
+                return;
 
             var model = this.treeview.get_model () as Gtk.ListStore;
 
             Gtk.TreeIter iter;
             unowned Midori.View? view = null;
 
-            model.get_iter (out iter, path);
+            if (!model.get_iter (out iter, path))
+                return;
             model.get (iter, TabTreeCells.TREE_CELL_POINTER, out view);
             this.browser.set ("tab", view);
         }
@@ -188,6 +196,41 @@ namespace HistoryList {
                 this.is_dirty = false;
             }
         }
+
+        public override void close_tab () {
+            Gtk.TreePath? path;
+            Gtk.TreeViewColumn? column;
+
+            this.treeview.get_cursor (out path, out column);
+
+            Gtk.ListStore model = this.treeview.get_model () as Gtk.ListStore;
+            int length = model.iter_n_children(null);
+
+            if (length > 1) {
+                Gtk.TreeIter iter;
+                unowned Midori.View? view = null;
+
+                model.get_iter (out iter, path);
+                model.get (iter, TabTreeCells.TREE_CELL_POINTER, out view);
+#if !HAVE_GTK3
+                /* removing the selected cursor causes a segfault when using GTK2 */
+                if (path.prev () == false)
+                    path.next ();
+                this.treeview.set_cursor (path, column, false);
+#endif
+
+                /*
+                    FixMe: the retrun value of `Gtk.ListStore.remove` should be checked
+                    Note:  in some cases the return value of `Gtk.ListStore.remove` is wrong
+                */
+                model.remove (iter);
+                this.browser.close_tab (view);
+                if (length > 2)
+                    this.resize_treeview ();
+                else
+                    this.hide ();
+            }
+        }
     }
 
     private class NewTabWindow : TabWindow {
@@ -195,16 +238,15 @@ namespace HistoryList {
         protected bool first_step = true;
 
         protected override void insert_rows (Gtk.ListStore store) {
-            Gtk.TreeIter iter;
             unowned GLib.PtrArray list = this.browser.get_data<GLib.PtrArray> ("history-list-tab-history-new");
-            store_append_row (list, store, out iter);
+            store_append_row (list, store);
 
             if ((int)list.len == 0) {
                 this.old_tabs = true;
                 var label = new Gtk.Label (_("There are no unvisited tabs"));
                 this.vbox.pack_start (label, true, true, 0);
                 unowned GLib.PtrArray list_old = this.browser.get_data<GLib.PtrArray> ("history-list-tab-history");
-                store_append_row (list_old, store, out iter);
+                store_append_row (list_old, store);
             }
         }
 
@@ -234,7 +276,7 @@ namespace HistoryList {
 
     private class PreferencesDialog : Gtk.Dialog {
         protected Manager hl_manager;
-        protected ComboBox closing_behavior;
+        protected Gtk.ComboBox closing_behavior;
 
         public PreferencesDialog (Manager manager) {
             this.hl_manager = manager;
@@ -252,9 +294,9 @@ namespace HistoryList {
 
         private void response_cb (Gtk.Dialog source, int response_id) {
             switch (response_id) {
-                case ResponseType.APPLY:
+                case Gtk.ResponseType.APPLY:
                     int value;
-                    TreeIter iter;
+                    Gtk.TreeIter iter;
 
                     this.closing_behavior.get_active_iter (out iter);
                     var model = this.closing_behavior.get_model ();
@@ -265,26 +307,26 @@ namespace HistoryList {
 
                     this.destroy ();
                     break;
-                case ResponseType.CANCEL:
+                case Gtk.ResponseType.CANCEL:
                     this.destroy ();
                     break;
             }
         }
 
         private void create_widgets () {
-            ListStore model;
-            TreeIter iter;
-            TreeIter? active_iter = null;
+            Gtk.ListStore model;
+            Gtk.TreeIter iter;
+            Gtk.TreeIter? active_iter = null;
 
-            var table = new Table (1, 2, true);
-            var renderer = new CellRendererText ();
+            var table = new Gtk.Table (1, 2, true);
+            var renderer = new Gtk.CellRendererText ();
 
-            var label = new Label ( _("Tab closing behavior"));
+            var label = new Gtk.Label ( _("Tab closing behavior"));
             table.attach_defaults (label, 0, 1, 0, 1);
 
             var tab_closing_behavior = this.hl_manager.get_integer ("TabClosingBehavior");
 
-            model = new ListStore (2, typeof (string), typeof (int));
+            model = new Gtk.ListStore (2, typeof (string), typeof (int));
 
             model.append (out iter);
             model.set (iter, TabClosingBehaviorModel.TEXT, _("Do nothing"),
@@ -304,7 +346,7 @@ namespace HistoryList {
             if (TabClosingBehavior.NEW == tab_closing_behavior)
                 active_iter = iter;
 
-            this.closing_behavior = new ComboBox.with_model (model);
+            this.closing_behavior = new Gtk.ComboBox.with_model (model);
             this.closing_behavior.set_active_iter (active_iter);
             this.closing_behavior.pack_start (renderer, true);
             this.closing_behavior.set_attributes (renderer, "text", 0);
@@ -323,8 +365,8 @@ namespace HistoryList {
             this.vbox.pack_start (table, false, true, 0);
 #endif
 
-            this.add_button (Gtk.STOCK_CANCEL, ResponseType.CANCEL);
-            this.add_button (Gtk.STOCK_APPLY, ResponseType.APPLY);
+            this.add_button (Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL);
+            this.add_button (Gtk.STOCK_APPLY, Gtk.ResponseType.APPLY);
 
             this.show_all ();
         }
@@ -334,6 +376,7 @@ namespace HistoryList {
         public signal void preferences_changed ();
 
         protected uint escKeyval;
+        protected uint delKeyval;
         protected uint modifier_count;
         protected int closing_behavior;
         protected HistoryWindow? history_window;
@@ -363,7 +406,7 @@ namespace HistoryList {
             return false;
         }
 
-        public bool key_release (Gdk.EventKey event_key, Browser browser) {
+        public bool key_release (Gdk.EventKey event_key, Midori.Browser browser) {
             if (is_key_a_modifier (event_key)) {
                 this.modifier_count--;
             }
@@ -378,11 +421,13 @@ namespace HistoryList {
                 }
                 this.history_window.destroy ();
                 this.history_window = null;
+            } else if (event_key.keyval == this.delKeyval) {
+                this.history_window.close_tab ();
             }
             return false;
         }
 
-        public void walk (Gtk.Action action, Browser browser, Type type, int step) {
+        public void walk (Gtk.Action action, Midori.Browser browser, Type type, int step) {
             Midori.View? view = null;
             view = browser.get_data<Midori.View?> ("history-list-last-change");
             if (view != null) {
@@ -417,7 +462,7 @@ namespace HistoryList {
             hw.walk (step);
         }
 
-        public void special_function (Gtk.Action action, Browser browser) {
+        public void special_function (Gtk.Action action, Midori.Browser browser) {
             if (this.history_window != null) {
                 this.ignoreNextChange = true;
                 this.history_window.make_update ();
@@ -578,6 +623,7 @@ namespace HistoryList {
             foreach (var browser in app.get_browsers ())
                 browser_added (browser);
             app.add_browser.connect (browser_added);
+            app.remove_browser.connect (browser_removed);
         }
 
         void deactivated () {
@@ -585,6 +631,7 @@ namespace HistoryList {
             foreach (var browser in app.get_browsers ())
                 browser_removed (browser);
             app.add_browser.disconnect (browser_added);
+            app.remove_browser.disconnect (browser_removed);
         }
 
         void show_preferences () {
@@ -607,6 +654,7 @@ namespace HistoryList {
         }
         construct {
             this.escKeyval = Gdk.keyval_from_name ("Escape");
+            this.delKeyval = Gdk.keyval_from_name ("Delete");
         }
     }
 }
