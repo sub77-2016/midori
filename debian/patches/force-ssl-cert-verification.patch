@@ -1,31 +1,13 @@
-Index: midori/midori/midori-session.c
+Index: midori-debian-repo/midori/midori-session.c
 ===================================================================
---- midori.orig/midori/midori-session.c	2013-10-23 20:49:21.000000000 -0700
-+++ midori/midori/midori-session.c	2013-10-23 20:49:48.000000000 -0700
-@@ -172,7 +172,7 @@
-     #if defined (HAVE_LIBSOUP_2_37_1)
+--- midori-debian-repo.orig/midori/midori-session.c
++++ midori-debian-repo/midori/midori-session.c
+@@ -189,7 +189,7 @@ midori_load_soup_session (gpointer setti
+     #ifndef G_OS_WIN32
      g_object_set (session,
                    "ssl-use-system-ca-file", TRUE,
 -                  "ssl-strict", FALSE,
 +                  "ssl-strict", TRUE,
                    NULL);
-     #elif defined (HAVE_LIBSOUP_2_29_91)
-     const gchar* certificate_files[] =
-@@ -191,7 +191,7 @@
-         {
-             g_object_set (session,
-                 "ssl-ca-file", certificate_files[i],
--                "ssl-strict", FALSE,
-+                "ssl-strict", TRUE,
-                 NULL);
-             break;
-         }
-@@ -206,7 +206,7 @@
-     gchar* certificate_file = midori_paths_get_res_filename ("ca-bundle.crt");
-     g_object_set (session,
-                   "ssl-ca-file", certificate_file,
--                  "ssl-strict", FALSE,
-+                  "ssl-strict", TRUE,
-                   NULL);
-     g_free (certificate_file);
-     #endif
+     #else /* G_OS_WIN32 */
+     /* We cannot use "ssl-use-system-ca-file" on Windows

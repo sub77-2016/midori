@@ -1,8 +1,8 @@
-Index: midori/data/search
+Index: midori-debian-repo/config/search
 ===================================================================
---- midori.orig/data/search	2013-10-23 20:45:02.000000000 -0700
-+++ midori/data/search	2013-10-23 20:47:57.000000000 -0700
-@@ -34,3 +34,16 @@
+--- midori-debian-repo.orig/config/search
++++ midori-debian-repo/config/search
+@@ -34,3 +34,16 @@ text=Localize text or URL
  uri=http://translate.google.com/?q=
  token=gt
  
