@@ -1,86 +1,57 @@
 #!/usr/bin/make -f
+# output every command that modifies files on the build system.
+#DH_VERBOSE = 1
 
-LDFLAGS=$(shell dpkg-buildflags --get LDFLAGS)
-CFLAGS=$(shell dpkg-buildflags --get CFLAGS)
-LDFLAGS+=-Wl,--as-needed -Wl,-O1
+DPKG_EXPORT_BUILDFLAGS = 1
+include /usr/share/dpkg/default.mk
 
-# waf, thank you _so_ much
-export LINKFLAGS=$(LDFLAGS)
-export CCFLAGS=$(CFLAGS)
-
-export DEB_BUILD_HARDENING=1
-
-CMD=$(shell echo $@ | sed 's/override_//')
-
-DISTRO=$(shell lsb_release -is)
-CONFIG_FILE=debian/config/$(DISTRO).h
-ifneq (0, $(shell test -e $(CONFIG_FILE); echo "$$?"))
-	DISTRO=Debian
+# Necessary for the configuration file (xdg).
+DISTRO = $(shell lsb_release -is)
+CONFIG_FILE = debian/config/$(DISTRO).conf
+ifneq (0, $(shell test -f $(CONFIG_FILE); echo "$$?"))
+	DISTRO = Debian
 endif
 
 %:
-	dh $@
+	dh $@ --buildsystem=cmake --builddirectory=_build/
 
-upstream_version ?= $(shell dpkg-parsechangelog | sed -rne 's/^Version: ([0-9.]+)(\+dfsg)?.*$$/\1/p')
-dfsg_version = $(upstream_version)+dfsg
-upstream_pkg = "midori"
-pkg = $(shell dpkg-parsechangelog | sed -ne 's/^Source: //p')
-
-get-orig-source:
-	uscan --rename --download-current-version --destdir=.
-	tar -xjf $(pkg)_$(upstream_version).orig.tar.bz2
-	rm -f $(pkg)_$(upstream_version).orig.tar.bz2
-	mv $(upstream_pkg)-$(upstream_version) $(pkg)_$(dfsg_version).orig
-	$(CURDIR)/debian/waf-unpack $(pkg)_$(dfsg_version).orig
-	rm $(pkg)_$(dfsg_version).orig/waf
-	tar -cjf $(CURDIR)/../$(pkg)_$(dfsg_version).orig.tar.bz2 $(pkg)_$(dfsg_version).orig
-	rm -r $(pkg)_$(dfsg_version).orig
-
-WAF=WAFDIR=waf-modules ./waf-unpacked
-
-#$(WAF): waf
-#	# rebuild the waf script
-#	sed < waf -e '1,/^#==>$$/ d' -e '/^#<==$$/ d' | tr -d '\n' | sed -e 's/.//' -e 's/#[*]/\n/g' -e 's/#%/\r/g' > waf.orig.tar.bz2
-#	(sed -n < waf -e '1,/^#==>$$/ p'; echo REPLACED BY ENCODED TAR.BZ2; sed -n < waf -e '/^#<==$$/ p') > waf.hdr
-#	(sed -n < waf.hdr -e '1,/^#==>$$/ p'; printf '#'; perl -pe < waf.orig.tar.bz2 's/\n/#*/g; s/\r/#%/g;'; echo; sed -n < waf.hdr  -e '/^#<==$$/ p') > waf.regen
-#	chmod 755 waf.regen
-#	# ensure both scripts are the same
-#	cmp waf waf.regen && (rm waf.hdr waf.orig.tar.bz2)
-
-override_dh_auto_clean:
-	! which quilt >/dev/null || ! test -d .pc || quilt pop -a
-	rm -fr .pc
-	$(WAF) --nocache distclean
-	rm -rf _build_ _build
-	rm -rf .waf*
-	rm -rf .lock-wscript
-	rm -rf `find waf-modules -name "*.pyc"`
-
+# Midori uses a "poor man's configure" which only accepts a minimal,
+# pre-defined set of flags.  Therefore, we invoke cmake directly here.
 override_dh_auto_configure:
-	$(WAF) --nocache configure --debug-level=none --prefix /usr
+	dh_auto_configure -- \
+	-DCMAKE_INSTALL_PREFIX=/usr \
+	-DCMAKE_INSTALL_SYSCONFDIR=/etc \
+	-DCMAKE_INSTALL_LIBDIR=/usr/lib \
+	..
 
+# cmake does not emit useful information when compiling the source
+# files.  We use VERBOSE here for that.
 override_dh_auto_build:
-	$(WAF) build --nocache -v
+	dh_auto_build -- VERBOSE=1
 
-#override_dh_auto_test:
-#	xvfb-run $(WAF) --nocache check
+# We have to override 'make check' because it needs to run under
+# xvfb-run.  And some tests still fail.
+override_dh_auto_test:
+	(cd _build && xvfb-run make check) || true
 
 override_dh_auto_install:
-	$(WAF) --nocache install --destdir debian/tmp
+	dh_auto_install
 	rm -f debian/tmp/usr/share/doc/midori/COPYING debian/tmp/usr/share/doc/midori/TRANSLATE
 	install -m 0644 debian/$(DISTRO)-config debian/tmp/etc/xdg/midori/config
 
-PRIORITY=$(shell sed -r -e '/DEBIAN_WWW_ALTERNATIVES_PRIORITY/ !d' -e 's/.* ([^ ]*)$$/\1/' $(CONFIG_FILE))
+# Generate the debuginfo package.
+override_dh_strip:
+	dh_strip --dbg-package=midori-dbg
+
+# Updating the alternatives priority
+PRIORITY = $(shell sed -ne 's/^DEBIAN_WWW_ALTERNATIVES_PRIORITY \([0-9]\+\)/\1/p' $(CONFIG_FILE))
 
 debian/midori.postinst: debian/midori.postinst.base
-	sed "s/DEBIAN_WWW_ALTERNATIVES_PRIORITY/$(PRIORITY)/g" debian/midori.postinst.base > debian/midori.postinst
+	sed 's/DEBIAN_WWW_ALTERNATIVES_PRIORITY/$(PRIORITY)/g' debian/midori.postinst.base > debian/midori.postinst
 
 override_dh_installdeb: debian/midori.postinst
-	$(CMD)
-
-override_dh_strip:
-	$(CMD) --dbg-package=midori-dbg
+	dh_installdeb
 
 override_dh_installchangelogs:
 	rm -f debian/midori/usr/share/doc/midori/ChangeLog
-	dh_installchangelogs ChangeLog
+	dh_installchangelogs

@@ -1,45 +1,37 @@
 Source: midori
 Section: web
 Priority: optional
-Maintainer: Ryan Niebur <ryan@debian.org>
-Build-Depends: debhelper (>= 8.1.0~),
- lsb-release,
- libgtk2.0-dev (>= 2.10),
- libglib2.0-dev,
- libwebkitgtk-dev (>= 1.4.3),
- libxml2-dev (>= 2.6),
- libzeitgeist-dev,
-# For waf:
- python,
-# Optional dependencies:
- intltool,
- libidn11-dev,
- librsvg2-bin,
- libsqlite3-dev,
- libunique-dev (>= 1.0.6),
- python-docutils,
- libsoup2.4-dev (>= 2.25.2),
- libnotify-dev,
- valac (>= 0.10),
-# For testing under xvfb:
- xvfb,
- xauth,
- xfonts-base,
- hardening-wrapper,
- libxss-dev
-# Disabled optional dependencies:
-Build-Conflicts: gtk-doc-tools,
- libgtksourceview2.0-dev (>= 2.0),
- libhildon-1-dev
-Standards-Version: 3.9.3
+Maintainer: Sergio Durigan Junior <sergiodj@sergiodj.net>
+Build-Depends: debhelper (>= 9),
+  cmake,
+  valac,
+  lsb-release,
+  libwebkitgtk-dev (>= 1.8.1),
+  libgtk2.0-dev (>= 2.24.0),
+  libglib2.0-dev,
+  libsoup-gnome2.4-dev (>= 2.27.90),
+  libxml2-dev (>= 2.6),
+  libsqlite3-dev (>= 3.6.19),
+  libjavascriptcoregtk-1.0-dev,
+  libnotify-dev,
+  libgcr-3-dev (>= 2.32),
+  librsvg2-bin,
+  intltool,
+  libunique-dev (>= 1.0.6),
+  libzeitgeist-2.0-dev,
+# Necessary for 'make check'
+  xvfb,
+  xauth,
+  xfonts-base,
+  libxss-dev
+Standards-Version: 3.9.6
 Homepage: http://www.midori-browser.org
 Vcs-Git: git://git.debian.org/collab-maint/midori.git
 Vcs-Browser: http://git.debian.org/?p=collab-maint/midori.git;a=summary
 
 Package: midori
 Architecture: any
-Pre-Depends: ${misc:Pre-Depends}
-Depends: ${shlibs:Depends}, ${misc:Depends}, dbus-x11
+Depends: ${shlibs:Depends}, ${misc:Depends}
 Recommends: gnome-icon-theme
 Provides: www-browser
 # For http://bugs.debian.org/522436 (missing symbols):
