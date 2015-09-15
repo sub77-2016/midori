@@ -1,4 +1,4 @@
-midori (0.5.2+dfsg-1) UNRELEASED; urgency=low
+midori (0.5.11-1) unstable; urgency=low
 
   [ Yves-Alexis Perez ]
   * New upstream release.
@@ -24,7 +24,49 @@ midori (0.5.2+dfsg-1) UNRELEASED; urgency=low
   * Improve dh_auto_clean target in d/rules to handle some leftover
     files from quilt and waf
 
- -- Ryan Niebur <ryan@debian.org>  Wed, 23 Oct 2013 21:04:40 -0700
+  [ Andres Salomon ]
+  * Import Debian patch 0.4.3+dfsg-0.2
+
+  [ Sergio Durigan Junior ]
+  * Changing gbp.conf to not override the default tag name for releases.
+  * Updating section names on debian/gbp.conf
+  * Imported Upstream version 0.5.11
+  * Update debian/patches for the new Midori version (0.5.11).
+  * Revamp build system (use cmake instead of waf)
+    - Update debian/rules, removing old stuff (from waf) and adding new,
+      simpler rules for the cmake-based build.
+    - Update debian/control, listing the new package maintainer and
+      reviewed dependencies.
+    - Delete debian/waf-unpack file.
+    - Rename debian/config/{Debian,Ubuntu}.h files to
+      debian/config/{Debian,Ubuntu}.conf.
+    With this change, it is now unnecessary to create a DFSG-modified
+    version of the package, because Waf is not used as the build system
+    anymore (for more details, see Bug 645191).
+    It is possible to build the package now, but it still has some lintian
+    warnings that will be fixed in the following changes.
+    (Closes: #663185, #758103, #787878)
+  * Adding shlibs and lintian-overrides files.
+    Due to the way libraries (i.e., plugins) are built by Midori (without
+    a proper SONAME), it is necessary (or at least recommended) to provide
+    a shlibs file that contains trustworthy information about the
+    libraries being installed on the system.
+    Unfortunately, it is also necessary to provide a lintian-overrides
+    file in order to silence some lintian warnings (mostly about the
+    shlibs mentioned above).  We'll have to work with upstream in order to
+    solve this problem.
+    Another lintian error that needed to be silenced was related to the
+    data/midori.swf file, present at the original tarball.  This file is
+    used just for testing (i.e., it is not installed in the system), and
+    is actually generated using the png2swf utility (from the swftools
+    package), which means it can be verified.
+  * Rewrite manpage.
+    The old manpage was too simple and did not cover many of the options
+    supported by Midori on the command line.  Fixed that by rewriting it
+    almost completely, including many missing options, updating dates and
+    author, and improving the formatting.
+
+ -- Sergio Durigan Junior <sergiodj@sergiodj.net>  Tue, 15 Sep 2015 12:37:55 -0400
 
 midori (0.4.3+dfsg-0.2) unstable; urgency=medium
 
