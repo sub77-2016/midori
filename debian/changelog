@@ -1,3 +1,14 @@
+midori (0.5.11-2) unstable; urgency=medium
+
+  * Remove "Force SSL verification" patch.
+    The patch "force-ssl-cert-verification.patch" was mistakenly included
+    in the last Midori release; this cased a regression because the user
+    cannot access a website that has a self-signed SSL/TLS certificate
+    anymore.  This change removes the patch and allows the user to trust
+    self-signed certificates again. (Closes: #799337)
+
+ -- Sergio Durigan Junior <sergiodj@sergiodj.net>  Fri, 18 Sep 2015 15:29:38 -0400
+
 midori (0.5.11-1) unstable; urgency=low
 
   [ Yves-Alexis Perez ]
