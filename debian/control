@@ -26,8 +26,8 @@ Build-Depends: debhelper (>= 9),
   libxss-dev
 Standards-Version: 3.9.6
 Homepage: http://www.midori-browser.org
-Vcs-Git: git://git.debian.org/collab-maint/midori.git
-Vcs-Browser: http://git.debian.org/?p=collab-maint/midori.git;a=summary
+Vcs-Git: git://anonscm.debian.org/collab-maint/midori.git
+Vcs-Browser: http://anonscm.debian.org/cgit/collab-maint/midori.git/
 
 Package: midori
 Architecture: any
