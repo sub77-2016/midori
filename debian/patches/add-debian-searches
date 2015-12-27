@@ -1,7 +1,16 @@
-Index: midori-debian-repo/config/search
+From: Sergio Durigan Junior <sergiodj@sergiodj.net>
+Date: Sun, 27 Dec 2015 01:06:30 -0500
+Subject: add-debian-searches
+
 ===================================================================
---- midori-debian-repo.orig/config/search
-+++ midori-debian-repo/config/search
+---
+ config/search | 13 +++++++++++++
+ 1 file changed, 13 insertions(+)
+
+diff --git a/config/search b/config/search
+index 1a0aebe..8a78280 100644
+--- a/config/search
++++ b/config/search
 @@ -34,3 +34,16 @@ text=Localize text or URL
  uri=http://translate.google.com/?q=
  token=gt
