@@ -32,7 +32,7 @@ Vcs-Browser: http://git.debian.org/?p=collab-maint/midori.git;a=summary
 Package: midori
 Architecture: any
 Depends: ${shlibs:Depends}, ${misc:Depends}
-Recommends: gnome-icon-theme
+Recommends: gnome-icon-theme, gnome-keyring
 Provides: www-browser
 # For http://bugs.debian.org/522436 (missing symbols):
 Conflicts: libsoup2.4-1 (<< 2.25.2)
