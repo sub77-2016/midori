@@ -7,3 +7,7 @@
 # Which means that it can be easily verified.  The png2swf command can
 # be found in the swftools package.
 midori source: source-is-missing data/midori.swf
+
+# This is a lintian bug (#809170).  Overriding it here until it is
+# properly fixed.
+midori source: source-is-missing data/autosuggestcontrol.js
