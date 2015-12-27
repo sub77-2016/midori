@@ -1,3 +1,41 @@
+midori (0.5.11-3) unstable; urgency=medium
+
+  * Update version of Chromium's User-Agent string.
+    We identify ourselves as Chromium to other websites, but the version
+    we use in the User-Agent string is pretty old.  This commit updates it
+    to a newer version (49.0.2571.2, from Nov 22 2015).  The positive
+    side-effect from doing this is that Google does not bother the user
+    asking her to upgrade to a "newer Chrome". (Closes: #805457)
+  * Convert patch add-debian-searches to gbp-pq.
+    Trivial adjustment on add-debian-searches in order to make it
+    compliant with gbp-pq.
+  * Better handling of self-signed certificates.
+    Midori needs gcr/gnome-keyring in order to fully work with self-signed
+    TLS certificates.  This commit improves the error message that is
+    displayed when clicking on "Trust this website" does not work, and
+    also makes the Debian Midori package recommend installing
+    gnome-keyring.  This is the best we can do for now. (Closes: #799963)
+  * Improve security by making sure that we use a safe set of ciphers.
+    This comes from Debian bug #804196 (LP Bug #1517265).  When Midori
+    uses libwebkitgtk, it inherits the default value of the
+    G_TLS_GNUTLS_PRIORITY environment variable.  Unfortunately this value
+    is not safe enough because it still lets GnuTLS to enable to unsafe
+    ciphers.  Therefore, we need to set this variable ourselves and make
+    sure that Midori is using safe ciphers for TLS operations. (Closes: #804196)
+  * Override "source-is-missing data/autosuggestcontrol.js"
+    Lintian is wrongly reporting a "source-is-missing" error for
+    data/autosuggestcontrol.js.  I have reported a bug against it (809170)
+    and now I am overriding the error.
+  * Fix Vcs-* URLs.
+    The package was still using old, non-canonical URLs for
+    Vcs-{Git,Browser}.  Update them now.
+  * Remove midori.menu (and solve lintian warning)
+    Lintian was warning "command-in-menu-file-and-desktop-file".  Since
+    Midori already ships a .desktop file, it is time to remove the
+    midori.menu file from the package.
+
+ -- Sergio Durigan Junior <sergiodj@sergiodj.net>  Sun, 27 Dec 2015 16:12:18 -0500
+
 midori (0.5.11-2) unstable; urgency=medium
 
   * Remove "Force SSL verification" patch.
