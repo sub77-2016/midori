@@ -1,5 +1,9 @@
-midori (0.5.11-3) unstable; urgency=medium
+midori (0.5.11-ds1-1) unstable; urgency=medium
 
+  * Rename package (and source tarball) in order to fix a mistake that
+    happened when uploading the first version of the "0.5.11" version.
+    Somehow, the source tarball was different than the original tarball.
+    Fortunately, the only difference were the timestamps.
   * Update version of Chromium's User-Agent string.
     We identify ourselves as Chromium to other websites, but the version
     we use in the User-Agent string is pretty old.  This commit updates it
