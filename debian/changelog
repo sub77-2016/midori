@@ -1,3 +1,17 @@
+midori (0.5.11-ds1-3) unstable; urgency=medium
+
+  * Bumping Standards-Version to 3.9.8; removing midori-dbg package.
+    Our Standards-Version was out-of-date, so now we're using 3.9.8, the
+    latest one.  Also, there is no need to build midori-dbg anymore,
+    because Debian now builds dbgsym packages by default.
+  * Using dversionmangle to correctly compare versions against upstream.
+    This also fixes a lintian warnings.
+  * Use HTTPS for Vcs-* links.
+  * Update Format specification link on debian/copyright.
+  * Enable hardening=+all when building.
+
+ -- Sergio Durigan Junior <sergiodj@sergiodj.net>  Tue, 19 Jul 2016 13:34:52 -0400
+
 midori (0.5.11-ds1-2) unstable; urgency=medium
 
   * Update debian/watch with new URL for fetching tarball.
