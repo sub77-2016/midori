@@ -36,12 +36,8 @@ override_dh_auto_test:
 
 override_dh_auto_install:
 	dh_auto_install
-	rm -f debian/tmp/usr/share/doc/midori/COPYING debian/tmp/usr/share/doc/midori/TRANSLATE
-	install -m 0644 debian/$(DISTRO)-config debian/tmp/etc/xdg/midori/config
-
-# Generate the debuginfo package.
-override_dh_strip:
-	dh_strip --dbg-package=midori-dbg
+	rm -f debian/midori/usr/share/doc/midori/COPYING debian/midori/usr/share/doc/midori/TRANSLATE
+	install -m 0644 debian/$(DISTRO)-config debian/midori/etc/xdg/midori/config
 
 # Updating the alternatives priority
 PRIORITY = $(shell sed -ne 's/^DEBIAN_WWW_ALTERNATIVES_PRIORITY \([0-9]\+\)/\1/p' $(CONFIG_FILE))
