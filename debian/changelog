@@ -1,3 +1,13 @@
+midori (0.5.11-ds1-4) unstable; urgency=medium
+
+  * Passing non-NULL sourceURL string to JSEvaluateScript.
+    This fixes a segmentation fault that was happening after the last
+    update of webkitgtk.  I am fixing this in Midori because I think it is
+    a nice thing to do, but I will also report a bug against webkitgtk.
+    (Closes: #834236)
+
+ -- Sergio Durigan Junior <sergiodj@sergiodj.net>  Sat, 13 Aug 2016 12:54:10 -0400
+
 midori (0.5.11-ds1-3) unstable; urgency=medium
 
   * Bumping Standards-Version to 3.9.8; removing midori-dbg package.
