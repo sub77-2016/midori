@@ -2,3 +2,4 @@ add-debian-searches
 0002-Update-version-of-Chromium-s-User-Agent-string.patch
 0003-Improve-error-message-when-Trust-this-website-doesn-.patch
 0004-Improve-security-by-making-sure-that-we-use-a-safe-s.patch
+0005-Passing-non-NULL-string-sourceURL-to-JSEvaluateScrip.patch
