@@ -113,6 +113,7 @@ pkg_check_modules(DEPS REQUIRED
                   gmodule-2.0
                   gio-2.0>=2.32.3
                   libsoup-gnome-2.4>=2.37.1
+                  gnome-keyring-1
                   )
 add_definitions("-DHAVE_LIBXML")
 add_definitions("-DGIO_VERSION=\"${DEPS_gio-2.0_VERSION}\"")
